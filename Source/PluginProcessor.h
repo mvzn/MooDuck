@@ -79,9 +79,14 @@ public:
     bool getSidechainFftData(float* dest);
     bool getOutputFftData(float* dest);
 private:
-    DynamicsProcessor leftProcessor;
-    DynamicsProcessor rightProcessor;
+    static constexpr int numBands = StereoMultibandCrossover::numBands;
+
+    DynamicsProcessor bandProcessorsL[numBands];
+    DynamicsProcessor bandProcessorsR[numBands];
     StereoMultibandCrossover crossover;
+
+    juce::AudioBuffer<float> mainBandBufL, mainBandBufR;
+    juce::AudioBuffer<float> scBandBufL,   scBandBufR;
 
     struct BandControlValues
     {

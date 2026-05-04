@@ -4,6 +4,8 @@
               addUsingNamespaceToJuceHeader="0" jucerFormatVersion="1" pluginFormats="buildAU,buildVST3">
   <MAINGROUP id="Ma0yGF" name="MaybeDuck">
     <GROUP id="{4AE79E48-790F-936D-A2EA-D9E604833509}" name="Source">
+      <FILE id="wjYgEL" name="CrossoverCore.h" compile="0" resource="0" file="Source/CrossoverCore.h"/>
+      <FILE id="fqzS2W" name="FXFunctions.h" compile="0" resource="0" file="Source/FXFunctions.h"/>
       <FILE id="fGISbV" name="DynamicsCore.h" compile="0" resource="0" file="Source/DynamicsCore.h"/>
       <FILE id="dLenF7" name="PluginProcessor.cpp" compile="1" resource="0"
             file="Source/PluginProcessor.cpp"/>
@@ -41,20 +43,20 @@
         <CONFIGURATION isDebug="0" name="Release" targetName="MaybeDuck"/>
       </CONFIGURATIONS>
       <MODULEPATHS>
-        <MODULEPATH id="juce_dsp" path="../../JUCE/modules"/>
-        <MODULEPATH id="juce_audio_formats" path="../../JUCE/modules"/>
-        <MODULEPATH id="juce_audio_basics" path="../../JUCE/modules"/>
-        <MODULEPATH id="juce_core" path="../../JUCE/modules"/>
-        <MODULEPATH id="juce_audio_processors" path="../../JUCE/modules"/>
-        <MODULEPATH id="juce_gui_extra" path="../../JUCE/modules"/>
-        <MODULEPATH id="juce_gui_basics" path="../../JUCE/modules"/>
-        <MODULEPATH id="juce_graphics" path="../../JUCE/modules"/>
-        <MODULEPATH id="juce_events" path="../../JUCE/modules"/>
-        <MODULEPATH id="juce_data_structures" path="../../JUCE/modules"/>
-        <MODULEPATH id="juce_audio_processors_headless" path="../../JUCE/modules"/>
-        <MODULEPATH id="juce_audio_utils" path="../../JUCE/modules"/>
-        <MODULEPATH id="juce_audio_devices" path="../../JUCE/modules"/>
-        <MODULEPATH id="juce_audio_plugin_client" path="../../JUCE/modules"/>
+        <MODULEPATH id="juce_dsp" path="Builds/LinuxMakefile"/>
+        <MODULEPATH id="juce_audio_formats" path="Builds/LinuxMakefile"/>
+        <MODULEPATH id="juce_audio_basics" path="Builds/LinuxMakefile"/>
+        <MODULEPATH id="juce_core" path="Builds/LinuxMakefile"/>
+        <MODULEPATH id="juce_audio_processors" path="Builds/LinuxMakefile"/>
+        <MODULEPATH id="juce_gui_extra" path="Builds/LinuxMakefile"/>
+        <MODULEPATH id="juce_gui_basics" path="Builds/LinuxMakefile"/>
+        <MODULEPATH id="juce_graphics" path="Builds/LinuxMakefile"/>
+        <MODULEPATH id="juce_events" path="Builds/LinuxMakefile"/>
+        <MODULEPATH id="juce_data_structures" path="Builds/LinuxMakefile"/>
+        <MODULEPATH id="juce_audio_processors_headless" path="Builds/LinuxMakefile"/>
+        <MODULEPATH id="juce_audio_utils" path="Builds/LinuxMakefile"/>
+        <MODULEPATH id="juce_audio_devices" path="Builds/LinuxMakefile"/>
+        <MODULEPATH id="juce_audio_plugin_client" path="Builds/LinuxMakefile"/>
         <MODULEPATH id="juce_analytics" path="Builds/LinuxMakefile"/>
       </MODULEPATHS>
     </LINUX_MAKE>

@@ -243,8 +243,8 @@ protected:
         double yn_dB = 0.0;
         if (m_dynamics_params.calculation == dynamicsProcessorType::kCompressor)
 		{
-			// --- calc gain with knee
-			if (m_dynamics_params.soft_knee && m_dynamics_params.soft_knee != 0.0)
+			// --- calc gain with knee; force hard-knee when knee_width_dB == 0 to avoid divide-by-zero
+			if (m_dynamics_params.soft_knee && m_dynamics_params.knee_width_dB > 0.0)
 			{
                 // --- left side of knee, outside of width, unity gain zone
 				if (2.0*(detect_dB - m_dynamics_params.threshold_dB) < -m_dynamics_params.knee_width_dB)
@@ -285,10 +285,10 @@ protected:
 		}
 		else if (m_dynamics_params.calculation == dynamicsProcessorType::kDownwardExpander)
 		{
-			// --- hard knee
+			// --- hard knee; also forced when knee_width_dB == 0 to avoid divide-by-zero
 			// --- NOTE: soft knee is not technically possible with a gate because there
 			//           is no "left side" of the knee
-			if (!m_dynamics_params.soft_knee || m_dynamics_params.hard_limit_gate)
+			if (!m_dynamics_params.soft_knee || m_dynamics_params.hard_limit_gate || m_dynamics_params.knee_width_dB <= 0.0)
 			{
 				// --- above threshold, unity gain
 				if (detect_dB >= m_dynamics_params.threshold_dB)

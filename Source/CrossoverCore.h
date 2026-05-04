@@ -286,6 +286,13 @@ public:
         stages[index].setCrossoverFrequency(fc);
     }
 
+    // Sets frequency with no smoothing ramp — use in prepareToPlay only.
+    void setCrossoverFrequencyImmediate(int index, double fc)
+    {
+        jassert(index >= 0 && index < numCrossoverPoints);
+        stages[index].setCrossoverFrequencyImmediate(fc);
+    }
+
     // Must be called once per block before processSample loop.
     void advanceSmootherBlock(int numSamples)
     {
@@ -362,6 +369,13 @@ public:
     {
         for (auto& xover : crossovers)
             xover.setCrossoverFrequency(index, fc);
+    }
+
+    // Sets frequency with no smoothing ramp — use in prepareToPlay only.
+    void setCrossoverFrequencyImmediate(int index, double fc)
+    {
+        for (auto& xover : crossovers)
+            xover.setCrossoverFrequencyImmediate(index, fc);
     }
 
     // All pointer arrays must be pre-allocated to at least numSamples floats each.

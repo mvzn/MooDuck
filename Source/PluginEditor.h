@@ -144,6 +144,12 @@ private:
                                       releaseAttachment, kneeAttachment, outputAttachment;
 
     std::unique_ptr<ButtonAttachment> sidechainAttachment, softKneeAttachment, limiterAttachment;
-    
+
+    // Crossover section
+    juce::Label crossoverSectionLabel;
+    juce::Slider xoverSliders[4];
+    juce::Label  xoverLabels[4];
+    std::unique_ptr<SliderAttachment> xoverAttachments[4];
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MaybeDuckAudioProcessorEditor)
 };

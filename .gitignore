@@ -11,6 +11,7 @@
 
 # Ignore local notes and files
 NEXT_STEPS.local.md
+DONE_STEPS.local.md
 PRD.md
 SKILLS.md
 CLAUDE.md
