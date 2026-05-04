@@ -11,10 +11,16 @@
 
 # Ignore local notes and files
 NEXT_STEPS.local.md
+DONE_STEPS.local.md
+PERFORMANCE_OPTIMIZATION.local.md
+PRD.md
+SKILLS.md
+CLAUDE.md
 /JuceLibraryCode/**
 
 # Keep source
-Source/**
+!Source/
+!Source/**
 
 # Keep Projucer files
 *.jucer

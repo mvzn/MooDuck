@@ -45,8 +45,9 @@ void SpectrumComponent::update()
         processSpectrumFrame(scratchBuffer.data(), sidechainMagnitudes, sidechainPeaks, sidechainPeakHoldCounters);
         changed = true;
     }
-    else
+    else if (!showSidechain)
     {
+        // Sidechain disabled — decay trace to silence
         for (size_t i = 0; i < sidechainMagnitudes.size(); ++i)
         {
             sidechainMagnitudes[i] = juce::jmax(-90.0f, sidechainMagnitudes[i] - 2.5f);
@@ -55,6 +56,7 @@ void SpectrumComponent::update()
         }
         changed = true;
     }
+    // showSidechain && no new frame ready → hold last frame, no repaint
 
     if (processor.getOutputFftData(scratchBuffer.data()))
     {
@@ -287,9 +289,36 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
     softKneeAttachment  = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "softKnee", softKneeButton);
     limiterAttachment   = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "limiter", limiterButton);
 
+    // --- Crossover section
+    crossoverSectionLabel.setText("Multiband Crossover", juce::dontSendNotification);
+    crossoverSectionLabel.setFont(juce::Font(juce::FontOptions{}.withHeight(13.0f).withStyle("Bold")));
+    crossoverSectionLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+    crossoverSectionLabel.setJustificationType(juce::Justification::centredLeft);
+    addAndMakeVisible(crossoverSectionLabel);
+
+    const juce::String xoverNames[] = { "Low", "Low-Mid", "High-Mid", "High" };
+    const juce::String xoverIds[]   = { "xover0", "xover1", "xover2", "xover3" };
+
+    for (int i = 0; i < 4; ++i)
+    {
+        xoverSliders[i].setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+        xoverSliders[i].setTextBoxStyle(juce::Slider::TextBoxBelow, false, 80, 20);
+        xoverSliders[i].setTextValueSuffix(" Hz");
+        xoverSliders[i].setNumDecimalPlacesToDisplay(0);
+        addAndMakeVisible(xoverSliders[i]);
+
+        xoverLabels[i].setText(xoverNames[i], juce::dontSendNotification);
+        xoverLabels[i].setJustificationType(juce::Justification::centred);
+        xoverLabels[i].setColour(juce::Label::textColourId, juce::Colours::white);
+        addAndMakeVisible(xoverLabels[i]);
+
+        xoverAttachments[i] = std::make_unique<SliderAttachment>(
+            audioProcessor.apvts, xoverIds[i], xoverSliders[i]);
+    }
+
     startTimerHz(30);
 
-    setSize (820, 560);
+    setSize (820, 660);
 }
 
 MaybeDuckAudioProcessorEditor::~MaybeDuckAudioProcessorEditor()
@@ -320,19 +349,15 @@ void MaybeDuckAudioProcessorEditor::resized()
     spectrumComponent.setBounds(spectrumArea);
     compressorMeter.setBounds(meterArea);
 
-    auto sliderArea = area.removeFromTop(190);
-    auto buttonArea = area.removeFromTop(36);
-    auto statsArea = area.removeFromTop(28);
-
+    auto sliderArea = area.removeFromTop(160);
     auto columnWidth = sliderArea.getWidth() / 6;
 
     auto layoutSliderWithLabel = [&](juce::Slider& slider, juce::Label& label)
     {
         auto col = sliderArea.removeFromLeft(columnWidth).reduced(4);
         auto labelArea = col.removeFromTop(20);
-        auto knobArea  = col;
         label.setBounds(labelArea);
-        slider.setBounds(knobArea);
+        slider.setBounds(col);
     };
 
     layoutSliderWithLabel(thresholdSlider, thresholdLabel);
@@ -342,10 +367,24 @@ void MaybeDuckAudioProcessorEditor::resized()
     layoutSliderWithLabel(kneeSlider,      kneeLabel);
     layoutSliderWithLabel(outputSlider,    outputLabel);
 
+    // Crossover section
+    crossoverSectionLabel.setBounds(area.removeFromTop(22));
+    auto xoverArea   = area.removeFromTop(138);
+    auto xoverColW   = xoverArea.getWidth() / 4;
+
+    for (int i = 0; i < 4; ++i)
+    {
+        auto col = xoverArea.removeFromLeft(xoverColW).reduced(4);
+        xoverLabels[i].setBounds(col.removeFromTop(20));
+        xoverSliders[i].setBounds(col);
+    }
+
+    auto buttonArea = area.removeFromTop(36);
     sidechainButton.setBounds(buttonArea.removeFromLeft(170));
     softKneeButton.setBounds (buttonArea.removeFromLeft(120));
     limiterButton.setBounds  (buttonArea.removeFromLeft(100));
 
+    auto statsArea = area.removeFromTop(28);
     auto statW = statsArea.getWidth() / 5;
     aboveThresholdLabel.setBounds(statsArea.removeFromLeft(statW));
     grLabel.setBounds(statsArea.removeFromLeft(statW));

@@ -10,6 +10,7 @@
 
 #include <JuceHeader.h>
 #include "DynamicsCore.h"
+#include "CrossoverCore.h"
 
 //==============================================================================
 /**
@@ -78,8 +79,21 @@ public:
     bool getSidechainFftData(float* dest);
     bool getOutputFftData(float* dest);
 private:
-    DynamicsProcessor leftProcessor;
-    DynamicsProcessor rightProcessor;
+    static constexpr int numBands = StereoMultibandCrossover::numBands;
+
+    DynamicsProcessor bandProcessorsL[numBands];
+    DynamicsProcessor bandProcessorsR[numBands];
+    StereoMultibandCrossover crossover;
+
+    juce::AudioBuffer<float> mainBandBufL, mainBandBufR;
+    juce::AudioBuffer<float> scBandBufL,   scBandBufR;
+
+    struct BandControlValues
+    {
+        std::array<float, StereoMultibandCrossover::numBands> db {};
+    };
+
+    BandControlValues applyBandLink(const BandControlValues& gr, float linkAmount);
 
     // monitoring
     std::atomic<float> cpuUsagePercent { 0.0f };
