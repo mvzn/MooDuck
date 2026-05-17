@@ -59,6 +59,18 @@ public:
 
     juce::AudioProcessorValueTreeState apvts;
 
+    // Cached raw parameter pointers — stable for plugin lifetime, safe on audio thread
+    std::atomic<float>* pThreshold = nullptr;
+    std::atomic<float>* pRatio     = nullptr;
+    std::atomic<float>* pAttack    = nullptr;
+    std::atomic<float>* pRelease   = nullptr;
+    std::atomic<float>* pKnee      = nullptr;
+    std::atomic<float>* pOutput    = nullptr;
+    std::atomic<float>* pScEnable  = nullptr;
+    std::atomic<float>* pSoftKnee  = nullptr;
+    std::atomic<float>* pLimiter   = nullptr;
+    std::atomic<float>* pXover[StereoMultibandCrossover::numCrossoverPoints] = {};
+
     // monitoring
     float getCpuUsagePercent() const noexcept      { return cpuUsagePercent.load(); }
     float getProcessTimeMs() const noexcept        { return processTimeMs.load(); }

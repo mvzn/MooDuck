@@ -398,7 +398,15 @@ void MaybeDuckAudioProcessorEditor::timerCallback()
     aboveThresholdLabel.setText("Above Thr: " + juce::String(audioProcessor.getAboveThresholdDb(), 1) + " dB", juce::dontSendNotification);
 
     grLabel.setText("GR: " + juce::String(audioProcessor.getGainReductionAmountDb(), 1) + " dB", juce::dontSendNotification);
-    cpuLabel.setText("CPU: " + juce::String(audioProcessor.getCpuUsagePercent(), 1) + " %", juce::dontSendNotification);
+    {
+        const float raw = audioProcessor.getCpuUsagePercent();
+        // Snap on spikes > 8% above smoothed; otherwise ~300 ms decay at 30 Hz (alpha ≈ 0.89)
+        if (raw > smoothedCpuPercent + 8.0f)
+            smoothedCpuPercent = raw;
+        else
+            smoothedCpuPercent = 0.89f * smoothedCpuPercent + 0.11f * raw;
+        cpuLabel.setText("CPU: " + juce::String(smoothedCpuPercent, 1) + " %", juce::dontSendNotification);
+    }
     blockLabel.setText("Block: " + juce::String(audioProcessor.getCurrentBlockSize()), juce::dontSendNotification);
     sampleRateLabel.setText("SR: " + juce::String(audioProcessor.getCurrentSampleRateHz(), 0) + " Hz", juce::dontSendNotification);
 

@@ -91,8 +91,8 @@ public:
 			return -96.0;
 		}
 
-		// --- true log output in dB, can go above 0dBFS!
-		return 20.0*log10(current_env);
+		// --- log10(x) = log2(x) * log10(2); log2f can use fyl2x uop on x86, faster than log10
+		return static_cast<double> (20.0f * std::log2f (static_cast<float> (current_env)) * 0.30103f);
     }
     
     void setSampleRate(double sample_rate)
@@ -207,15 +207,31 @@ public:
 
     DynamicsProcessorParameters getParameters() {return m_dynamics_params;}
 
+    double getGainReductionDb() const noexcept { return m_dynamics_params.gain_reduction_dB; }
+
     void setParameters(const DynamicsProcessorParameters& _parameters)
     {
+        const bool needsCoeffUpdate = (_parameters.attack_ms      != m_dynamics_params.attack_ms     ||
+                                       _parameters.release_ms     != m_dynamics_params.release_ms    ||
+                                       _parameters.output_gain_dB != m_dynamics_params.output_gain_dB);
+
+        // makeup_gain is computed here, not supplied by caller; save it so the assignment below
+        // doesn't clobber it when we skip the recalc (caller's struct always has default 1.0)
+        const double savedMakeupGain = m_dynamics_params.makeup_gain;
         m_dynamics_params = _parameters;
 
-        DetectorParameters detector_params = m_detector.getDetectParameters();
-        detector_params.attack_ms = m_dynamics_params.attack_ms;
-        detector_params.release_ms = m_dynamics_params.release_ms;
-        m_detector.setDetectParameters(detector_params);
-        m_dynamics_params.makeup_gain = pow(10.0, m_dynamics_params.output_gain_dB / 20.0);
+        if (needsCoeffUpdate)
+        {
+            DetectorParameters detector_params = m_detector.getDetectParameters();
+            detector_params.attack_ms  = m_dynamics_params.attack_ms;
+            detector_params.release_ms = m_dynamics_params.release_ms;
+            m_detector.setDetectParameters(detector_params);
+            m_dynamics_params.makeup_gain = pow(10.0, m_dynamics_params.output_gain_dB / 20.0);
+        }
+        else
+        {
+            m_dynamics_params.makeup_gain = savedMakeupGain;
+        }
     }
 
     double processSample(double xn)
@@ -316,8 +332,11 @@ protected:
 		}
 
 		// --- convert gain; store values for user meters
+		// pow(10,x/20) = exp(x*ln10/20); clamp at -6 (≈ -52 dB GR, inaudible) for Padé accuracy
 		m_dynamics_params.gain_reduction_dB = yn_dB - detect_dB;
-		m_dynamics_params.gain_reduction = pow(10.0, (m_dynamics_params.gain_reduction_dB) / 20.0);
+		m_dynamics_params.gain_reduction = static_cast<double> (
+            juce::dsp::FastMathApproximations::exp (
+                juce::jmax (-6.0f, static_cast<float> (m_dynamics_params.gain_reduction_dB) * 0.11512925f)));
 
 		// --- the current gain coefficient value
 		return m_dynamics_params.gain_reduction;

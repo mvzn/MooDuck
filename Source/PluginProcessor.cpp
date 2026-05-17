@@ -31,6 +31,17 @@ MaybeDuckAudioProcessor::MaybeDuckAudioProcessor()
     : apvts(*this, nullptr, "PARAMETERS", createParameterLayout())
 #endif
 {
+    pThreshold = apvts.getRawParameterValue("threshold");
+    pRatio     = apvts.getRawParameterValue("ratio");
+    pAttack    = apvts.getRawParameterValue("attack");
+    pRelease   = apvts.getRawParameterValue("release");
+    pKnee      = apvts.getRawParameterValue("knee");
+    pOutput    = apvts.getRawParameterValue("output");
+    pScEnable  = apvts.getRawParameterValue("sidechainEnable");
+    pSoftKnee  = apvts.getRawParameterValue("softKnee");
+    pLimiter   = apvts.getRawParameterValue("limiter");
+    for (int i = 0; i < StereoMultibandCrossover::numCrossoverPoints; ++i)
+        pXover[i] = apvts.getRawParameterValue("xover" + juce::String(i));
 }
 
 MaybeDuckAudioProcessor::~MaybeDuckAudioProcessor()
@@ -188,10 +199,7 @@ void MaybeDuckAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
     crossover.prepare(sampleRate);
 
     for (int i = 0; i < StereoMultibandCrossover::numCrossoverPoints; ++i)
-    {
-        const double fc = static_cast<double>(*apvts.getRawParameterValue("xover" + juce::String(i)));
-        crossover.setCrossoverFrequencyImmediate(i, fc);
-    }
+        crossover.setCrossoverFrequencyImmediate(i, static_cast<double>(*pXover[i]));
 
     mainBandBufL.setSize(numBands, samplesPerBlock);
     mainBandBufR.setSize(numBands, samplesPerBlock);
@@ -298,17 +306,17 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
         buffer.clear(i, 0, buffer.getNumSamples());
 
-    // --- Read dynamics parameters
+    // --- Read dynamics parameters (atomic loads via cached pointers — no hash lookups)
     DynamicsProcessorParameters dynParams;
-    dynParams.threshold_dB    = *apvts.getRawParameterValue("threshold");
-    dynParams.ratio           = *apvts.getRawParameterValue("ratio");
-    dynParams.attack_ms       = *apvts.getRawParameterValue("attack");
-    dynParams.release_ms      = *apvts.getRawParameterValue("release");
-    dynParams.knee_width_dB   = *apvts.getRawParameterValue("knee");
-    dynParams.output_gain_dB  = *apvts.getRawParameterValue("output");
-    dynParams.enable_sc       = (*apvts.getRawParameterValue("sidechainEnable") > 0.5f);
-    dynParams.soft_knee       = (*apvts.getRawParameterValue("softKnee") > 0.5f);
-    dynParams.hard_limit_gate = (*apvts.getRawParameterValue("limiter") > 0.5f);
+    dynParams.threshold_dB    = *pThreshold;
+    dynParams.ratio           = *pRatio;
+    dynParams.attack_ms       = *pAttack;
+    dynParams.release_ms      = *pRelease;
+    dynParams.knee_width_dB   = *pKnee;
+    dynParams.output_gain_dB  = *pOutput;
+    dynParams.enable_sc       = (*pScEnable  > 0.5f);
+    dynParams.soft_knee       = (*pSoftKnee  > 0.5f);
+    dynParams.hard_limit_gate = (*pLimiter   > 0.5f);
     dynParams.calculation     = dynamicsProcessorType::kCompressor;
 
     for (int b = 0; b < numBands; ++b)
@@ -319,10 +327,7 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
 
     // --- Update crossover frequencies (smoother advances inside processBlock)
     for (int i = 0; i < StereoMultibandCrossover::numCrossoverPoints; ++i)
-    {
-        const double fc = static_cast<double>(*apvts.getRawParameterValue("xover" + juce::String(i)));
-        crossover.setCrossoverFrequency(i, fc);
-    }
+        crossover.setCrossoverFrequency(i, static_cast<double>(*pXover[i]));
 
     // --- Bus pointers
     juce::AudioBuffer<float> mainInput = getBusBuffer(buffer, true, 0);
@@ -338,6 +343,12 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     const float* mainL = mainInput.getReadPointer(0);
     const float* mainR = isStereo ? mainInput.getReadPointer(1) : mainL;
 
+    // Cache SC read pointers once (used for both metering and crossover)
+    const float* scLPtr = useSidechain ? scInput.getReadPointer(0) : mainL;
+    const float* scRPtr = useSidechain
+                          ? (scInput.getNumChannels() > 1 ? scInput.getReadPointer(1) : scLPtr)
+                          : mainR;
+
     // --- Input / sidechain metering (pre-dynamics)
     float blockPeakIn     = 0.0f;
     float sidechainPeakIn = 0.0f;
@@ -350,9 +361,7 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
 
         if (useSidechain)
         {
-            const float scL    = scInput.getReadPointer(0)[n];
-            const float scR    = scInput.getNumChannels() > 1 ? scInput.getReadPointer(1)[n] : scL;
-            const float scMono = 0.5f * (scL + scR);
+            const float scMono = 0.5f * (scLPtr[n] + scRPtr[n]);
             sidechainPeakIn = std::max(sidechainPeakIn, std::abs(scMono));
             pushNextSampleIntoFifo(scMono, sidechainFifo, sidechainFifoIndex, sidechainFftBuffer, sidechainBlockReady);
         }
@@ -368,57 +377,45 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         sbR[b] = scBandBufR.getWritePointer(b);
     }
 
-    // When sidechain is unused, pass main signal as SC input (results ignored by processors)
-    const float* scLPtr = useSidechain ? scInput.getReadPointer(0) : mainL;
-    const float* scRPtr = useSidechain
-                          ? (scInput.getNumChannels() > 1 ? scInput.getReadPointer(1) : scLPtr)
-                          : mainR;
-
     crossover.processBlock(mainL, mainR, scLPtr, scRPtr, mbL, mbR, sbL, sbR, numSamples);
 
-    // --- Per-band dynamics processing
-    for (int n = 0; n < numSamples; ++n)
+    // --- Dynamics (band-outer/sample-inner for processor state cache locality)
+    //     Accumulate directly into output buffer to merge the summation pass
+    auto* outL = mainInput.getWritePointer(0);
+    auto* outR = isStereo ? mainInput.getWritePointer(1) : nullptr;
+
+    juce::FloatVectorOperations::fill(outL, 0.0f, numSamples);
+    if (outR) juce::FloatVectorOperations::fill(outR, 0.0f, numSamples);
+
+    for (int b = 0; b < numBands; ++b)
     {
-        for (int b = 0; b < numBands; ++b)
+        for (int n = 0; n < numSamples; ++n)
         {
             if (useSidechain)
             {
                 bandProcessorsL[b].processSidechainInputSample(static_cast<double>(sbL[b][n]));
                 bandProcessorsR[b].processSidechainInputSample(static_cast<double>(sbR[b][n]));
             }
-            mbL[b][n] = static_cast<float>(bandProcessorsL[b].processSample(static_cast<double>(mbL[b][n])));
-            mbR[b][n] = static_cast<float>(bandProcessorsR[b].processSample(static_cast<double>(mbR[b][n])));
+            outL[n] += static_cast<float>(bandProcessorsL[b].processSample(static_cast<double>(mbL[b][n])));
+            const float pR = static_cast<float>(bandProcessorsR[b].processSample(static_cast<double>(mbR[b][n])));
+            if (outR) outR[n] += pR;
         }
     }
 
-    // --- Sum bands back to output + output FFT
-    auto* outL = mainInput.getWritePointer(0);
-    auto* outR = isStereo ? mainInput.getWritePointer(1) : nullptr;
-
+    // --- Output FFT push
     for (int n = 0; n < numSamples; ++n)
     {
-        float sumL = 0.0f, sumR = 0.0f;
-        for (int b = 0; b < numBands; ++b)
-        {
-            sumL += mbL[b][n];
-            sumR += mbR[b][n];
-        }
-        outL[n] = sumL;
-        if (outR) outR[n] = sumR;
-
-        const float outMono = outR ? 0.5f * (sumL + sumR) : sumL;
+        const float outMono = outR ? 0.5f * (outL[n] + outR[n]) : outL[n];
         pushNextSampleIntoFifo(outMono, outputFifo, outputFifoIndex, outputFftBuffer, outputBlockReady);
     }
 
-    // --- Metering
-    float totalGrL = 0.0f, totalGrR = 0.0f;
+    // --- Metering — worst-case (max) GR across all bands and both channels
+    float grAmountDb = 0.0f;
     for (int b = 0; b < numBands; ++b)
     {
-        totalGrL += static_cast<float>(bandProcessorsL[b].getParameters().gain_reduction_dB);
-        totalGrR += static_cast<float>(bandProcessorsR[b].getParameters().gain_reduction_dB);
+        grAmountDb = std::max(grAmountDb, -static_cast<float>(bandProcessorsL[b].getGainReductionDb()));
+        grAmountDb = std::max(grAmountDb, -static_cast<float>(bandProcessorsR[b].getGainReductionDb()));
     }
-    const float avgGR      = 0.5f * (totalGrL + totalGrR) / static_cast<float>(numBands);
-    const float grAmountDb = std::max(0.0f, -avgGR);
 
     const float monPeakIn  = useSidechain ? sidechainPeakIn : blockPeakIn;
     const float blockPeakDb = monPeakIn > 0.000001f
@@ -430,7 +427,7 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     inputLevelSmoothedDb    = juce::jmax(blockPeakDb, inputLevelSmoothedDb - 0.8f);
     gainReductionSmoothedDb = juce::jmax(grAmountDb,  gainReductionSmoothedDb - 0.35f);
 
-    gainReductionDb.store(avgGR);
+    gainReductionDb.store(-grAmountDb);
     gainReductionAmountDb.store(gainReductionSmoothedDb);
     inputLevelDb.store(inputLevelSmoothedDb);
 
