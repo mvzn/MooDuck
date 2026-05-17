@@ -58,6 +58,7 @@ public:
     {
         bool needsRecalc = (p.fc                    != params.fc                    ||
                             p.Q                     != params.Q                     ||
+                            p.filterOutputGain_dB   != params.filterOutputGain_dB   ||
                             p.selfOscillate         != params.selfOscillate         ||
                             p.matchAnalogNyquistLPF != params.matchAnalogNyquistLPF);
         params = p;
@@ -104,18 +105,16 @@ public:
         integrator_z[0] = alpha * hpf + bpf;
         integrator_z[1] = alpha * bpf + lpf;
 
-        const double gain = dB2raw(params.filterOutputGain_dB);
-
         if (alg == vaFilterAlgorithm::kSVF_LP)
         {
             if (params.matchAnalogNyquistLPF) lpf += analogMatchSigma * sn;
-            return gain * lpf;
+            return outputGainLinear * lpf;
         }
-        if (alg == vaFilterAlgorithm::kSVF_HP) return gain * hpf;
-        if (alg == vaFilterAlgorithm::kSVF_BP) return gain * bpf;
-        if (alg == vaFilterAlgorithm::kSVF_BS) return gain * bsf;
+        if (alg == vaFilterAlgorithm::kSVF_HP) return outputGainLinear * hpf;
+        if (alg == vaFilterAlgorithm::kSVF_BP) return outputGainLinear * bpf;
+        if (alg == vaFilterAlgorithm::kSVF_BS) return outputGainLinear * bsf;
 
-        return gain * lpf;
+        return outputGainLinear * lpf;
     }
 
     void calculateFilterCoeffs()
@@ -145,6 +144,8 @@ public:
             const double f_o = (sampleRate / 2.0) / fc;
             analogMatchSigma = 1.0 / (alpha * f_o * f_o);
         }
+
+        outputGainLinear = dB2raw(params.filterOutputGain_dB);
     }
 
     void   setBeta(double b)  { beta = b; }
@@ -160,6 +161,7 @@ protected:
     double rho              = 0.0;
     double beta             = 0.0;
     double analogMatchSigma = 0.0;
+    double outputGainLinear = 1.0; // cached dB2raw(filterOutputGain_dB), updated in calculateFilterCoeffs
 };
 
 

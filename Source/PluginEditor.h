@@ -145,6 +145,8 @@ private:
 
     std::unique_ptr<ButtonAttachment> sidechainAttachment, softKneeAttachment, limiterAttachment;
 
+    float smoothedCpuPercent = 0.0f;
+
     // Crossover section
     juce::Label crossoverSectionLabel;
     juce::Slider xoverSliders[4];
