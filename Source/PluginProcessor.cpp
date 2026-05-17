@@ -409,15 +409,13 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         pushNextSampleIntoFifo(outMono, outputFifo, outputFifoIndex, outputFftBuffer, outputBlockReady);
     }
 
-    // --- Metering (direct field access avoids by-value struct copy)
-    float totalGrL = 0.0f, totalGrR = 0.0f;
+    // --- Metering — worst-case (max) GR across all bands and both channels
+    float grAmountDb = 0.0f;
     for (int b = 0; b < numBands; ++b)
     {
-        totalGrL += static_cast<float>(bandProcessorsL[b].getGainReductionDb());
-        totalGrR += static_cast<float>(bandProcessorsR[b].getGainReductionDb());
+        grAmountDb = std::max(grAmountDb, -static_cast<float>(bandProcessorsL[b].getGainReductionDb()));
+        grAmountDb = std::max(grAmountDb, -static_cast<float>(bandProcessorsR[b].getGainReductionDb()));
     }
-    const float avgGR      = 0.5f * (totalGrL + totalGrR) / static_cast<float>(numBands);
-    const float grAmountDb = std::max(0.0f, -avgGR);
 
     const float monPeakIn  = useSidechain ? sidechainPeakIn : blockPeakIn;
     const float blockPeakDb = monPeakIn > 0.000001f
@@ -429,7 +427,7 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     inputLevelSmoothedDb    = juce::jmax(blockPeakDb, inputLevelSmoothedDb - 0.8f);
     gainReductionSmoothedDb = juce::jmax(grAmountDb,  gainReductionSmoothedDb - 0.35f);
 
-    gainReductionDb.store(avgGR);
+    gainReductionDb.store(-grAmountDb);
     gainReductionAmountDb.store(gainReductionSmoothedDb);
     inputLevelDb.store(inputLevelSmoothedDb);
 
