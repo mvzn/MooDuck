@@ -42,6 +42,10 @@ MaybeDuckAudioProcessor::MaybeDuckAudioProcessor()
     pLimiter   = apvts.getRawParameterValue("limiter");
     for (int i = 0; i < StereoMultibandCrossover::numCrossoverPoints; ++i)
         pXover[i] = apvts.getRawParameterValue("xover" + juce::String(i));
+
+    pSidechainMode = apvts.getRawParameterValue("sidechainMode");
+    pFftConv       = apvts.getRawParameterValue("fftConvolution");
+    pFftConvSize   = apvts.getRawParameterValue("fftConvSize");
 }
 
 MaybeDuckAudioProcessor::~MaybeDuckAudioProcessor()
@@ -123,7 +127,29 @@ juce::AudioProcessorValueTreeState::ParameterLayout MaybeDuckAudioProcessor::cre
         "xover3", "Crossover 4",
         juce::NormalisableRange<float>(2000.0f, 20000.0f, 1.0f, 0.3f), 8000.0f));
 
+    // 0 = Wideband (bypass crossover), 1 = Multiband, 2 = Spectral
+    params.push_back(std::make_unique<juce::AudioParameterInt>(
+        "sidechainMode", "Sidechain Mode", 0, 2, 1));
+
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        "fftConvolution", "FFT Convolution", false));
+
+    // 0 = 512, 1 = 1024, 2 = 2048
+    params.push_back(std::make_unique<juce::AudioParameterInt>(
+        "fftConvSize", "FFT Conv Size", 0, 2, 1));
+
     return {params.begin(), params.end()};
+}
+
+int MaybeDuckAudioProcessor::getConvLatencySamples() const noexcept
+{
+    if (!pSidechainMode || !pFftConv || !pFftConvSize) return 0;
+    const int mode = static_cast<int>(pSidechainMode->load());
+    if (mode != 2) return 0;
+    if (pFftConv->load() <= 0.5f) return 0;
+    static constexpr int sizes[] = { 512, 1024, 2048 };
+    const int idx = juce::jlimit(0, 2, static_cast<int>(pFftConvSize->load()));
+    return sizes[idx] / 2;
 }
 
 //==============================================================================
@@ -196,15 +222,59 @@ void MaybeDuckAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
         bandProcessorsR[b].reset(sampleRate);
     }
 
+    widebandProcessorL.reset(sampleRate);
+    widebandProcessorR.reset(sampleRate);
+
     crossover.prepare(sampleRate);
 
     for (int i = 0; i < StereoMultibandCrossover::numCrossoverPoints; ++i)
         crossover.setCrossoverFrequencyImmediate(i, static_cast<double>(*pXover[i]));
 
+    // Main band buffers need numBands channels; mainBandBufL[0] is reused as conv-mode input
+    // temp buffer to avoid in-place aliasing with mainInput.
     mainBandBufL.setSize(numBands, samplesPerBlock);
     mainBandBufR.setSize(numBands, samplesPerBlock);
     scBandBufL.setSize(numBands, samplesPerBlock);
     scBandBufR.setSize(numBands, samplesPerBlock);
+
+    // FFT Conv objects — pre-allocate all three sizes (no audio-thread allocation later)
+    static constexpr int kOrders[3] = { 9, 10, 11 };
+    static constexpr int kSizes [3] = { 512, 1024, 2048 };
+    for (int i = 0; i < 3; ++i)
+    {
+        convFftObjs[i] = std::make_unique<juce::dsp::FFT>(kOrders[i]);
+        convWinObjs[i] = std::make_unique<juce::dsp::WindowingFunction<float>>(
+            (size_t)kSizes[i], juce::dsp::WindowingFunction<float>::hann);
+    }
+
+    // Clear all conv state and prime FIFO with hopSize zeros (= reported latency)
+    std::fill(std::begin(convInRingL), std::end(convInRingL), 0.0f);
+    std::fill(std::begin(convInRingR), std::end(convInRingR), 0.0f);
+    std::fill(std::begin(convScRing),  std::end(convScRing),  0.0f);
+    std::fill(std::begin(convOvlL),    std::end(convOvlL),    0.0f);
+    std::fill(std::begin(convOvlR),    std::end(convOvlR),    0.0f);
+    std::fill(std::begin(convOutFifoL), std::end(convOutFifoL), 0.0f);
+    std::fill(std::begin(convOutFifoR), std::end(convOutFifoR), 0.0f);
+    convInWritePos = 0;
+    convScWritePos = 0;
+    convNewCount   = 0;
+
+    const int initSizeIdx = pFftConvSize ? juce::jlimit(0, 2, (int)pFftConvSize->load()) : 1;
+    const int initHop = kSizes[initSizeIdx] / 2;
+    convOutReadPos  = 0;
+    convOutWritePos = initHop;
+    convOutCount    = initHop;
+    prevConvSizeIdx = initSizeIdx;
+
+    // Spectral SC analysis state
+    std::fill(std::begin(scSpectralRing), std::end(scSpectralRing), 0.0f);
+    std::fill(std::begin(spectralMags),   std::end(spectralMags),   0.0f);
+    scSpectralHead = 0;
+
+    // Latency: report initial value based on current params
+    const int initLatency = getConvLatencySamples();
+    setLatencySamples(initLatency);
+    prevLatencyReported = initLatency;
 
     currentSampleRate.store(sampleRate);
     currentBlockSize.store(samplesPerBlock);
@@ -319,11 +389,48 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     dynParams.hard_limit_gate = (*pLimiter   > 0.5f);
     dynParams.calculation     = dynamicsProcessorType::kCompressor;
 
+    // --- Read mode params
+    const int  mode       = pSidechainMode ? juce::jlimit(0, 2, (int) pSidechainMode->load()) : 1;
+    const bool useConv    = pFftConv && (*pFftConv > 0.5f);
+    const int  sizeIdx    = pFftConvSize ? juce::jlimit(0, 2, (int) pFftConvSize->load()) : 1;
+    static constexpr int kConvSizes[3] = { 512, 1024, 2048 };
+    const int  activeConvFftSize = kConvSizes[sizeIdx];
+    const int  hopSize           = activeConvFftSize / 2;
+
+    // Reset conv state if user changed FFT size
+    if (sizeIdx != prevConvSizeIdx)
+    {
+        std::fill(std::begin(convInRingL), std::end(convInRingL), 0.0f);
+        std::fill(std::begin(convInRingR), std::end(convInRingR), 0.0f);
+        std::fill(std::begin(convScRing),  std::end(convScRing),  0.0f);
+        std::fill(std::begin(convOvlL),    std::end(convOvlL),    0.0f);
+        std::fill(std::begin(convOvlR),    std::end(convOvlR),    0.0f);
+        std::fill(std::begin(convOutFifoL), std::end(convOutFifoL), 0.0f);
+        std::fill(std::begin(convOutFifoR), std::end(convOutFifoR), 0.0f);
+        convInWritePos  = 0;
+        convScWritePos  = 0;
+        convNewCount    = 0;
+        convOutReadPos  = 0;
+        convOutWritePos = hopSize;
+        convOutCount    = hopSize;
+        prevConvSizeIdx = sizeIdx;
+    }
+
+    // Update reported latency when mode/conv toggle changes
+    const int newLatency = (mode == 2 && useConv) ? hopSize : 0;
+    if (newLatency != prevLatencyReported)
+    {
+        setLatencySamples(newLatency);
+        prevLatencyReported = newLatency;
+    }
+
     for (int b = 0; b < numBands; ++b)
     {
         bandProcessorsL[b].setParameters(dynParams);
         bandProcessorsR[b].setParameters(dynParams);
     }
+    widebandProcessorL.setParameters(dynParams);
+    widebandProcessorR.setParameters(dynParams);
 
     // --- Update crossover frequencies (smoother advances inside processBlock)
     for (int i = 0; i < StereoMultibandCrossover::numCrossoverPoints; ++i)
@@ -343,7 +450,6 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     const float* mainL = mainInput.getReadPointer(0);
     const float* mainR = isStereo ? mainInput.getReadPointer(1) : mainL;
 
-    // Cache SC read pointers once (used for both metering and crossover)
     const float* scLPtr = useSidechain ? scInput.getReadPointer(0) : mainL;
     const float* scRPtr = useSidechain
                           ? (scInput.getNumChannels() > 1 ? scInput.getReadPointer(1) : scLPtr)
@@ -367,39 +473,169 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         }
     }
 
-    // --- Crossover split into per-band buffers
-    float* mbL[numBands], *mbR[numBands], *sbL[numBands], *sbR[numBands];
-    for (int b = 0; b < numBands; ++b)
-    {
-        mbL[b] = mainBandBufL.getWritePointer(b);
-        mbR[b] = mainBandBufR.getWritePointer(b);
-        sbL[b] = scBandBufL.getWritePointer(b);
-        sbR[b] = scBandBufR.getWritePointer(b);
-    }
-
-    crossover.processBlock(mainL, mainR, scLPtr, scRPtr, mbL, mbR, sbL, sbR, numSamples);
-
-    // --- Dynamics (band-outer/sample-inner for processor state cache locality)
-    //     Accumulate directly into output buffer to merge the summation pass
     auto* outL = mainInput.getWritePointer(0);
     auto* outR = isStereo ? mainInput.getWritePointer(1) : nullptr;
 
-    juce::FloatVectorOperations::fill(outL, 0.0f, numSamples);
-    if (outR) juce::FloatVectorOperations::fill(outR, 0.0f, numSamples);
+    float grAmountDb = 0.0f;
 
-    for (int b = 0; b < numBands; ++b)
+    if (mode == 0)
     {
+        // === WIDEBAND ===
+        // Bypass crossover, single compressor pair. mainL/outL may share storage,
+        // but we read in[n] before writing out[n], which is safe.
         for (int n = 0; n < numSamples; ++n)
         {
+            const double inL = static_cast<double>(mainL[n]);
+            const double inR = isStereo ? static_cast<double>(mainR[n]) : inL;
+
             if (useSidechain)
             {
-                bandProcessorsL[b].processSidechainInputSample(static_cast<double>(sbL[b][n]));
-                bandProcessorsR[b].processSidechainInputSample(static_cast<double>(sbR[b][n]));
+                widebandProcessorL.processSidechainInputSample(static_cast<double>(scLPtr[n]));
+                widebandProcessorR.processSidechainInputSample(static_cast<double>(scRPtr[n]));
             }
-            outL[n] += static_cast<float>(bandProcessorsL[b].processSample(static_cast<double>(mbL[b][n])));
-            const float pR = static_cast<float>(bandProcessorsR[b].processSample(static_cast<double>(mbR[b][n])));
-            if (outR) outR[n] += pR;
+            const double pL = widebandProcessorL.processSample(inL);
+            const double pR = widebandProcessorR.processSample(inR);
+            outL[n] = static_cast<float>(pL);
+            if (outR) outR[n] = static_cast<float>(pR);
         }
+        grAmountDb = std::max(
+            -static_cast<float>(widebandProcessorL.getGainReductionDb()),
+            -static_cast<float>(widebandProcessorR.getGainReductionDb()));
+    }
+    else if (mode == 1 || (mode == 2 && !useConv))
+    {
+        // === MULTIBAND (mode 1) or SPECTRAL without conv (mode 2 + !useConv) ===
+        float* mbL[numBands], *mbR[numBands], *sbL[numBands], *sbR[numBands];
+        for (int b = 0; b < numBands; ++b)
+        {
+            mbL[b] = mainBandBufL.getWritePointer(b);
+            mbR[b] = mainBandBufR.getWritePointer(b);
+            sbL[b] = scBandBufL.getWritePointer(b);
+            sbR[b] = scBandBufR.getWritePointer(b);
+        }
+        crossover.processBlock(mainL, mainR, scLPtr, scRPtr, mbL, mbR, sbL, sbR, numSamples);
+
+        juce::FloatVectorOperations::fill(outL, 0.0f, numSamples);
+        if (outR) juce::FloatVectorOperations::fill(outR, 0.0f, numSamples);
+
+        // Spectral mode: per-band SC energy via FFT (zero-latency, look-back window)
+        float perBandScLevel[numBands] = {};
+        if (mode == 2 && useSidechain)
+        {
+            for (int n = 0; n < numSamples; ++n)
+            {
+                scSpectralRing[scSpectralHead] = 0.5f * (scLPtr[n] + scRPtr[n]);
+                scSpectralHead = (scSpectralHead + 1) % kSpectralFftSize;
+            }
+            for (int i = 0; i < kSpectralFftSize; ++i)
+                spectralWorkBuf[i] = scSpectralRing[(scSpectralHead + i) % kSpectralFftSize];
+            std::fill(spectralWorkBuf + kSpectralFftSize,
+                      spectralWorkBuf + kSpectralFftSize * 2, 0.0f);
+            spectralWindow.multiplyWithWindowingTable(spectralWorkBuf, kSpectralFftSize);
+            spectralFft.performRealOnlyForwardTransform(spectralWorkBuf);
+
+            const float invN = 1.0f / (float) kSpectralFftSize;
+            spectralMags[0] = std::abs(spectralWorkBuf[0]) * invN;
+            for (int k = 1; k < kSpectralFftSize / 2; ++k)
+            {
+                const float re = spectralWorkBuf[2 * k];
+                const float im = spectralWorkBuf[2 * k + 1];
+                spectralMags[k] = std::sqrt(re * re + im * im) * invN;
+            }
+
+            const double sr = std::max(1.0, getSampleRate());
+            double bandEdges[numBands + 1];
+            bandEdges[0] = 20.0;
+            for (int i = 0; i < StereoMultibandCrossover::numCrossoverPoints; ++i)
+                bandEdges[i + 1] = static_cast<double>(*pXover[i]);
+            bandEdges[numBands] = sr * 0.5;
+
+            for (int b = 0; b < numBands; ++b)
+            {
+                const int kLow  = juce::jmax(1,
+                    (int) std::floor(bandEdges[b]     * (double) kSpectralFftSize / sr));
+                const int kHigh = juce::jmin(kSpectralFftSize / 2 - 1,
+                    (int) std::ceil (bandEdges[b + 1] * (double) kSpectralFftSize / sr));
+                float sumSq = 0.0f;
+                int   count = 0;
+                for (int k = kLow; k <= kHigh; ++k)
+                {
+                    sumSq += spectralMags[k] * spectralMags[k];
+                    ++count;
+                }
+                // *2 compensates for one-sided spectrum + Hann window energy loss
+                perBandScLevel[b] = count > 0 ? std::sqrt(sumSq / (float) count) * 2.0f : 0.0f;
+            }
+        }
+
+        for (int b = 0; b < numBands; ++b)
+        {
+            for (int n = 0; n < numSamples; ++n)
+            {
+                if (useSidechain)
+                {
+                    if (mode == 2)
+                    {
+                        const double scVal = static_cast<double>(perBandScLevel[b]);
+                        bandProcessorsL[b].processSidechainInputSample(scVal);
+                        bandProcessorsR[b].processSidechainInputSample(scVal);
+                    }
+                    else
+                    {
+                        bandProcessorsL[b].processSidechainInputSample(static_cast<double>(sbL[b][n]));
+                        bandProcessorsR[b].processSidechainInputSample(static_cast<double>(sbR[b][n]));
+                    }
+                }
+                outL[n] += static_cast<float>(bandProcessorsL[b].processSample(static_cast<double>(mbL[b][n])));
+                const float pR = static_cast<float>(bandProcessorsR[b].processSample(static_cast<double>(mbR[b][n])));
+                if (outR) outR[n] += pR;
+            }
+        }
+
+        for (int b = 0; b < numBands; ++b)
+        {
+            grAmountDb = std::max(grAmountDb, -static_cast<float>(bandProcessorsL[b].getGainReductionDb()));
+            grAmountDb = std::max(grAmountDb, -static_cast<float>(bandProcessorsR[b].getGainReductionDb()));
+        }
+    }
+    else
+    {
+        // === SPECTRAL + FFT CONV (mode 2 + useConv) ===
+        // Copy input to scratch since mainInput buffer may alias output
+        float* tmpL = mainBandBufL.getWritePointer(0);
+        float* tmpR = mainBandBufR.getWritePointer(0);
+        juce::FloatVectorOperations::copy(tmpL, mainL, numSamples);
+        if (isStereo) juce::FloatVectorOperations::copy(tmpR, mainR, numSamples);
+
+        for (int n = 0; n < numSamples; ++n)
+        {
+            const float inL = tmpL[n];
+            const float inR = isStereo ? tmpR[n] : tmpL[n];
+
+            convInRingL[convInWritePos] = inL;
+            convInRingR[convInWritePos] = inR;
+            convInWritePos = (convInWritePos + 1) % activeConvFftSize;
+
+            convScRing[convScWritePos] = useSidechain
+                ? 0.5f * (scLPtr[n] + scRPtr[n])
+                : 0.0f;
+            convScWritePos = (convScWritePos + 1) % activeConvFftSize;
+
+            if (++convNewCount >= hopSize)
+            {
+                convNewCount = 0;
+                processConvFrame(activeConvFftSize, sizeIdx,
+                                 dynParams.threshold_dB, dynParams.ratio,
+                                 useSidechain);
+            }
+
+            outL[n] = convOutFifoL[convOutReadPos];
+            if (outR) outR[n] = convOutFifoR[convOutReadPos];
+            convOutReadPos = (convOutReadPos + 1) % kConvOutFifoSize;
+            if (convOutCount > 0) --convOutCount;
+        }
+
+        grAmountDb = convFrameGrDb;
     }
 
     // --- Output FFT push
@@ -407,14 +643,6 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     {
         const float outMono = outR ? 0.5f * (outL[n] + outR[n]) : outL[n];
         pushNextSampleIntoFifo(outMono, outputFifo, outputFifoIndex, outputFftBuffer, outputBlockReady);
-    }
-
-    // --- Metering — worst-case (max) GR across all bands and both channels
-    float grAmountDb = 0.0f;
-    for (int b = 0; b < numBands; ++b)
-    {
-        grAmountDb = std::max(grAmountDb, -static_cast<float>(bandProcessorsL[b].getGainReductionDb()));
-        grAmountDb = std::max(grAmountDb, -static_cast<float>(bandProcessorsR[b].getGainReductionDb()));
     }
 
     const float monPeakIn  = useSidechain ? sidechainPeakIn : blockPeakIn;
@@ -431,8 +659,8 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     gainReductionAmountDb.store(gainReductionSmoothedDb);
     inputLevelDb.store(inputLevelSmoothedDb);
 
-    const auto   endTime       = juce::Time::getHighResolutionTicks();
-    const double elapsedMs     = 1000.0 * static_cast<double>(endTime - startTime) / static_cast<double>(ticksPerSecond);
+    const auto   endTime         = juce::Time::getHighResolutionTicks();
+    const double elapsedMs       = 1000.0 * static_cast<double>(endTime - startTime) / static_cast<double>(ticksPerSecond);
     const double blockDurationMs = 1000.0 * static_cast<double>(numSamples) / std::max(1.0, getSampleRate());
 
     processTimeMs.store(static_cast<float>(elapsedMs));
@@ -443,6 +671,97 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     aboveThresholdDb.store(aboveThreshold);
     currentBlockSize.store(numSamples);
     sidechainConnected.store(scConnected);
+}
+
+void MaybeDuckAudioProcessor::processConvFrame(int fftSize, int sizeIdx,
+                                                double thresholdDb, double ratio,
+                                                bool useSidechain)
+{
+    const int hopSize = fftSize / 2;
+    auto& fft = *convFftObjs[sizeIdx];
+    auto& win = *convWinObjs[sizeIdx];
+
+    // Assemble frames from ring buffers (oldest → newest)
+    for (int i = 0; i < fftSize; ++i)
+        convWorkL[i] = convInRingL[(convInWritePos + i) % fftSize];
+    std::fill(convWorkL + fftSize, convWorkL + 2 * fftSize, 0.0f);
+
+    for (int i = 0; i < fftSize; ++i)
+        convWorkR[i] = convInRingR[(convInWritePos + i) % fftSize];
+    std::fill(convWorkR + fftSize, convWorkR + 2 * fftSize, 0.0f);
+
+    for (int i = 0; i < fftSize; ++i)
+        convScWork[i] = convScRing[(convScWritePos + i) % fftSize];
+    std::fill(convScWork + fftSize, convScWork + 2 * fftSize, 0.0f);
+
+    win.multiplyWithWindowingTable(convWorkL,  fftSize);
+    win.multiplyWithWindowingTable(convWorkR,  fftSize);
+    win.multiplyWithWindowingTable(convScWork, fftSize);
+
+    fft.performRealOnlyForwardTransform(convWorkL);
+    fft.performRealOnlyForwardTransform(convWorkR);
+    fft.performRealOnlyForwardTransform(convScWork);
+
+    const float invN      = 1.0f / (float) fftSize;
+    const float threshLin = juce::Decibels::decibelsToGain(static_cast<float>(thresholdDb));
+    const float invRatio  = 1.0f / static_cast<float>(juce::jmax(0.001, ratio));
+    float worstGainDb     = 0.0f;
+
+    auto binGain = [&](float scMag) -> float
+    {
+        if (!useSidechain) return 1.0f;
+        if (scMag <= threshLin) return 1.0f;
+        const float overDb = juce::Decibels::gainToDecibels(scMag / threshLin);
+        const float gainDb = (invRatio - 1.0f) * overDb;  // negative
+        if (gainDb < worstGainDb) worstGainDb = gainDb;
+        return juce::Decibels::decibelsToGain(gainDb);
+    };
+
+    // DC bin (real-only at index 0)
+    {
+        const float scMag = std::abs(convScWork[0]) * invN;
+        const float g = binGain(scMag);
+        convWorkL[0] *= g;
+        convWorkR[0] *= g;
+    }
+    // Nyquist (real-only, packed at index 1)
+    {
+        const float scMag = std::abs(convScWork[1]) * invN;
+        const float g = binGain(scMag);
+        convWorkL[1] *= g;
+        convWorkR[1] *= g;
+    }
+    // Mid bins (Re, Im interleaved)
+    for (int k = 1; k < fftSize / 2; ++k)
+    {
+        const float re = convScWork[2 * k];
+        const float im = convScWork[2 * k + 1];
+        const float scMag = std::sqrt(re * re + im * im) * invN;
+        const float g = binGain(scMag);
+        convWorkL[2 * k    ] *= g;
+        convWorkL[2 * k + 1] *= g;
+        convWorkR[2 * k    ] *= g;
+        convWorkR[2 * k + 1] *= g;
+    }
+
+    fft.performRealOnlyInverseTransform(convWorkL);
+    fft.performRealOnlyInverseTransform(convWorkR);
+
+    // OLA: emit first half + overlap, save second half as next overlap
+    for (int i = 0; i < hopSize; ++i)
+    {
+        convOutFifoL[convOutWritePos] = convWorkL[i] + convOvlL[i];
+        convOutFifoR[convOutWritePos] = convWorkR[i] + convOvlR[i];
+        convOutWritePos = (convOutWritePos + 1) % kConvOutFifoSize;
+        if (convOutCount < kConvOutFifoSize) ++convOutCount;
+    }
+    for (int i = 0; i < hopSize; ++i)
+    {
+        convOvlL[i] = convWorkL[hopSize + i];
+        convOvlR[i] = convWorkR[hopSize + i];
+    }
+
+    convFrameGrDb = -worstGainDb;
 }
 
 //==============================================================================

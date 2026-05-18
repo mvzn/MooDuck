@@ -153,5 +153,16 @@ private:
     juce::Label  xoverLabels[4];
     std::unique_ptr<SliderAttachment> xoverAttachments[4];
 
+    // Sidechain mode + FFT Conv section
+    juce::Label      modeSectionLabel;
+    juce::TextButton modeButtons[3];      // Wideband / Multiband / Spectral
+    juce::ToggleButton fftConvButton;
+    std::unique_ptr<ButtonAttachment> fftConvAttachment;
+    juce::TextButton convSizeButtons[3];  // 512 / 1024 / 2048
+    juce::Label      convLatencyLabel;
+
+    void setModeFromButton(int idx);
+    void setConvSizeFromButton(int idx);
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MaybeDuckAudioProcessorEditor)
 };

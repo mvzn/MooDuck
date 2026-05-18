@@ -70,6 +70,9 @@ public:
     std::atomic<float>* pSoftKnee  = nullptr;
     std::atomic<float>* pLimiter   = nullptr;
     std::atomic<float>* pXover[StereoMultibandCrossover::numCrossoverPoints] = {};
+    std::atomic<float>* pSidechainMode = nullptr;
+    std::atomic<float>* pFftConv       = nullptr;
+    std::atomic<float>* pFftConvSize   = nullptr;
 
     // monitoring
     float getCpuUsagePercent() const noexcept      { return cpuUsagePercent.load(); }
@@ -81,6 +84,9 @@ public:
     double getCurrentSampleRateHz() const noexcept { return currentSampleRate.load(); }
     int getCurrentBlockSize() const noexcept       { return currentBlockSize.load(); }
     bool isSidechainConnected() const noexcept     { return sidechainConnected.load(); }
+
+    // Latency reporting for FFT Conv mode (hopSize = fftSize/2 when active)
+    int getConvLatencySamples() const noexcept;
 
     static constexpr int fftOrder = 11;
     static constexpr int fftSize  = 1 << fftOrder;
@@ -99,6 +105,54 @@ private:
 
     juce::AudioBuffer<float> mainBandBufL, mainBandBufR;
     juce::AudioBuffer<float> scBandBufL,   scBandBufR;
+
+    // Wideband mode (bypass crossover)
+    DynamicsProcessor widebandProcessorL, widebandProcessorR;
+
+    // Spectral SC analysis (1024-pt fixed, zero-latency)
+    static constexpr int kSpectralFftOrder = 10;
+    static constexpr int kSpectralFftSize  = 1 << kSpectralFftOrder;
+    juce::dsp::FFT spectralFft { kSpectralFftOrder };
+    juce::dsp::WindowingFunction<float> spectralWindow {
+        (size_t)kSpectralFftSize, juce::dsp::WindowingFunction<float>::hann };
+    float scSpectralRing[kSpectralFftSize] = {};
+    int   scSpectralHead = 0;
+    float spectralWorkBuf[kSpectralFftSize * 2] = {};
+    float spectralMags   [kSpectralFftSize / 2] = {};
+
+    // FFT Conv (overlap-add STFT, user-selectable: 512 / 1024 / 2048)
+    static constexpr int kMaxConvFftSize = 2048;
+    std::unique_ptr<juce::dsp::FFT>                      convFftObjs[3]; // orders 9,10,11
+    std::unique_ptr<juce::dsp::WindowingFunction<float>> convWinObjs[3]; // sizes 512,1024,2048
+
+    float convInRingL [kMaxConvFftSize]     = {};
+    float convInRingR [kMaxConvFftSize]     = {};
+    float convScRing  [kMaxConvFftSize]     = {};   // mono SC mix
+    int   convInWritePos = 0;
+    int   convScWritePos = 0;
+    int   convNewCount   = 0;
+
+    float convOvlL[kMaxConvFftSize / 2]    = {};
+    float convOvlR[kMaxConvFftSize / 2]    = {};
+
+    static constexpr int kConvOutFifoSize = kMaxConvFftSize * 2;
+    float convOutFifoL[kConvOutFifoSize]   = {};
+    float convOutFifoR[kConvOutFifoSize]   = {};
+    int   convOutReadPos  = 0;
+    int   convOutWritePos = 0;
+    int   convOutCount    = 0;
+
+    float convWorkL [kMaxConvFftSize * 2]  = {};
+    float convWorkR [kMaxConvFftSize * 2]  = {};
+    float convScWork[kMaxConvFftSize * 2]  = {};
+
+    int   prevConvSizeIdx     = 1; // 0=512, 1=1024, 2=2048
+    int   prevLatencyReported = 0;
+    float convFrameGrDb       = 0.0f; // worst-case dB reduction from last conv frame
+
+    void processConvFrame (int fftSize, int sizeIdx,
+                           double thresholdDb, double ratio,
+                           bool useSidechain);
 
     struct BandControlValues
     {

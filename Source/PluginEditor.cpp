@@ -316,9 +316,66 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
             audioProcessor.apvts, xoverIds[i], xoverSliders[i]);
     }
 
+    // --- Sidechain mode section
+    modeSectionLabel.setText("Sidechain Mode", juce::dontSendNotification);
+    modeSectionLabel.setFont(juce::Font(juce::FontOptions{}.withHeight(13.0f).withStyle("Bold")));
+    modeSectionLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+    modeSectionLabel.setJustificationType(juce::Justification::centredLeft);
+    addAndMakeVisible(modeSectionLabel);
+
+    const juce::String modeNames[3] = { "Wideband", "Multiband", "Spectral" };
+    for (int i = 0; i < 3; ++i)
+    {
+        modeButtons[i].setButtonText(modeNames[i]);
+        modeButtons[i].setClickingTogglesState(false);
+        modeButtons[i].setRadioGroupId(0x101); // visual grouping only; logic in click handler
+        addAndMakeVisible(modeButtons[i]);
+        modeButtons[i].onClick = [this, i] { setModeFromButton(i); };
+    }
+
+    fftConvButton.setButtonText("FFT Conv");
+    addAndMakeVisible(fftConvButton);
+    fftConvAttachment = std::make_unique<ButtonAttachment>(
+        audioProcessor.apvts, "fftConvolution", fftConvButton);
+
+    const juce::String convSizeNames[3] = { "512", "1024", "2048" };
+    for (int i = 0; i < 3; ++i)
+    {
+        convSizeButtons[i].setButtonText(convSizeNames[i]);
+        convSizeButtons[i].setClickingTogglesState(false);
+        convSizeButtons[i].setRadioGroupId(0x102);
+        addAndMakeVisible(convSizeButtons[i]);
+        convSizeButtons[i].onClick = [this, i] { setConvSizeFromButton(i); };
+    }
+
+    convLatencyLabel.setText("Latency: 0 samples (0.0 ms)", juce::dontSendNotification);
+    convLatencyLabel.setJustificationType(juce::Justification::centredLeft);
+    convLatencyLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+    addAndMakeVisible(convLatencyLabel);
+
     startTimerHz(30);
 
-    setSize (820, 660);
+    setSize (820, 740);
+}
+
+void MaybeDuckAudioProcessorEditor::setModeFromButton(int idx)
+{
+    if (auto* p = audioProcessor.apvts.getParameter("sidechainMode"))
+    {
+        p->beginChangeGesture();
+        p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(idx)));
+        p->endChangeGesture();
+    }
+}
+
+void MaybeDuckAudioProcessorEditor::setConvSizeFromButton(int idx)
+{
+    if (auto* p = audioProcessor.apvts.getParameter("fftConvSize"))
+    {
+        p->beginChangeGesture();
+        p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(idx)));
+        p->endChangeGesture();
+    }
 }
 
 MaybeDuckAudioProcessorEditor::~MaybeDuckAudioProcessorEditor()
@@ -384,6 +441,20 @@ void MaybeDuckAudioProcessorEditor::resized()
     softKneeButton.setBounds (buttonArea.removeFromLeft(120));
     limiterButton.setBounds  (buttonArea.removeFromLeft(100));
 
+    // --- Mode + FFT Conv section
+    modeSectionLabel.setBounds(area.removeFromTop(22));
+
+    auto modeRow = area.removeFromTop(32);
+    const int modeBtnW = 110;
+    for (int i = 0; i < 3; ++i)
+        modeButtons[i].setBounds(modeRow.removeFromLeft(modeBtnW).reduced(2));
+
+    auto convRow = area.removeFromTop(32);
+    fftConvButton.setBounds(convRow.removeFromLeft(110).reduced(2));
+    for (int i = 0; i < 3; ++i)
+        convSizeButtons[i].setBounds(convRow.removeFromLeft(60).reduced(2));
+    convLatencyLabel.setBounds(convRow.reduced(4));
+
     auto statsArea = area.removeFromTop(28);
     auto statW = statsArea.getWidth() / 5;
     aboveThresholdLabel.setBounds(statsArea.removeFromLeft(statW));
@@ -413,4 +484,43 @@ void MaybeDuckAudioProcessorEditor::timerCallback()
     compressorMeter.setLevels(audioProcessor.getInputLevelDb(), audioProcessor.getGainReductionAmountDb());
 
     spectrumComponent.update();
+
+    // --- Sync mode + size button visual state from APVTS
+    const int mode = juce::jlimit(0, 2,
+        static_cast<int>(*audioProcessor.apvts.getRawParameterValue("sidechainMode")));
+    const int sizeIdx = juce::jlimit(0, 2,
+        static_cast<int>(*audioProcessor.apvts.getRawParameterValue("fftConvSize")));
+    const bool fftConvOn = (*audioProcessor.apvts.getRawParameterValue("fftConvolution") > 0.5f);
+    const bool spectralActive = (mode == 2);
+
+    for (int i = 0; i < 3; ++i)
+    {
+        const bool selected = (i == mode);
+        modeButtons[i].setColour(juce::TextButton::buttonColourId,
+            selected ? juce::Colour(0xff4285f4) : juce::Colour(0xff262626));
+        modeButtons[i].setColour(juce::TextButton::textColourOffId,
+            selected ? juce::Colours::white : juce::Colours::lightgrey);
+    }
+
+    fftConvButton.setEnabled(spectralActive);
+    for (int i = 0; i < 3; ++i)
+    {
+        const bool selected = (i == sizeIdx);
+        convSizeButtons[i].setEnabled(spectralActive && fftConvOn);
+        convSizeButtons[i].setColour(juce::TextButton::buttonColourId,
+            selected ? juce::Colour(0xfffbbc04) : juce::Colour(0xff262626));
+        convSizeButtons[i].setColour(juce::TextButton::textColourOffId,
+            selected ? juce::Colours::black : juce::Colours::lightgrey);
+    }
+
+    // Crossover sliders are not used in Wideband mode
+    for (int i = 0; i < 4; ++i)
+        xoverSliders[i].setEnabled(mode != 0);
+
+    const int latSamples = audioProcessor.getConvLatencySamples();
+    const double sr = juce::jmax(1.0, audioProcessor.getCurrentSampleRateHz());
+    const double latMs = 1000.0 * latSamples / sr;
+    convLatencyLabel.setText("Latency: " + juce::String(latSamples) + " smp ("
+                              + juce::String(latMs, 1) + " ms)",
+                              juce::dontSendNotification);
 }
