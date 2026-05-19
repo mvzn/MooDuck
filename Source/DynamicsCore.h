@@ -106,6 +106,15 @@ public:
         return;
     }
 
+    // Override the detector's internal envelope to a target dB value. Used by the hold
+    // stage so that when hold expires, release continues smoothly from the held peak
+    // rather than snapping to whatever the detector decayed to during hold.
+    void setLastEnvDb(double db) noexcept
+    {
+        const double env = std::pow(10.0, db * 0.05);
+        last_env = (m_detect_params.detect_mode == DetectModes::RMS) ? (env * env) : env;
+    }
+
 protected:
     DetectorParameters m_detect_params;
 
@@ -152,6 +161,7 @@ struct DynamicsProcessorParameters
             calculation = params.calculation;
             attack_ms = params.attack_ms;
             release_ms = params.release_ms;
+            hold_ms = params.hold_ms;
             makeup_gain = params.makeup_gain;
             output_gain_dB = params.output_gain_dB;
 
@@ -169,6 +179,7 @@ struct DynamicsProcessorParameters
     dynamicsProcessorType calculation = dynamicsProcessorType::kCompressor;
     double attack_ms = 0.0;
     double release_ms = 0.0;
+    double hold_ms = 0.0;
     double makeup_gain = 1.0;
     double output_gain_dB = 0.0;
 
@@ -187,11 +198,15 @@ public:
     bool reset (double _sampleRate)
     {
         sc_xn = 0.0;
+        fs_ = _sampleRate;
         m_detector.reset(_sampleRate);
         DetectorParameters detector_params = m_detector.getDetectParameters();
         detector_params.clamp = false;
         detector_params.detect_dB = true;
         m_detector.setDetectParameters(detector_params);
+        peak_detect_dB = -200.0;
+        hold_counter = 0;
+        hold_samples = static_cast<int>(std::lround(std::max(0.0, m_dynamics_params.hold_ms) * fs_ * 0.001));
         return true;
     }
 
@@ -215,6 +230,8 @@ public:
                                        _parameters.release_ms     != m_dynamics_params.release_ms    ||
                                        _parameters.output_gain_dB != m_dynamics_params.output_gain_dB);
 
+        const bool needsHoldUpdate = (_parameters.hold_ms != m_dynamics_params.hold_ms);
+
         // makeup_gain is computed here, not supplied by caller; save it so the assignment below
         // doesn't clobber it when we skip the recalc (caller's struct always has default 1.0)
         const double savedMakeupGain = m_dynamics_params.makeup_gain;
@@ -232,19 +249,45 @@ public:
         {
             m_dynamics_params.makeup_gain = savedMakeupGain;
         }
+
+        if (needsHoldUpdate)
+            hold_samples = static_cast<int>(std::lround(std::max(0.0, m_dynamics_params.hold_ms) * fs_ * 0.001));
     }
 
     double processSample(double xn)
     {
-        double detect_dB = 0.0;
-        
-        if (m_dynamics_params.enable_sc)
-            detect_dB = m_detector.processSample(sc_xn);
+        const double in_for_detect = m_dynamics_params.enable_sc ? sc_xn : xn;
+        const double raw_detect_dB = m_detector.processSample(in_for_detect);
+
+        double effective_detect_dB = raw_detect_dB;
+
+        if (hold_samples > 0)
+        {
+            // Hold the detector at its peak after the signal starts decaying so that
+            // gain reduction stays pinned for hold_ms before release begins. Writing
+            // peak back into the detector keeps release continuous (no snap at hold end).
+            if (raw_detect_dB >= peak_detect_dB)
+            {
+                peak_detect_dB = raw_detect_dB;
+                hold_counter   = hold_samples;
+            }
+            else if (hold_counter > 0)
+            {
+                effective_detect_dB = peak_detect_dB;
+                m_detector.setLastEnvDb(peak_detect_dB);
+                --hold_counter;
+            }
+            else
+            {
+                peak_detect_dB = raw_detect_dB;
+            }
+        }
         else
-            detect_dB = m_detector.processSample(xn);
+        {
+            peak_detect_dB = raw_detect_dB;
+        }
 
-        double gr = computeGain(detect_dB);
-
+        const double gr = computeGain(effective_detect_dB);
         return xn * gr * m_dynamics_params.makeup_gain;
     }
 
@@ -253,6 +296,10 @@ protected:
     DynamicsProcessorParameters m_dynamics_params;
 
     double sc_xn = 0.0;
+    double fs_   = 44100.0;
+    int    hold_samples   = 0;
+    int    hold_counter   = 0;
+    double peak_detect_dB = -200.0;
 
     inline double computeGain(double detect_dB)
     {

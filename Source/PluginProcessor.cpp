@@ -35,6 +35,7 @@ MaybeDuckAudioProcessor::MaybeDuckAudioProcessor()
     pRatio     = apvts.getRawParameterValue("ratio");
     pAttack    = apvts.getRawParameterValue("attack");
     pRelease   = apvts.getRawParameterValue("release");
+    pHold      = apvts.getRawParameterValue("hold");
     pKnee      = apvts.getRawParameterValue("knee");
     pOutput    = apvts.getRawParameterValue("output");
     pScEnable  = apvts.getRawParameterValue("sidechainEnable");
@@ -95,6 +96,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout MaybeDuckAudioProcessor::cre
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "release", "Release", juce::NormalisableRange<float>(20.0f, 5000.0f, 1.0f, 0.5f), 100.0f));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "hold", "Hold", juce::NormalisableRange<float>(0.0f, 2000.0f, 1.0f, 0.5f), 0.0f));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "knee", "Knee", juce::NormalisableRange<float>(0.0f, 24.0f, 0.1f), 6.0f));
@@ -382,6 +386,7 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     dynParams.ratio           = *pRatio;
     dynParams.attack_ms       = *pAttack;
     dynParams.release_ms      = *pRelease;
+    dynParams.hold_ms         = *pHold;
     dynParams.knee_width_dB   = *pKnee;
     dynParams.output_gain_dB  = *pOutput;
     dynParams.enable_sc       = (*pScEnable  > 0.5f);

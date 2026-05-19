@@ -64,6 +64,7 @@ public:
     std::atomic<float>* pRatio     = nullptr;
     std::atomic<float>* pAttack    = nullptr;
     std::atomic<float>* pRelease   = nullptr;
+    std::atomic<float>* pHold      = nullptr;
     std::atomic<float>* pKnee      = nullptr;
     std::atomic<float>* pOutput    = nullptr;
     std::atomic<float>* pScEnable  = nullptr;
