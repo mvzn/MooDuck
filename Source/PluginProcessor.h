@@ -72,6 +72,7 @@ public:
     std::atomic<float>* pSoftKnee  = nullptr;
     std::atomic<float>* pLimiter   = nullptr;
     std::atomic<float>* pXover[StereoMultibandCrossover::numCrossoverPoints] = {};
+    std::atomic<float>* pBandScale[StereoMultibandCrossover::numBands] = {};
     std::atomic<float>* pSidechainMode = nullptr;
     std::atomic<float>* pFftConv       = nullptr;
     std::atomic<float>* pFftConvSize   = nullptr;

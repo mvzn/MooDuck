@@ -325,6 +325,31 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
             audioProcessor.apvts, xoverIds[i], xoverSliders[i]);
     }
 
+    // --- Per-band duck scale section
+    bandScaleSectionLabel.setText("Per-Band Duck Scale", juce::dontSendNotification);
+    bandScaleSectionLabel.setFont(juce::Font(juce::FontOptions{}.withHeight(13.0f).withStyle("Bold")));
+    bandScaleSectionLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+    bandScaleSectionLabel.setJustificationType(juce::Justification::centredLeft);
+    addAndMakeVisible(bandScaleSectionLabel);
+
+    const juce::String bandNames[] = { "B1", "B2", "B3", "B4", "B5" };
+    for (int i = 0; i < 5; ++i)
+    {
+        bandScaleSliders[i].setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+        bandScaleSliders[i].setTextBoxStyle(juce::Slider::TextBoxBelow, false, 70, 20);
+        bandScaleSliders[i].setTextValueSuffix(" dB");
+        bandScaleSliders[i].setNumDecimalPlacesToDisplay(1);
+        addAndMakeVisible(bandScaleSliders[i]);
+
+        bandScaleLabels[i].setText(bandNames[i], juce::dontSendNotification);
+        bandScaleLabels[i].setJustificationType(juce::Justification::centred);
+        bandScaleLabels[i].setColour(juce::Label::textColourId, juce::Colours::white);
+        addAndMakeVisible(bandScaleLabels[i]);
+
+        bandScaleAttachments[i] = std::make_unique<SliderAttachment>(
+            audioProcessor.apvts, "bandScale" + juce::String(i), bandScaleSliders[i]);
+    }
+
     // --- Sidechain mode section
     modeSectionLabel.setText("Sidechain Mode", juce::dontSendNotification);
     modeSectionLabel.setFont(juce::Font(juce::FontOptions{}.withHeight(13.0f).withStyle("Bold")));
@@ -364,7 +389,7 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
 
     startTimerHz(30);
 
-    setSize (820, 740);
+    setSize (820, 820);
 }
 
 void MaybeDuckAudioProcessorEditor::setModeFromButton(int idx)
@@ -437,7 +462,7 @@ void MaybeDuckAudioProcessorEditor::resized()
 
     // Crossover section
     crossoverSectionLabel.setBounds(area.removeFromTop(22));
-    auto xoverArea   = area.removeFromTop(138);
+    auto xoverArea   = area.removeFromTop(108);
     auto xoverColW   = xoverArea.getWidth() / 4;
 
     for (int i = 0; i < 4; ++i)
@@ -445,6 +470,17 @@ void MaybeDuckAudioProcessorEditor::resized()
         auto col = xoverArea.removeFromLeft(xoverColW).reduced(4);
         xoverLabels[i].setBounds(col.removeFromTop(20));
         xoverSliders[i].setBounds(col);
+    }
+
+    // Per-band duck scale section (5 smaller knobs in a row below the crossover knobs)
+    bandScaleSectionLabel.setBounds(area.removeFromTop(22));
+    auto bsArea = area.removeFromTop(96);
+    auto bsColW = bsArea.getWidth() / 5;
+    for (int i = 0; i < 5; ++i)
+    {
+        auto col = bsArea.removeFromLeft(bsColW).reduced(4);
+        bandScaleLabels[i].setBounds(col.removeFromTop(18));
+        bandScaleSliders[i].setBounds(col);
     }
 
     auto buttonArea = area.removeFromTop(36);

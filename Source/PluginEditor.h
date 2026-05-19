@@ -156,6 +156,12 @@ private:
     juce::Label  xoverLabels[4];
     std::unique_ptr<SliderAttachment> xoverAttachments[4];
 
+    // Per-band duck scale (offset in dB applied to the computed gain-reduction amount)
+    juce::Label bandScaleSectionLabel;
+    juce::Slider bandScaleSliders[5];
+    juce::Label  bandScaleLabels[5];
+    std::unique_ptr<SliderAttachment> bandScaleAttachments[5];
+
     // Sidechain mode + FFT Conv section
     juce::Label      modeSectionLabel;
     juce::TextButton modeButtons[3];      // Wideband / Multiband / Spectral

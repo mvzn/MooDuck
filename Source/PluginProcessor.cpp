@@ -45,6 +45,9 @@ MaybeDuckAudioProcessor::MaybeDuckAudioProcessor()
     for (int i = 0; i < StereoMultibandCrossover::numCrossoverPoints; ++i)
         pXover[i] = apvts.getRawParameterValue("xover" + juce::String(i));
 
+    for (int b = 0; b < StereoMultibandCrossover::numBands; ++b)
+        pBandScale[b] = apvts.getRawParameterValue("bandScale" + juce::String(b));
+
     pSidechainMode = apvts.getRawParameterValue("sidechainMode");
     pFftConv       = apvts.getRawParameterValue("fftConvolution");
     pFftConvSize   = apvts.getRawParameterValue("fftConvSize");
@@ -134,6 +137,18 @@ juce::AudioProcessorValueTreeState::ParameterLayout MaybeDuckAudioProcessor::cre
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "xover3", "Crossover 4",
         juce::NormalisableRange<float>(2000.0f, 20000.0f, 1.0f, 0.3f), 8000.0f));
+
+    // Per-band duck scale: additive dB offset on the computed gain-reduction amount,
+    // floored at 0 dB so a negative offset only undoes existing reduction (no boost).
+    static const char* bandScaleNames[] = { "Band 1 Scale", "Band 2 Scale", "Band 3 Scale", "Band 4 Scale", "Band 5 Scale" };
+    for (int b = 0; b < StereoMultibandCrossover::numBands; ++b)
+    {
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(
+            "bandScale" + juce::String(b),
+            bandScaleNames[b],
+            juce::NormalisableRange<float>(-12.0f, 12.0f, 0.1f),
+            0.0f));
+    }
 
     // 0 = Wideband (bypass crossover), 1 = Multiband, 2 = Spectral
     params.push_back(std::make_unique<juce::AudioParameterInt>(
@@ -633,6 +648,9 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
 
         for (int b = 0; b < numBands; ++b)
         {
+            const float offsetDb   = pBandScale[b] ? pBandScale[b]->load() : 0.0f;
+            const bool  needsScale = std::abs(offsetDb) > 0.005f;
+
             for (int n = 0; n < numSamples; ++n)
             {
                 if (mode == 2)
@@ -646,8 +664,22 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                     bandProcessorsL[b].processSidechainInputSample(static_cast<double>(sbL[b][n]));
                     bandProcessorsR[b].processSidechainInputSample(static_cast<double>(sbR[b][n]));
                 }
-                outL[n] += static_cast<float>(bandProcessorsL[b].processSample(static_cast<double>(mbL[b][n])));
-                const float pR = static_cast<float>(bandProcessorsR[b].processSample(static_cast<double>(mbR[b][n])));
+                float pL = static_cast<float>(bandProcessorsL[b].processSample(static_cast<double>(mbL[b][n])));
+                float pR = static_cast<float>(bandProcessorsR[b].processSample(static_cast<double>(mbR[b][n])));
+
+                if (needsScale)
+                {
+                    // Re-scale the per-sample gain reduction by offsetDb (additive on duck amount, floor at 0).
+                    // ratio = 10^((new_gr_dB - old_gr_dB)/20); new_gr_dB = -max(0, -old_gr_dB + offsetDb).
+                    const float oldGrDbL = static_cast<float>(bandProcessorsL[b].getGainReductionDb());
+                    const float oldGrDbR = static_cast<float>(bandProcessorsR[b].getGainReductionDb());
+                    const float newGrDbL = -juce::jmax(0.0f, -oldGrDbL + offsetDb);
+                    const float newGrDbR = -juce::jmax(0.0f, -oldGrDbR + offsetDb);
+                    pL *= juce::dsp::FastMathApproximations::exp((newGrDbL - oldGrDbL) * 0.11512925f);
+                    pR *= juce::dsp::FastMathApproximations::exp((newGrDbR - oldGrDbR) * 0.11512925f);
+                }
+
+                outL[n] += pL;
                 if (outR) outR[n] += pR;
             }
         }
