@@ -77,6 +77,10 @@ public:
     std::atomic<float>* pFftConv       = nullptr;
     std::atomic<float>* pFftConvSize   = nullptr;
 
+    // Read-only output parameter: GR amount in dB, written from audio thread for host
+    // automation recording. Not used to drive any DSP.
+    juce::AudioParameterFloat* pGrOut = nullptr;
+
     // Post-ducking EQ
     std::atomic<float>* pEqLowFreq  = nullptr;
     std::atomic<float>* pEqLowGain  = nullptr;

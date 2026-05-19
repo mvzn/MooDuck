@@ -52,6 +52,8 @@ MaybeDuckAudioProcessor::MaybeDuckAudioProcessor()
     pFftConv       = apvts.getRawParameterValue("fftConvolution");
     pFftConvSize   = apvts.getRawParameterValue("fftConvSize");
 
+    pGrOut = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("grOut"));
+
     pEqLowFreq  = apvts.getRawParameterValue("eqLowFreq");
     pEqLowGain  = apvts.getRawParameterValue("eqLowGain");
     pEqMidFreq  = apvts.getRawParameterValue("eqMidFreq");
@@ -184,6 +186,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout MaybeDuckAudioProcessor::cre
         "eqHighFreq", "EQ High Freq", juce::NormalisableRange<float>(2000.0f, 20000.0f, 1.0f, 0.3f), 8000.0f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "eqHighGain", "EQ High Gain", juce::NormalisableRange<float>(-12.0f,  12.0f,  0.1f),         0.0f));
+
+    // Output-only parameter: current gain-reduction amount in dB (positive). Written from
+    // the audio thread once per block so hosts can record it as automation. Reading or
+    // editing it from the host has no effect on the DSP.
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "grOut", "GR Output (dB)", juce::NormalisableRange<float>(0.0f, 60.0f, 0.01f), 0.0f));
 
     return {params.begin(), params.end()};
 }
@@ -834,6 +842,16 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     gainReductionDb.store(-grAmountDb);
     gainReductionAmountDb.store(gainReductionSmoothedDb);
     inputLevelDb.store(inputLevelSmoothedDb);
+
+    // Surface the GR amount to the host as a recordable parameter. Skip the notify when
+    // the value hasn't moved by at least 0.05 dB so steady-state doesn't spam listeners.
+    if (pGrOut != nullptr)
+    {
+        const float reported = pGrOut->get();
+        const float desired  = juce::jlimit(0.0f, 60.0f, grAmountDb);
+        if (std::abs(reported - desired) > 0.05f)
+            pGrOut->setValueNotifyingHost(pGrOut->convertTo0to1(desired));
+    }
 
     const auto   endTime         = juce::Time::getHighResolutionTicks();
     const double elapsedMs       = 1000.0 * static_cast<double>(endTime - startTime) / static_cast<double>(ticksPerSecond);
