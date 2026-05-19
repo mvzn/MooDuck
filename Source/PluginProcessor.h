@@ -104,14 +104,6 @@ public:
     // Latency reporting for FFT Conv mode (hopSize = fftSize/2 when active)
     int getConvLatencySamples() const noexcept;
 
-    static constexpr int fftOrder = 11;
-    static constexpr int fftSize  = 1 << fftOrder;
-
-    void pushNextSampleIntoFifo(float sample, float* fifo, int& index, float* fftBuffer, std::atomic<bool>& readyFlag);
-
-    bool getInputFftData(float* dest);
-    bool getSidechainFftData(float* dest);
-    bool getOutputFftData(float* dest);
 private:
     static constexpr int numBands = StereoMultibandCrossover::numBands;
 
@@ -201,24 +193,6 @@ private:
     std::atomic<double> currentSampleRate { 44100.0 };
     std::atomic<int> currentBlockSize { 0 };
     std::atomic<bool> sidechainConnected { false };
-
-    float inputFifo[fftSize] = {};
-    float sidechainFifo[fftSize] = {};
-    float outputFifo[fftSize] = {};
-
-    float inputFftBuffer[fftSize] = {};
-    float sidechainFftBuffer[fftSize] = {};
-    float outputFftBuffer[fftSize] = {};
-
-    int inputFifoIndex = 0;
-    int sidechainFifoIndex = 0;
-    int outputFifoIndex = 0;
-
-    std::atomic<bool> inputBlockReady { false };
-    std::atomic<bool> sidechainBlockReady { false };
-    std::atomic<bool> outputBlockReady { false };
-
-    juce::CriticalSection fftDataLock;
 
     float inputLevelSmoothedDb = -100.0f;
     float gainReductionSmoothedDb = 0.0f;

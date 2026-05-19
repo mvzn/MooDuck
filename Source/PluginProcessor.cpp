@@ -12,6 +12,9 @@
 namespace {
     static constexpr float kRatioSteps[]  = { 1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 8.0f, 16.0f, 20.0f, 40.0f, 60.0f };
     static constexpr int   kNumRatioSteps = 10;
+
+    static constexpr float kLookaheadSteps[]  = { 0.0f, 3.0f, 6.0f, 10.0f };
+    static constexpr int   kNumLookaheadSteps = 4;
 }
 
 //==============================================================================
@@ -114,8 +117,33 @@ juce::AudioProcessorValueTreeState::ParameterLayout MaybeDuckAudioProcessor::cre
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "hold", "Hold", juce::NormalisableRange<float>(0.0f, 2000.0f, 1.0f, 0.5f), 0.0f));
 
+    // Lookahead is stepped: 0 / 3 / 6 / 10 ms
+    juce::NormalisableRange<float> lookaheadRange(
+        0.0f, 10.0f,
+        [](float, float, float v) -> float {
+            const int idx = juce::roundToInt(v * (float)(kNumLookaheadSteps - 1));
+            return kLookaheadSteps[juce::jlimit(0, kNumLookaheadSteps - 1, idx)];
+        },
+        [](float, float, float v) -> float {
+            int best = 0;
+            float bestDist = std::abs(v - kLookaheadSteps[0]);
+            for (int i = 1; i < kNumLookaheadSteps; ++i) {
+                const float d = std::abs(v - kLookaheadSteps[i]);
+                if (d < bestDist) { bestDist = d; best = i; }
+            }
+            return (float) best / (float)(kNumLookaheadSteps - 1);
+        },
+        [](float, float, float v) -> float {
+            float best = kLookaheadSteps[0];
+            float bestDist = std::abs(v - kLookaheadSteps[0]);
+            for (int i = 1; i < kNumLookaheadSteps; ++i) {
+                const float d = std::abs(v - kLookaheadSteps[i]);
+                if (d < bestDist) { bestDist = d; best = kLookaheadSteps[i]; }
+            }
+            return best;
+        });
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
-        "lookahead", "Lookahead", juce::NormalisableRange<float>(0.0f, 10.0f, 0.1f), 0.0f));
+        "lookahead", "Lookahead", lookaheadRange, 0.0f));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "knee", "Knee", juce::NormalisableRange<float>(0.0f, 24.0f, 0.1f), 6.0f));
@@ -382,56 +410,6 @@ MaybeDuckAudioProcessor::applyBandLink(const BandControlValues& gr, float linkAm
     return gr;
 }
 
-void MaybeDuckAudioProcessor::pushNextSampleIntoFifo(float sample,
-                                                     float *fifo,
-                                                     int &index,
-                                                     float *fftBuffer,
-                                                     std::atomic<bool> &readyFlag)
-{
-    if (index == fftSize)
-        return;
-
-    fifo[index++] = sample;
-
-    if (index == fftSize)
-    {
-        const juce::ScopedLock sl(fftDataLock);
-        std::copy(fifo, fifo + fftSize, fftBuffer);
-        readyFlag.store(true);
-        index = 0;
-    }
-}
-
-bool MaybeDuckAudioProcessor::getInputFftData(float *dest)
-{
-    if (!inputBlockReady.exchange(false))
-        return false;
-
-    const juce::ScopedLock sl(fftDataLock);
-    std::copy(inputFftBuffer, inputFftBuffer + fftSize, dest);
-    return true;
-}
-
-bool MaybeDuckAudioProcessor::getSidechainFftData(float *dest)
-{
-    if (!sidechainBlockReady.exchange(false))
-        return false;
-
-    const juce::ScopedLock sl(fftDataLock);
-    std::copy(sidechainFftBuffer, sidechainFftBuffer + fftSize, dest);
-    return true;
-}
-
-bool MaybeDuckAudioProcessor::getOutputFftData(float *dest)
-{
-    if (!outputBlockReady.exchange(false))
-        return false;
-
-    const juce::ScopedLock sl(fftDataLock);
-    std::copy(outputFftBuffer, outputFftBuffer + fftSize, dest);
-    return true;
-}
-
 void MaybeDuckAudioProcessor::releaseResources()
 {
 }
@@ -587,13 +565,11 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     {
         const float mono = 0.5f * (liveMainL[n] + liveMainR[n]);
         blockPeakIn = std::max(blockPeakIn, std::abs(mono));
-        pushNextSampleIntoFifo(mono, inputFifo, inputFifoIndex, inputFftBuffer, inputBlockReady);
 
         if (useSidechain)
         {
             const float scMono = 0.5f * (scLPtr[n] + scRPtr[n]);
             sidechainPeakIn = std::max(sidechainPeakIn, std::abs(scMono));
-            pushNextSampleIntoFifo(scMono, sidechainFifo, sidechainFifoIndex, sidechainFftBuffer, sidechainBlockReady);
         }
     }
 
@@ -820,13 +796,6 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                     outR[n] = eqHighR.processSample(eqMidR.processSample(eqLowR.processSample(outR[n])));
             }
         }
-    }
-
-    // --- Output FFT push
-    for (int n = 0; n < numSamples; ++n)
-    {
-        const float outMono = outR ? 0.5f * (outL[n] + outR[n]) : outL[n];
-        pushNextSampleIntoFifo(outMono, outputFifo, outputFifoIndex, outputFftBuffer, outputBlockReady);
     }
 
     const float monPeakIn  = useSidechain ? sidechainPeakIn : blockPeakIn;

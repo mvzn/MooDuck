@@ -69,47 +69,6 @@ private:
     float grDb = 0.0f;
 };
 
-class SpectrumComponent : public juce::Component
-{
-public:
-    explicit SpectrumComponent(MaybeDuckAudioProcessor& p);
-
-    void update();
-
-    void paint(juce::Graphics& g) override;
-    void resized() override {}
-
-private:
-    void processSpectrumFrame(const float* fftData,
-                          std::vector<float>& magnitudes,
-                          std::vector<float>& peaks,
-                          std::vector<int>& peakHoldCounters);
-    juce::Path buildSpectrumPath(const std::vector<float>& values, juce::Rectangle<float> area) const;
-    juce::Path buildFillPath(const juce::Path& linePath, juce::Rectangle<float> area) const;
-    float binToX(int bin, float width) const;
-    float magnitudeToY(float db, float height) const;
-
-    MaybeDuckAudioProcessor& processor;
-
-    juce::dsp::FFT fft { MaybeDuckAudioProcessor::fftOrder };
-    juce::dsp::WindowingFunction<float> window { MaybeDuckAudioProcessor::fftSize, juce::dsp::WindowingFunction<float>::hann };
-
-    std::array<float, MaybeDuckAudioProcessor::fftSize * 2> fftBuffer {};
-    std::array<float, MaybeDuckAudioProcessor::fftSize> scratchBuffer {};
-
-    std::vector<float> inputMagnitudes;
-    std::vector<float> sidechainMagnitudes;
-    std::vector<float> outputMagnitudes;
-
-    std::vector<float> inputPeaks;
-    std::vector<float> sidechainPeaks;
-    std::vector<float> outputPeaks;
-
-    std::vector<int> inputPeakHoldCounters;
-    std::vector<int> sidechainPeakHoldCounters;
-    std::vector<int> outputPeakHoldCounters;
-};
-
 class MaybeDuckAudioProcessorEditor  : public juce::AudioProcessorEditor,
                                        private juce::Timer
 {
@@ -124,60 +83,52 @@ public:
     void timerCallback() override;
 
 private:
-    // This reference is provided as a quick way for your editor to
-    // access the processor object that created it.
     MaybeDuckAudioProcessor& audioProcessor;
-
-    juce::Slider thresholdSlider, ratioSlider, attackSlider, holdSlider, releaseSlider,
-                 lookaheadSlider, kneeSlider, outputSlider;
-    juce::Label thresholdLabel, ratioLabel, attackLabel, holdLabel, releaseLabel,
-                lookaheadLabel, kneeLabel, outputLabel;
-
-    juce::ToggleButton sidechainButton, softKneeButton, limiterButton;
-    juce::Label cpuLabel, blockLabel, sampleRateLabel, aboveThresholdLabel, grLabel;
 
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
 
+    // --- Dynamics group (8 timing/gain knobs, 3 toggles, GR meter)
+    juce::GroupComponent dynamicsGroup;
+    juce::Slider thresholdSlider, ratioSlider, attackSlider, holdSlider, releaseSlider,
+                 lookaheadSlider, kneeSlider, outputSlider;
+    juce::Label thresholdLabel, ratioLabel, attackLabel, holdLabel, releaseLabel,
+                lookaheadLabel, kneeLabel, outputLabel;
+    juce::ToggleButton sidechainButton, softKneeButton, limiterButton;
     CompressorMeterComponent compressorMeter;
-    SpectrumComponent spectrumComponent;
-
     std::unique_ptr<SliderAttachment> thresholdAttachment, ratioAttachment, attackAttachment,
                                       holdAttachment, releaseAttachment, lookaheadAttachment,
                                       kneeAttachment, outputAttachment;
-
     std::unique_ptr<ButtonAttachment> sidechainAttachment, softKneeAttachment, limiterAttachment;
 
-    float smoothedCpuPercent = 0.0f;
+    // --- Sidechain mode group
+    juce::GroupComponent modeGroup;
+    juce::TextButton   modeButtons[3];      // Wideband / Multiband / Spectral
+    juce::ToggleButton fftConvButton;
+    juce::TextButton   convSizeButtons[3];  // 512 / 1024 / 2048
+    juce::Label        convLatencyLabel;
+    std::unique_ptr<ButtonAttachment> fftConvAttachment;
 
-    // Crossover section
-    juce::Label crossoverSectionLabel;
+    void setModeFromButton(int idx);
+    void setConvSizeFromButton(int idx);
+
+    // --- Crossover group
+    juce::GroupComponent crossoverGroup;
     juce::Slider xoverSliders[4];
     juce::Label  xoverLabels[4];
     std::unique_ptr<SliderAttachment> xoverAttachments[4];
 
-    // Per-band duck scale (offset in dB applied to the computed gain-reduction amount)
-    juce::Label bandScaleSectionLabel;
+    // --- Per-band duck scale group
+    juce::GroupComponent bandScaleGroup;
     juce::Slider bandScaleSliders[5];
     juce::Label  bandScaleLabels[5];
     std::unique_ptr<SliderAttachment> bandScaleAttachments[5];
 
-    // Post-ducking EQ section
-    juce::Label  eqSectionLabel;
+    // --- Post-ducking EQ group
+    juce::GroupComponent eqGroup;
     juce::Slider eqSliders[7];      // low freq, low gain, mid freq, mid gain, mid Q, high freq, high gain
     juce::Label  eqLabels[7];
     std::unique_ptr<SliderAttachment> eqAttachments[7];
-
-    // Sidechain mode + FFT Conv section
-    juce::Label      modeSectionLabel;
-    juce::TextButton modeButtons[3];      // Wideband / Multiband / Spectral
-    juce::ToggleButton fftConvButton;
-    std::unique_ptr<ButtonAttachment> fftConvAttachment;
-    juce::TextButton convSizeButtons[3];  // 512 / 1024 / 2048
-    juce::Label      convLatencyLabel;
-
-    void setModeFromButton(int idx);
-    void setConvSizeFromButton(int idx);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MaybeDuckAudioProcessorEditor)
 };
