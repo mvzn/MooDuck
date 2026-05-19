@@ -6,6 +6,10 @@
 **/*.d
 **/*.vst3/
 
+# Test runner build outputs (kept out of plugin build tree)
+/tests/build/
+/tests/runtests
+
 # Ignore ST folder
 **/.stfolder/
 
