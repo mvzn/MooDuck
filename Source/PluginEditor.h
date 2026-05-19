@@ -162,6 +162,12 @@ private:
     juce::Label  bandScaleLabels[5];
     std::unique_ptr<SliderAttachment> bandScaleAttachments[5];
 
+    // Post-ducking EQ section
+    juce::Label  eqSectionLabel;
+    juce::Slider eqSliders[7];      // low freq, low gain, mid freq, mid gain, mid Q, high freq, high gain
+    juce::Label  eqLabels[7];
+    std::unique_ptr<SliderAttachment> eqAttachments[7];
+
     // Sidechain mode + FFT Conv section
     juce::Label      modeSectionLabel;
     juce::TextButton modeButtons[3];      // Wideband / Multiband / Spectral

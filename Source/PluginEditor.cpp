@@ -350,6 +350,39 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
             audioProcessor.apvts, "bandScale" + juce::String(i), bandScaleSliders[i]);
     }
 
+    // --- Post-ducking EQ section
+    eqSectionLabel.setText("Post-Ducking EQ", juce::dontSendNotification);
+    eqSectionLabel.setFont(juce::Font(juce::FontOptions{}.withHeight(13.0f).withStyle("Bold")));
+    eqSectionLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+    eqSectionLabel.setJustificationType(juce::Justification::centredLeft);
+    addAndMakeVisible(eqSectionLabel);
+
+    const juce::String eqLabelsText[] = {
+        "Low Hz", "Low dB", "Mid Hz", "Mid dB", "Mid Q", "Hi Hz", "Hi dB"
+    };
+    const juce::String eqIds[] = {
+        "eqLowFreq", "eqLowGain", "eqMidFreq", "eqMidGain", "eqMidQ", "eqHighFreq", "eqHighGain"
+    };
+    const juce::String eqSuffix[] = { " Hz", " dB", " Hz", " dB", "", " Hz", " dB" };
+    const int          eqDecimals[] = { 0, 1, 0, 1, 2, 0, 1 };
+
+    for (int i = 0; i < 7; ++i)
+    {
+        eqSliders[i].setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+        eqSliders[i].setTextBoxStyle(juce::Slider::TextBoxBelow, false, 70, 20);
+        eqSliders[i].setTextValueSuffix(eqSuffix[i]);
+        eqSliders[i].setNumDecimalPlacesToDisplay(eqDecimals[i]);
+        addAndMakeVisible(eqSliders[i]);
+
+        eqLabels[i].setText(eqLabelsText[i], juce::dontSendNotification);
+        eqLabels[i].setJustificationType(juce::Justification::centred);
+        eqLabels[i].setColour(juce::Label::textColourId, juce::Colours::white);
+        addAndMakeVisible(eqLabels[i]);
+
+        eqAttachments[i] = std::make_unique<SliderAttachment>(
+            audioProcessor.apvts, eqIds[i], eqSliders[i]);
+    }
+
     // --- Sidechain mode section
     modeSectionLabel.setText("Sidechain Mode", juce::dontSendNotification);
     modeSectionLabel.setFont(juce::Font(juce::FontOptions{}.withHeight(13.0f).withStyle("Bold")));
@@ -389,7 +422,7 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
 
     startTimerHz(30);
 
-    setSize (820, 820);
+    setSize (820, 920);
 }
 
 void MaybeDuckAudioProcessorEditor::setModeFromButton(int idx)
@@ -481,6 +514,17 @@ void MaybeDuckAudioProcessorEditor::resized()
         auto col = bsArea.removeFromLeft(bsColW).reduced(4);
         bandScaleLabels[i].setBounds(col.removeFromTop(18));
         bandScaleSliders[i].setBounds(col);
+    }
+
+    // Post-ducking EQ section (7 knobs in a row)
+    eqSectionLabel.setBounds(area.removeFromTop(22));
+    auto eqArea = area.removeFromTop(96);
+    auto eqColW = eqArea.getWidth() / 7;
+    for (int i = 0; i < 7; ++i)
+    {
+        auto col = eqArea.removeFromLeft(eqColW).reduced(4);
+        eqLabels[i].setBounds(col.removeFromTop(18));
+        eqSliders[i].setBounds(col);
     }
 
     auto buttonArea = area.removeFromTop(36);

@@ -51,6 +51,14 @@ MaybeDuckAudioProcessor::MaybeDuckAudioProcessor()
     pSidechainMode = apvts.getRawParameterValue("sidechainMode");
     pFftConv       = apvts.getRawParameterValue("fftConvolution");
     pFftConvSize   = apvts.getRawParameterValue("fftConvSize");
+
+    pEqLowFreq  = apvts.getRawParameterValue("eqLowFreq");
+    pEqLowGain  = apvts.getRawParameterValue("eqLowGain");
+    pEqMidFreq  = apvts.getRawParameterValue("eqMidFreq");
+    pEqMidGain  = apvts.getRawParameterValue("eqMidGain");
+    pEqMidQ     = apvts.getRawParameterValue("eqMidQ");
+    pEqHighFreq = apvts.getRawParameterValue("eqHighFreq");
+    pEqHighGain = apvts.getRawParameterValue("eqHighGain");
 }
 
 MaybeDuckAudioProcessor::~MaybeDuckAudioProcessor()
@@ -160,6 +168,22 @@ juce::AudioProcessorValueTreeState::ParameterLayout MaybeDuckAudioProcessor::cre
     // 0 = 512, 1 = 1024, 2 = 2048
     params.push_back(std::make_unique<juce::AudioParameterInt>(
         "fftConvSize", "FFT Conv Size", 0, 2, 1));
+
+    // Post-ducking EQ (low shelf + mid bell + high shelf), applied after band summing
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "eqLowFreq",  "EQ Low Freq",  juce::NormalisableRange<float>(20.0f,   500.0f, 1.0f, 0.5f),   100.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "eqLowGain",  "EQ Low Gain",  juce::NormalisableRange<float>(-12.0f,  12.0f,  0.1f),         0.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "eqMidFreq",  "EQ Mid Freq",  juce::NormalisableRange<float>(100.0f,  10000.0f, 1.0f, 0.3f), 1000.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "eqMidGain",  "EQ Mid Gain",  juce::NormalisableRange<float>(-12.0f,  12.0f,  0.1f),         0.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "eqMidQ",     "EQ Mid Q",     juce::NormalisableRange<float>(0.2f,    4.0f,   0.01f, 0.5f),  0.707f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "eqHighFreq", "EQ High Freq", juce::NormalisableRange<float>(2000.0f, 20000.0f, 1.0f, 0.3f), 8000.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "eqHighGain", "EQ High Gain", juce::NormalisableRange<float>(-12.0f,  12.0f,  0.1f),         0.0f));
 
     return {params.begin(), params.end()};
 }
@@ -284,6 +308,18 @@ void MaybeDuckAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
     lookaheadBufL.setSize(1, samplesPerBlock);
     lookaheadBufR.setSize(1, samplesPerBlock);
     prevLookaheadSamples = 0;
+
+    // Post-ducking EQ filter prep
+    juce::dsp::ProcessSpec eqSpec { sampleRate, (juce::uint32) samplesPerBlock, 1 };
+    for (auto* f : { &eqLowL, &eqLowR, &eqMidL, &eqMidR, &eqHighL, &eqHighR })
+    {
+        f->prepare(eqSpec);
+        f->reset();
+    }
+    // Force coefficient recomputation on first block by invalidating the cached values.
+    prevEqLowFreq = prevEqMidFreq = prevEqHighFreq = -1.0f;
+    prevEqLowGain = prevEqMidGain = prevEqHighGain = -999.0f;
+    prevEqMidQ    = -1.0f;
 
     // FFT Conv objects — pre-allocate all three sizes (no audio-thread allocation later)
     static constexpr int kOrders[3] = { 9, 10, 11 };
@@ -728,6 +764,54 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         }
 
         grAmountDb = convFrameGrDb;
+    }
+
+    // --- Post-ducking EQ (low shelf + mid bell + high shelf)
+    {
+        const float lowFreq  = pEqLowFreq  ? pEqLowFreq->load()  : 100.0f;
+        const float lowGain  = pEqLowGain  ? pEqLowGain->load()  : 0.0f;
+        const float midFreq  = pEqMidFreq  ? pEqMidFreq->load()  : 1000.0f;
+        const float midGain  = pEqMidGain  ? pEqMidGain->load()  : 0.0f;
+        const float midQ     = pEqMidQ     ? pEqMidQ->load()     : 0.707f;
+        const float highFreq = pEqHighFreq ? pEqHighFreq->load() : 8000.0f;
+        const float highGain = pEqHighGain ? pEqHighGain->load() : 0.0f;
+
+        if (lowFreq != prevEqLowFreq || lowGain != prevEqLowGain)
+        {
+            auto c = juce::dsp::IIR::Coefficients<float>::makeLowShelf(
+                sr, lowFreq, 0.707f, juce::Decibels::decibelsToGain(lowGain));
+            *eqLowL.coefficients = *c;
+            *eqLowR.coefficients = *c;
+            prevEqLowFreq = lowFreq; prevEqLowGain = lowGain;
+        }
+        if (midFreq != prevEqMidFreq || midGain != prevEqMidGain || midQ != prevEqMidQ)
+        {
+            auto c = juce::dsp::IIR::Coefficients<float>::makePeakFilter(
+                sr, midFreq, midQ, juce::Decibels::decibelsToGain(midGain));
+            *eqMidL.coefficients = *c;
+            *eqMidR.coefficients = *c;
+            prevEqMidFreq = midFreq; prevEqMidGain = midGain; prevEqMidQ = midQ;
+        }
+        if (highFreq != prevEqHighFreq || highGain != prevEqHighGain)
+        {
+            auto c = juce::dsp::IIR::Coefficients<float>::makeHighShelf(
+                sr, highFreq, 0.707f, juce::Decibels::decibelsToGain(highGain));
+            *eqHighL.coefficients = *c;
+            *eqHighR.coefficients = *c;
+            prevEqHighFreq = highFreq; prevEqHighGain = highGain;
+        }
+
+        // Skip the IIR pass when all bands are at 0 dB (flat) — saves cycles in the common case
+        const bool eqActive = std::abs(lowGain) > 0.01f || std::abs(midGain) > 0.01f || std::abs(highGain) > 0.01f;
+        if (eqActive)
+        {
+            for (int n = 0; n < numSamples; ++n)
+            {
+                outL[n] = eqHighL.processSample(eqMidL.processSample(eqLowL.processSample(outL[n])));
+                if (outR)
+                    outR[n] = eqHighR.processSample(eqMidR.processSample(eqLowR.processSample(outR[n])));
+            }
+        }
     }
 
     // --- Output FFT push

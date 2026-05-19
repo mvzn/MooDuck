@@ -77,6 +77,15 @@ public:
     std::atomic<float>* pFftConv       = nullptr;
     std::atomic<float>* pFftConvSize   = nullptr;
 
+    // Post-ducking EQ
+    std::atomic<float>* pEqLowFreq  = nullptr;
+    std::atomic<float>* pEqLowGain  = nullptr;
+    std::atomic<float>* pEqMidFreq  = nullptr;
+    std::atomic<float>* pEqMidGain  = nullptr;
+    std::atomic<float>* pEqMidQ     = nullptr;
+    std::atomic<float>* pEqHighFreq = nullptr;
+    std::atomic<float>* pEqHighGain = nullptr;
+
     // monitoring
     float getCpuUsagePercent() const noexcept      { return cpuUsagePercent.load(); }
     float getProcessTimeMs() const noexcept        { return processTimeMs.load(); }
@@ -108,6 +117,14 @@ private:
 
     juce::AudioBuffer<float> mainBandBufL, mainBandBufR;
     juce::AudioBuffer<float> scBandBufL,   scBandBufR;
+
+    // Post-ducking EQ — low shelf + mid bell + high shelf, per-channel filter state
+    juce::dsp::IIR::Filter<float> eqLowL,  eqLowR;
+    juce::dsp::IIR::Filter<float> eqMidL,  eqMidR;
+    juce::dsp::IIR::Filter<float> eqHighL, eqHighR;
+    float prevEqLowFreq  = 0.0f, prevEqLowGain  = 0.0f;
+    float prevEqMidFreq  = 0.0f, prevEqMidGain  = 0.0f, prevEqMidQ = 0.0f;
+    float prevEqHighFreq = 0.0f, prevEqHighGain = 0.0f;
 
     // Lookahead delay line on the main path (sidechain is undelayed → detector sees future)
     juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::None> lookaheadDelayL;
