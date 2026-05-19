@@ -36,6 +36,7 @@ MaybeDuckAudioProcessor::MaybeDuckAudioProcessor()
     pAttack    = apvts.getRawParameterValue("attack");
     pRelease   = apvts.getRawParameterValue("release");
     pHold      = apvts.getRawParameterValue("hold");
+    pLookahead = apvts.getRawParameterValue("lookahead");
     pKnee      = apvts.getRawParameterValue("knee");
     pOutput    = apvts.getRawParameterValue("output");
     pScEnable  = apvts.getRawParameterValue("sidechainEnable");
@@ -101,6 +102,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout MaybeDuckAudioProcessor::cre
         "hold", "Hold", juce::NormalisableRange<float>(0.0f, 2000.0f, 1.0f, 0.5f), 0.0f));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "lookahead", "Lookahead", juce::NormalisableRange<float>(0.0f, 10.0f, 0.1f), 0.0f));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "knee", "Knee", juce::NormalisableRange<float>(0.0f, 24.0f, 0.1f), 6.0f));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
@@ -147,13 +151,25 @@ juce::AudioProcessorValueTreeState::ParameterLayout MaybeDuckAudioProcessor::cre
 
 int MaybeDuckAudioProcessor::getConvLatencySamples() const noexcept
 {
-    if (!pSidechainMode || !pFftConv || !pFftConvSize) return 0;
-    const int mode = static_cast<int>(pSidechainMode->load());
-    if (mode != 2) return 0;
-    if (pFftConv->load() <= 0.5f) return 0;
-    static constexpr int sizes[] = { 512, 1024, 2048 };
-    const int idx = juce::jlimit(0, 2, static_cast<int>(pFftConvSize->load()));
-    return sizes[idx] / 2;
+    int conv = 0;
+    if (pSidechainMode && pFftConv && pFftConvSize)
+    {
+        const int mode = static_cast<int>(pSidechainMode->load());
+        if (mode == 2 && pFftConv->load() > 0.5f)
+        {
+            static constexpr int sizes[] = { 512, 1024, 2048 };
+            const int idx = juce::jlimit(0, 2, static_cast<int>(pFftConvSize->load()));
+            conv = sizes[idx] / 2;
+        }
+    }
+
+    int look = 0;
+    if (pLookahead)
+    {
+        const double sr = juce::jmax(1.0, currentSampleRate.load());
+        look = static_cast<int>(std::round(static_cast<double>(*pLookahead) * 0.001 * sr));
+    }
+    return conv + look;
 }
 
 //==============================================================================
@@ -240,6 +256,19 @@ void MaybeDuckAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
     mainBandBufR.setSize(numBands, samplesPerBlock);
     scBandBufL.setSize(numBands, samplesPerBlock);
     scBandBufR.setSize(numBands, samplesPerBlock);
+
+    // Lookahead delay line: max 12 ms at current sample rate (slider goes 0-10 ms).
+    const int maxLookahead = static_cast<int>(std::ceil(0.012 * sampleRate));
+    lookaheadDelayL.setMaximumDelayInSamples(maxLookahead);
+    lookaheadDelayR.setMaximumDelayInSamples(maxLookahead);
+    juce::dsp::ProcessSpec lookSpec { sampleRate, (juce::uint32) samplesPerBlock, 1 };
+    lookaheadDelayL.prepare(lookSpec);
+    lookaheadDelayR.prepare(lookSpec);
+    lookaheadDelayL.reset();
+    lookaheadDelayR.reset();
+    lookaheadBufL.setSize(1, samplesPerBlock);
+    lookaheadBufR.setSize(1, samplesPerBlock);
+    prevLookaheadSamples = 0;
 
     // FFT Conv objects — pre-allocate all three sizes (no audio-thread allocation later)
     static constexpr int kOrders[3] = { 9, 10, 11 };
@@ -421,21 +450,35 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         prevConvSizeIdx = sizeIdx;
     }
 
-    // Update reported latency when mode/conv toggle changes
-    const int newLatency = (mode == 2 && useConv) ? hopSize : 0;
+    // --- Lookahead: clamp to allocated max, set tap, update latency report
+    const double sr = juce::jmax(1.0, getSampleRate());
+    const float lookaheadMs = pLookahead ? pLookahead->load() : 0.0f;
+    const int lookaheadSamples = juce::jlimit(
+        0, lookaheadDelayL.getMaximumDelayInSamples(),
+        static_cast<int>(std::round(static_cast<double>(lookaheadMs) * 0.001 * sr)));
+    lookaheadDelayL.setDelay(static_cast<float>(lookaheadSamples));
+    lookaheadDelayR.setDelay(static_cast<float>(lookaheadSamples));
+    prevLookaheadSamples = lookaheadSamples;
+
+    // Update reported latency when mode/conv/lookahead changes
+    const int newLatency = ((mode == 2 && useConv) ? hopSize : 0) + lookaheadSamples;
     if (newLatency != prevLatencyReported)
     {
         setLatencySamples(newLatency);
         prevLatencyReported = newLatency;
     }
 
+    // Detector always reads sc_xn (the live SC source — external bus or live main alias).
+    // The processor uses sc_xn unconditionally so lookahead is honored even when no external SC is connected.
+    DynamicsProcessorParameters dynParamsForProc = dynParams;
+    dynParamsForProc.enable_sc = true;
     for (int b = 0; b < numBands; ++b)
     {
-        bandProcessorsL[b].setParameters(dynParams);
-        bandProcessorsR[b].setParameters(dynParams);
+        bandProcessorsL[b].setParameters(dynParamsForProc);
+        bandProcessorsR[b].setParameters(dynParamsForProc);
     }
-    widebandProcessorL.setParameters(dynParams);
-    widebandProcessorR.setParameters(dynParams);
+    widebandProcessorL.setParameters(dynParamsForProc);
+    widebandProcessorR.setParameters(dynParamsForProc);
 
     // --- Update crossover frequencies (smoother advances inside processBlock)
     for (int i = 0; i < StereoMultibandCrossover::numCrossoverPoints; ++i)
@@ -452,21 +495,38 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     const int  numSamples = buffer.getNumSamples();
     const bool isStereo   = mainInput.getNumChannels() > 1;
 
-    const float* mainL = mainInput.getReadPointer(0);
-    const float* mainR = isStereo ? mainInput.getReadPointer(1) : mainL;
+    const float* liveMainL = mainInput.getReadPointer(0);
+    const float* liveMainR = isStereo ? mainInput.getReadPointer(1) : liveMainL;
 
-    const float* scLPtr = useSidechain ? scInput.getReadPointer(0) : mainL;
+    // SC always reads the LIVE signal so the detector sees future relative to the delayed main
+    const float* scLPtr = useSidechain ? scInput.getReadPointer(0) : liveMainL;
     const float* scRPtr = useSidechain
                           ? (scInput.getNumChannels() > 1 ? scInput.getReadPointer(1) : scLPtr)
-                          : mainR;
+                          : liveMainR;
 
-    // --- Input / sidechain metering (pre-dynamics)
+    // --- Lookahead delay: always run so toggling lookahead is glitch-free
+    float* dL = lookaheadBufL.getWritePointer(0);
+    float* dR = lookaheadBufR.getWritePointer(0);
+    for (int n = 0; n < numSamples; ++n)
+    {
+        lookaheadDelayL.pushSample(0, liveMainL[n]);
+        dL[n] = lookaheadDelayL.popSample(0);
+        if (isStereo)
+        {
+            lookaheadDelayR.pushSample(0, liveMainR[n]);
+            dR[n] = lookaheadDelayR.popSample(0);
+        }
+    }
+    const float* mainL = dL;
+    const float* mainR = isStereo ? dR : dL;
+
+    // --- Input / sidechain metering (pre-dynamics, on LIVE signal)
     float blockPeakIn     = 0.0f;
     float sidechainPeakIn = 0.0f;
 
     for (int n = 0; n < numSamples; ++n)
     {
-        const float mono = 0.5f * (mainL[n] + mainR[n]);
+        const float mono = 0.5f * (liveMainL[n] + liveMainR[n]);
         blockPeakIn = std::max(blockPeakIn, std::abs(mono));
         pushNextSampleIntoFifo(mono, inputFifo, inputFifoIndex, inputFftBuffer, inputBlockReady);
 
@@ -493,11 +553,8 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
             const double inL = static_cast<double>(mainL[n]);
             const double inR = isStereo ? static_cast<double>(mainR[n]) : inL;
 
-            if (useSidechain)
-            {
-                widebandProcessorL.processSidechainInputSample(static_cast<double>(scLPtr[n]));
-                widebandProcessorR.processSidechainInputSample(static_cast<double>(scRPtr[n]));
-            }
+            widebandProcessorL.processSidechainInputSample(static_cast<double>(scLPtr[n]));
+            widebandProcessorR.processSidechainInputSample(static_cast<double>(scRPtr[n]));
             const double pL = widebandProcessorL.processSample(inL);
             const double pR = widebandProcessorR.processSample(inR);
             outL[n] = static_cast<float>(pL);
@@ -523,9 +580,10 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         juce::FloatVectorOperations::fill(outL, 0.0f, numSamples);
         if (outR) juce::FloatVectorOperations::fill(outR, 0.0f, numSamples);
 
-        // Spectral mode: per-band SC energy via FFT (zero-latency, look-back window)
+        // Spectral mode: per-band SC energy via FFT (zero-latency, look-back window).
+        // scLPtr/scRPtr alias liveMain when no external SC, so this always has valid data.
         float perBandScLevel[numBands] = {};
-        if (mode == 2 && useSidechain)
+        if (mode == 2)
         {
             for (int n = 0; n < numSamples; ++n)
             {
@@ -577,19 +635,16 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         {
             for (int n = 0; n < numSamples; ++n)
             {
-                if (useSidechain)
+                if (mode == 2)
                 {
-                    if (mode == 2)
-                    {
-                        const double scVal = static_cast<double>(perBandScLevel[b]);
-                        bandProcessorsL[b].processSidechainInputSample(scVal);
-                        bandProcessorsR[b].processSidechainInputSample(scVal);
-                    }
-                    else
-                    {
-                        bandProcessorsL[b].processSidechainInputSample(static_cast<double>(sbL[b][n]));
-                        bandProcessorsR[b].processSidechainInputSample(static_cast<double>(sbR[b][n]));
-                    }
+                    const double scVal = static_cast<double>(perBandScLevel[b]);
+                    bandProcessorsL[b].processSidechainInputSample(scVal);
+                    bandProcessorsR[b].processSidechainInputSample(scVal);
+                }
+                else
+                {
+                    bandProcessorsL[b].processSidechainInputSample(static_cast<double>(sbL[b][n]));
+                    bandProcessorsR[b].processSidechainInputSample(static_cast<double>(sbR[b][n]));
                 }
                 outL[n] += static_cast<float>(bandProcessorsL[b].processSample(static_cast<double>(mbL[b][n])));
                 const float pR = static_cast<float>(bandProcessorsR[b].processSample(static_cast<double>(mbR[b][n])));

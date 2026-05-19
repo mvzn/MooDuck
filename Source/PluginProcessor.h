@@ -65,6 +65,7 @@ public:
     std::atomic<float>* pAttack    = nullptr;
     std::atomic<float>* pRelease   = nullptr;
     std::atomic<float>* pHold      = nullptr;
+    std::atomic<float>* pLookahead = nullptr;
     std::atomic<float>* pKnee      = nullptr;
     std::atomic<float>* pOutput    = nullptr;
     std::atomic<float>* pScEnable  = nullptr;
@@ -106,6 +107,12 @@ private:
 
     juce::AudioBuffer<float> mainBandBufL, mainBandBufR;
     juce::AudioBuffer<float> scBandBufL,   scBandBufR;
+
+    // Lookahead delay line on the main path (sidechain is undelayed → detector sees future)
+    juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::None> lookaheadDelayL;
+    juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::None> lookaheadDelayR;
+    juce::AudioBuffer<float> lookaheadBufL, lookaheadBufR;
+    int prevLookaheadSamples = 0;
 
     // Wideband mode (bypass crossover)
     DynamicsProcessor widebandProcessorL, widebandProcessorR;

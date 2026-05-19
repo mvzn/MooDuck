@@ -128,8 +128,10 @@ private:
     // access the processor object that created it.
     MaybeDuckAudioProcessor& audioProcessor;
 
-    juce::Slider thresholdSlider, ratioSlider, attackSlider, holdSlider, releaseSlider, kneeSlider, outputSlider;
-    juce::Label thresholdLabel, ratioLabel, attackLabel, holdLabel, releaseLabel, kneeLabel, outputLabel;
+    juce::Slider thresholdSlider, ratioSlider, attackSlider, holdSlider, releaseSlider,
+                 lookaheadSlider, kneeSlider, outputSlider;
+    juce::Label thresholdLabel, ratioLabel, attackLabel, holdLabel, releaseLabel,
+                lookaheadLabel, kneeLabel, outputLabel;
 
     juce::ToggleButton sidechainButton, softKneeButton, limiterButton;
     juce::Label cpuLabel, blockLabel, sampleRateLabel, aboveThresholdLabel, grLabel;
@@ -141,7 +143,8 @@ private:
     SpectrumComponent spectrumComponent;
 
     std::unique_ptr<SliderAttachment> thresholdAttachment, ratioAttachment, attackAttachment,
-                                      holdAttachment, releaseAttachment, kneeAttachment, outputAttachment;
+                                      holdAttachment, releaseAttachment, lookaheadAttachment,
+                                      kneeAttachment, outputAttachment;
 
     std::unique_ptr<ButtonAttachment> sidechainAttachment, softKneeAttachment, limiterAttachment;
 

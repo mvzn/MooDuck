@@ -251,16 +251,19 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
     setupSlider(attackSlider,    "Attack");
     setupSlider(holdSlider,      "Hold");
     setupSlider(releaseSlider,   "Release");
+    setupSlider(lookaheadSlider, "Lookahead");
     setupSlider(kneeSlider,      "Knee");
     setupSlider(outputSlider,    "Output");
 
     holdSlider.setTextValueSuffix(" ms");
+    lookaheadSlider.setTextValueSuffix(" ms");
 
     setupLabel(thresholdLabel, "Threshold");
     setupLabel(ratioLabel,     "Ratio");
     setupLabel(attackLabel,    "Attack");
     setupLabel(holdLabel,      "Hold");
     setupLabel(releaseLabel,   "Release");
+    setupLabel(lookaheadLabel, "Lookahead");
     setupLabel(kneeLabel,      "Knee");
     setupLabel(outputLabel,    "Output");
 
@@ -287,6 +290,7 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
     attackAttachment    = std::make_unique<SliderAttachment>(audioProcessor.apvts, "attack", attackSlider);
     holdAttachment      = std::make_unique<SliderAttachment>(audioProcessor.apvts, "hold", holdSlider);
     releaseAttachment   = std::make_unique<SliderAttachment>(audioProcessor.apvts, "release", releaseSlider);
+    lookaheadAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, "lookahead", lookaheadSlider);
     kneeAttachment      = std::make_unique<SliderAttachment>(audioProcessor.apvts, "knee", kneeSlider);
     outputAttachment    = std::make_unique<SliderAttachment>(audioProcessor.apvts, "output", outputSlider);
 
@@ -412,7 +416,7 @@ void MaybeDuckAudioProcessorEditor::resized()
     compressorMeter.setBounds(meterArea);
 
     auto sliderArea = area.removeFromTop(160);
-    auto columnWidth = sliderArea.getWidth() / 7;
+    auto columnWidth = sliderArea.getWidth() / 8;
 
     auto layoutSliderWithLabel = [&](juce::Slider& slider, juce::Label& label)
     {
@@ -427,6 +431,7 @@ void MaybeDuckAudioProcessorEditor::resized()
     layoutSliderWithLabel(attackSlider,    attackLabel);
     layoutSliderWithLabel(holdSlider,      holdLabel);
     layoutSliderWithLabel(releaseSlider,   releaseLabel);
+    layoutSliderWithLabel(lookaheadSlider, lookaheadLabel);
     layoutSliderWithLabel(kneeSlider,      kneeLabel);
     layoutSliderWithLabel(outputSlider,    outputLabel);
 
