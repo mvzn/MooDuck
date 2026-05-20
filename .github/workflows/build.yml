@@ -1,0 +1,131 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        build_type: [Release]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev \
+            libfreetype-dev libfontconfig1-dev \
+            libgtk-3-dev \
+            libxinerama-dev libxrandr-dev libxcursor-dev libxcomposite-dev \
+            mesa-common-dev \
+            ninja-build
+
+      - name: Install Ninja (non-Linux)
+        if: runner.os != 'Linux'
+        uses: seanmiddleditch/gha-setup-ninja@v5
+
+      - name: Set up MSVC environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Cache JUCE FetchContent
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: juce-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: |
+            juce-${{ runner.os }}-
+
+      - name: Set up sccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          variant: sccache
+          key: sccache-${{ matrix.os }}-${{ matrix.build_type }}
+          max-size: 500M
+
+      - name: Configure
+        shell: bash
+        run: |
+          set -eo pipefail
+          mkdir -p logs
+          LOG="logs/build-${{ runner.os }}-${{ github.run_number }}-${{ github.sha }}.log"
+          {
+            echo "=== Build log ==="
+            echo "Run        : ${{ github.run_number }}"
+            echo "Commit     : ${{ github.sha }}"
+            echo "Branch/ref : ${{ github.ref }}"
+            echo "OS         : ${{ runner.os }}"
+            echo "Build type : ${{ matrix.build_type }}"
+            echo "Timestamp  : $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            echo "================="
+            cmake --version
+            echo
+            echo "--- CMake configure ---"
+          } | tee "$LOG"
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" \
+            -DCMAKE_C_COMPILER_LAUNCHER=sccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=sccache 2>&1 | tee -a "$LOG"
+          echo "LOG_FILE=$LOG" >> "$GITHUB_ENV"
+
+      - name: Build
+        shell: bash
+        run: |
+          set -eo pipefail
+          echo >> "$LOG_FILE"
+          echo "--- CMake build ---" | tee -a "$LOG_FILE"
+          cmake --build build --config ${{ matrix.build_type }} --parallel 2>&1 | tee -a "$LOG_FILE"
+          echo >> "$LOG_FILE"
+          echo "--- sccache stats ---" | tee -a "$LOG_FILE"
+          sccache --show-stats 2>&1 | tee -a "$LOG_FILE" || true
+          echo >> "$LOG_FILE"
+          echo "--- Build outputs ---" | tee -a "$LOG_FILE"
+          find build/MaybeDuck_artefacts -maxdepth 5 -type f 2>/dev/null | tee -a "$LOG_FILE" || true
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ runner.os }}-${{ github.run_number }}
+          path: logs/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload VST3
+        uses: actions/upload-artifact@v4
+        with:
+          name: MaybeDuck-${{ runner.os }}-VST3
+          path: build/MaybeDuck_artefacts/${{ matrix.build_type }}/VST3/
+          if-no-files-found: error
+
+      - name: Upload AU (macOS)
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: MaybeDuck-macOS-AU
+          path: build/MaybeDuck_artefacts/${{ matrix.build_type }}/AU/
+          if-no-files-found: error
+
+      - name: Upload Standalone
+        uses: actions/upload-artifact@v4
+        with:
+          name: MaybeDuck-${{ runner.os }}-Standalone
+          path: build/MaybeDuck_artefacts/${{ matrix.build_type }}/Standalone/
+          if-no-files-found: warn

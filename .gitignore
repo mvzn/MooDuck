@@ -10,6 +10,9 @@
 /tests/build/
 /tests/runtests
 
+# CMake build directory (used by GitHub Actions CI; local dev uses Projucer)
+/build/
+
 # Ignore ST folder
 **/.stfolder/
 
