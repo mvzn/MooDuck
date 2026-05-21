@@ -158,7 +158,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout MaybeDuckAudioProcessor::cre
         "softKnee", "Soft Knee", true));
 
     params.push_back(std::make_unique<juce::AudioParameterBool>(
-        "limiter", "Limiter", false));
+        "limiter", "Hard Duck", false));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "xover0", "Crossover 1",
