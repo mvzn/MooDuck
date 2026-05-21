@@ -69,6 +69,14 @@ public:
                          bool shouldDrawButtonAsHighlighted,
                          bool shouldDrawButtonAsDown) override;
 
+    void drawLabel (juce::Graphics&, juce::Label&) override;
+    juce::Font getLabelFont (juce::Label&) override;
+
+    void drawGroupComponentOutline (juce::Graphics&, int width, int height,
+                                    const juce::String& text,
+                                    const juce::Justification& position,
+                                    juce::GroupComponent&) override;
+
 private:
     void drawPushButtonBody  (juce::Graphics&, juce::Rectangle<float> bounds,
                               bool isOn, bool isMouseOver, bool isDown) const;

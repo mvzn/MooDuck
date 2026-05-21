@@ -237,6 +237,76 @@ void MaybeDuckLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& 
                         b.getButtonText(), b.getToggleState(), isOver, isDown);
 }
 
+juce::Font MaybeDuckLookAndFeel::getLabelFont (juce::Label& l)
+{
+    // Honour the label's explicitly-set font size when set; otherwise pick a
+    // sensible default for panel-label text.
+    juce::Font font(regularTypeface);
+    const float requestedHeight = l.getFont().getHeight();
+    font.setHeight(requestedHeight > 0.0f ? requestedHeight : 12.0f);
+    font.setExtraKerningFactor(0.04f);
+    return font;
+}
+
+void MaybeDuckLookAndFeel::drawLabel (juce::Graphics& g, juce::Label& l)
+{
+    g.fillAll(l.findColour(juce::Label::backgroundColourId));
+
+    if (!l.isBeingEdited())
+    {
+        auto area = l.getBorderSize().subtractedFrom(l.getLocalBounds()).toFloat();
+        auto font = getLabelFont(l);
+        const auto text = l.getText().toUpperCase();
+        drawEngravedText(g, text, area, l.getJustificationType(), font);
+    }
+    else if (l.isEnabled())
+    {
+        // Let JUCE's TextEditor handle the editing state; we don't draw text here.
+    }
+
+    g.setColour(l.findColour(juce::Label::outlineColourId));
+    g.drawRect(l.getLocalBounds());
+}
+
+void MaybeDuckLookAndFeel::drawGroupComponentOutline (juce::Graphics& g, int width, int height,
+                                                     const juce::String& text,
+                                                     const juce::Justification& /*position*/,
+                                                     juce::GroupComponent& /*group*/)
+{
+    // We don't draw the enclosing box at all — just an engraved title in the top-left
+    // and a thin recessed horizontal divider line extending across the section width.
+    const float padX = 8.0f;
+    const float topY = 4.0f;
+    const float titleHeight = 18.0f;
+
+    juce::Font font(mediumTypeface);
+    font.setHeight(13.5f);
+    font.setExtraKerningFactor(0.10f);
+    g.setFont(font);
+
+    const juce::String upper = text.toUpperCase();
+    const float titleWidth = font.getStringWidthFloat(upper) + 6.0f;
+
+    // Engraved title at left.
+    juce::Rectangle<float> titleArea(padX, topY, titleWidth, titleHeight);
+    drawEngravedText(g, upper, titleArea, juce::Justification::centredLeft, font);
+
+    // Divider line — starts after the title, runs to the right edge, with engraved styling.
+    const float lineY      = topY + titleHeight * 0.5f - 0.5f;
+    const float lineStartX = padX + titleWidth + 10.0f;
+    const float lineEndX   = static_cast<float>(width) - padX;
+
+    if (lineEndX > lineStartX + 4.0f)
+    {
+        g.setColour(juce::Colour(kDividerShadow).withAlpha(0.7f));
+        g.drawLine(lineStartX, lineY, lineEndX, lineY, 1.0f);
+        g.setColour(juce::Colour(kDividerHighlight).withAlpha(0.5f));
+        g.drawLine(lineStartX, lineY + 1.0f, lineEndX, lineY + 1.0f, 0.7f);
+    }
+
+    juce::ignoreUnused(height);
+}
+
 void MaybeDuckLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height,
                                              float sliderPos,
                                              float rotaryStart, float rotaryEnd,
