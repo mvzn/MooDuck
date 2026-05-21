@@ -10,6 +10,7 @@
 
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
+#include "MaybeDuckLookAndFeel.h"
 
 //==============================================================================
 /**
@@ -84,6 +85,8 @@ public:
 
 private:
     MaybeDuckAudioProcessor& audioProcessor;
+
+    MaybeDuckLookAndFeel lookAndFeel;
 
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;

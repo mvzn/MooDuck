@@ -23,6 +23,8 @@ namespace {
 MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProcessor& p)
     : AudioProcessorEditor (&p), audioProcessor (p)
 {
+    setLookAndFeel(&lookAndFeel);
+
     auto setupSlider = [this](juce::Slider& s, const juce::String& name)
     {
         s.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
@@ -207,6 +209,7 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
 
 MaybeDuckAudioProcessorEditor::~MaybeDuckAudioProcessorEditor()
 {
+    setLookAndFeel(nullptr);
 }
 
 void MaybeDuckAudioProcessorEditor::setModeFromButton(int idx)

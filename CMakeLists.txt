@@ -47,6 +47,7 @@ juce_add_binary_data(MaybeDuckBinaryData
 target_sources(MaybeDuck PRIVATE
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
+    Source/MaybeDuckLookAndFeel.cpp
 )
 
 target_compile_definitions(MaybeDuck PRIVATE
