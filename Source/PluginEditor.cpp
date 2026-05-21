@@ -82,7 +82,7 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
     addAndMakeVisible(softKneeButton);
     addAndMakeVisible(limiterButton);
 
-    addAndMakeVisible(compressorMeter);
+    addAndMakeVisible(vuMeter);
 
     // --- Tooltips
     thresholdSlider .setTooltip("Sidechain level above which ducking begins (dB).");
@@ -343,8 +343,9 @@ void MaybeDuckAudioProcessorEditor::resized()
     auto dynamicsInner = dynamicsArea.reduced(8, 6);
     dynamicsInner.removeFromTop(kGroupTitleH - 8);   // leave space for group title
 
-    auto meterArea = dynamicsInner.removeFromRight(70).reduced(0, 0);
-    compressorMeter.setBounds(meterArea);
+    // Give the VU meter (with its IN/SC LED strips) a wider slot than the old vertical bar.
+    auto meterArea = dynamicsInner.removeFromRight(230);
+    vuMeter.setBounds(meterArea);
 
     auto dynKnobs = dynamicsInner.removeFromTop(dynamicsKnobsH);
     const int colW = dynKnobs.getWidth() / 8;
@@ -450,10 +451,16 @@ void MaybeDuckAudioProcessorEditor::resized()
 
 void MaybeDuckAudioProcessorEditor::timerCallback()
 {
-    compressorMeter.setLevels(audioProcessor.getInputLevelDb(),
-                              audioProcessor.getGainReductionAmountDb());
+    // Derive an absolute-dB sidechain level for the IN/SC strips on the meter.
+    const float threshDb = audioProcessor.apvts.getRawParameterValue("threshold")->load();
+    const float scDb     = threshDb + audioProcessor.getAboveThresholdDb();
 
-    // --- Sync mode + conv-size button visual state from APVTS
+    vuMeter.setLevels(audioProcessor.getInputLevelDb(),
+                      scDb,
+                      audioProcessor.getGainReductionAmountDb());
+
+    // --- Sync mode + conv-size button visual state from APVTS via toggle state
+    // so the LookAndFeel-drawn LED dot reflects the active radio.
     const int mode = juce::jlimit(0, 2,
         static_cast<int>(*audioProcessor.apvts.getRawParameterValue("sidechainMode")));
     const int sizeIdx = juce::jlimit(0, 2,
@@ -462,23 +469,13 @@ void MaybeDuckAudioProcessorEditor::timerCallback()
     const bool spectralActive = (mode == 2);
 
     for (int i = 0; i < 3; ++i)
-    {
-        const bool selected = (i == mode);
-        modeButtons[i].setColour(juce::TextButton::buttonColourId,
-            selected ? juce::Colour(0xff4285f4) : juce::Colour(0xff262626));
-        modeButtons[i].setColour(juce::TextButton::textColourOffId,
-            selected ? juce::Colours::white : juce::Colours::lightgrey);
-    }
+        modeButtons[i].setToggleState(i == mode, juce::dontSendNotification);
 
     fftConvButton.setEnabled(spectralActive);
     for (int i = 0; i < 3; ++i)
     {
-        const bool selected = (i == sizeIdx);
         convSizeButtons[i].setEnabled(spectralActive && fftConvOn);
-        convSizeButtons[i].setColour(juce::TextButton::buttonColourId,
-            selected ? juce::Colour(0xfffbbc04) : juce::Colour(0xff262626));
-        convSizeButtons[i].setColour(juce::TextButton::textColourOffId,
-            selected ? juce::Colours::black : juce::Colours::lightgrey);
+        convSizeButtons[i].setToggleState(i == sizeIdx, juce::dontSendNotification);
     }
 
     // Crossover, band-scale, and band-routing controls are inert in Wideband
