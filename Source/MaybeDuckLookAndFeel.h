@@ -29,11 +29,26 @@ public:
     juce::Typeface::Ptr getRegularTypeface() const { return regularTypeface; }
     juce::Typeface::Ptr getMediumTypeface()  const { return mediumTypeface; }
 
+    // --- Rotary angles: classic 270° travel, 7 o'clock to 5 o'clock.
+    // Angles are radians measured clockwise from 12 o'clock per JUCE convention.
+    static constexpr float kRotaryStartAngle = -2.35619449f; // -135°
+    static constexpr float kRotaryEndAngle   =  2.35619449f; // +135°
+
     // --- Draw helpers (used by the editor paint() and overridden draw methods)
     void drawBrushedChassis (juce::Graphics&, juce::Rectangle<float> area) const;
     void drawScrew          (juce::Graphics&, juce::Point<float> centre, float radius, float slotAngleRadians) const;
     void drawEngravedText   (juce::Graphics&, const juce::String& text, juce::Rectangle<float> area,
                              juce::Justification just, juce::Font font) const;
+
+    // Set sliding behavior + 270° rotary angles on a slider — call from the editor
+    // for every rotary so the drawRotarySlider override sees the right angle range.
+    void applyRotaryConfiguration (juce::Slider&) const;
+
+    // --- LookAndFeel overrides
+    void drawRotarySlider (juce::Graphics&, int x, int y, int width, int height,
+                           float sliderPosProportional,
+                           float rotaryStartAngle, float rotaryEndAngle,
+                           juce::Slider&) override;
 
 private:
     juce::Typeface::Ptr regularTypeface;

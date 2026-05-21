@@ -27,7 +27,7 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
 
     auto setupSlider = [this](juce::Slider& s, const juce::String& name)
     {
-        s.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+        mdLookAndFeel.applyRotaryConfiguration(s);
         s.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 70, 20);
         s.setName(name);
         addAndMakeVisible(s);
@@ -138,7 +138,7 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
 
     for (int i = 0; i < 4; ++i)
     {
-        xoverSliders[i].setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+        mdLookAndFeel.applyRotaryConfiguration(xoverSliders[i]);
         xoverSliders[i].setTextBoxStyle(juce::Slider::TextBoxBelow, false, 80, 20);
         xoverSliders[i].setTextValueSuffix(" Hz");
         xoverSliders[i].setNumDecimalPlacesToDisplay(0);
@@ -159,7 +159,7 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
     const juce::String bandNames[] = { "B1", "B2", "B3", "B4", "B5" };
     for (int i = 0; i < 5; ++i)
     {
-        bandScaleSliders[i].setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+        mdLookAndFeel.applyRotaryConfiguration(bandScaleSliders[i]);
         bandScaleSliders[i].setTextBoxStyle(juce::Slider::TextBoxBelow, false, 70, 20);
         bandScaleSliders[i].setTextValueSuffix(" dB");
         bandScaleSliders[i].setNumDecimalPlacesToDisplay(1);
@@ -188,7 +188,7 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
 
     for (int i = 0; i < 7; ++i)
     {
-        eqSliders[i].setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+        mdLookAndFeel.applyRotaryConfiguration(eqSliders[i]);
         eqSliders[i].setTextBoxStyle(juce::Slider::TextBoxBelow, false, 70, 20);
         eqSliders[i].setTextValueSuffix(eqSuffix[i]);
         eqSliders[i].setNumDecimalPlacesToDisplay(eqDecimals[i]);
