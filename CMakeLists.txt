@@ -36,6 +36,14 @@ juce_add_plugin(MaybeDuck
 
 juce_generate_juce_header(MaybeDuck)
 
+juce_add_binary_data(MaybeDuckBinaryData
+    HEADER_NAME BinaryData.h
+    NAMESPACE   BinaryData
+    SOURCES
+        Resources/fonts/IBMPlexSansCondensed-Regular.ttf
+        Resources/fonts/IBMPlexSansCondensed-Medium.ttf
+)
+
 target_sources(MaybeDuck PRIVATE
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
@@ -50,6 +58,7 @@ target_compile_definitions(MaybeDuck PRIVATE
 
 target_link_libraries(MaybeDuck
     PRIVATE
+        MaybeDuckBinaryData
         juce::juce_audio_utils
         juce::juce_dsp
         juce::juce_gui_extra
