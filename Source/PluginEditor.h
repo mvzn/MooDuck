@@ -86,7 +86,7 @@ public:
 private:
     MaybeDuckAudioProcessor& audioProcessor;
 
-    MaybeDuckLookAndFeel lookAndFeel;
+    MaybeDuckLookAndFeel mdLookAndFeel;
 
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;

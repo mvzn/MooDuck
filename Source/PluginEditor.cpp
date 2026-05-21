@@ -23,7 +23,7 @@ namespace {
 MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProcessor& p)
     : AudioProcessorEditor (&p), audioProcessor (p)
 {
-    setLookAndFeel(&lookAndFeel);
+    setLookAndFeel(&mdLookAndFeel);
 
     auto setupSlider = [this](juce::Slider& s, const juce::String& name)
     {
@@ -235,7 +235,40 @@ void MaybeDuckAudioProcessorEditor::setConvSizeFromButton(int idx)
 //==============================================================================
 void MaybeDuckAudioProcessorEditor::paint (juce::Graphics& g)
 {
-    g.fillAll(juce::Colours::black);
+    const auto area = getLocalBounds().toFloat();
+
+    mdLookAndFeel.drawBrushedChassis(g, area);
+
+    // Four corner screws — varied slot angles so they don't look stamped.
+    const float screwR = 7.0f;
+    const float inset  = 12.0f;
+    static constexpr float kScrewAngles[4] = {
+        0.42f, 1.18f, 2.05f, 2.71f
+    };
+    const juce::Point<float> screwCentres[4] = {
+        { area.getX() + inset,         area.getY() + inset },
+        { area.getRight() - inset,     area.getY() + inset },
+        { area.getX() + inset,         area.getBottom() - inset },
+        { area.getRight() - inset,     area.getBottom() - inset }
+    };
+    for (int i = 0; i < 4; ++i)
+        mdLookAndFeel.drawScrew(g, screwCentres[i], screwR, kScrewAngles[i]);
+
+    // Wordmark + version at bottom-right, engraved into the chassis.
+    const juce::Font wordmarkFont(mdLookAndFeel.getMediumTypeface());
+    const juce::Font versionFont (mdLookAndFeel.getRegularTypeface());
+
+    juce::Rectangle<float> wordmarkArea(area.getRight() - 130.0f,
+                                        area.getBottom() - 36.0f, 110.0f, 16.0f);
+    juce::Rectangle<float> versionArea (area.getRight() - 130.0f,
+                                        area.getBottom() - 20.0f, 110.0f, 12.0f);
+
+    mdLookAndFeel.drawEngravedText(g, "MAYBEDUCK", wordmarkArea,
+                                 juce::Justification::centredRight,
+                                 wordmarkFont.withHeight(14.0f));
+    mdLookAndFeel.drawEngravedText(g, "v1.0",       versionArea,
+                                 juce::Justification::centredRight,
+                                 versionFont.withHeight(9.5f));
 }
 
 void MaybeDuckAudioProcessorEditor::resized()

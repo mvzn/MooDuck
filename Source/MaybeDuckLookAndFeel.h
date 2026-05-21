@@ -29,9 +29,17 @@ public:
     juce::Typeface::Ptr getRegularTypeface() const { return regularTypeface; }
     juce::Typeface::Ptr getMediumTypeface()  const { return mediumTypeface; }
 
+    // --- Draw helpers (used by the editor paint() and overridden draw methods)
+    void drawBrushedChassis (juce::Graphics&, juce::Rectangle<float> area) const;
+    void drawScrew          (juce::Graphics&, juce::Point<float> centre, float radius, float slotAngleRadians) const;
+    void drawEngravedText   (juce::Graphics&, const juce::String& text, juce::Rectangle<float> area,
+                             juce::Justification just, juce::Font font) const;
+
 private:
     juce::Typeface::Ptr regularTypeface;
     juce::Typeface::Ptr mediumTypeface;
+
+    juce::Image grainImage; // cached brushed-grain noise overlay, generated once
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MaybeDuckLookAndFeel)
 };
