@@ -48,6 +48,7 @@ target_sources(MaybeDuck PRIVATE
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
     Source/MaybeDuckLookAndFeel.cpp
+    Source/VuMeterComponent.cpp
 )
 
 target_compile_definitions(MaybeDuck PRIVATE
