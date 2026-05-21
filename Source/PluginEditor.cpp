@@ -186,9 +186,14 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
     const juce::String eqSuffix[] = { " Hz", " dB", " Hz", " dB", "", " Hz", " dB" };
     const int          eqDecimals[] = { 0, 1, 0, 1, 2, 0, 1 };
 
+    // EQ gain knobs (low, mid, high) are bipolar in dB, centred at 0.
+    const bool eqGainIndex[] = { false, true, false, true, false, false, true };
+
     for (int i = 0; i < 7; ++i)
     {
         mdLookAndFeel.applyRotaryConfiguration(eqSliders[i]);
+        if (eqGainIndex[i])
+            mdLookAndFeel.applyBipolarBehavior(eqSliders[i], 0.0);
         eqSliders[i].setTextBoxStyle(juce::Slider::TextBoxBelow, false, 70, 20);
         eqSliders[i].setTextValueSuffix(eqSuffix[i]);
         eqSliders[i].setNumDecimalPlacesToDisplay(eqDecimals[i]);

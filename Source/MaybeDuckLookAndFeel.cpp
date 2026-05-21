@@ -116,10 +116,131 @@ void MaybeDuckLookAndFeel::applyRotaryConfiguration (juce::Slider& s) const
     s.setRotaryParameters(kRotaryStartAngle, kRotaryEndAngle, true);
 }
 
+void MaybeDuckLookAndFeel::applyBipolarBehavior (juce::Slider& s, double centreValue) const
+{
+    s.getProperties().set("bipolarCentre", centreValue);
+    s.setDoubleClickReturnValue(true, centreValue);
+}
+
+void MaybeDuckLookAndFeel::drawPushButtonBody (juce::Graphics& g, juce::Rectangle<float> bounds,
+                                               bool isOn, bool isMouseOver, bool isDown) const
+{
+    // Slight inset when pressed.
+    auto rect = bounds.reduced(2.0f);
+    if (isDown) rect = rect.translated(0.0f, 1.0f);
+
+    const float corner = juce::jmin(rect.getHeight() * 0.5f, 10.0f);
+
+    // Drop shadow under the body.
+    g.setColour(juce::Colours::black.withAlpha(0.28f));
+    g.fillRoundedRectangle(rect.translated(0.6f, 1.6f).expanded(0.3f), corner);
+
+    // Body fill: matte-black gradient, light from above.
+    juce::ColourGradient body(
+        juce::Colour(0xff333231), rect.getX(), rect.getY(),
+        juce::Colour(kKnobMatteBlack), rect.getX(), rect.getBottom(),
+        false);
+    g.setGradientFill(body);
+    g.fillRoundedRectangle(rect, corner);
+
+    // Hover lift: very subtle top highlight.
+    if (isMouseOver)
+    {
+        g.setColour(juce::Colour(kAccentWhite).withAlpha(0.06f));
+        g.fillRoundedRectangle(rect.removeFromTop(rect.getHeight() * 0.5f), corner);
+    }
+
+    // Thin rim.
+    g.setColour(juce::Colour(0xff0A0A0A));
+    g.drawRoundedRectangle(bounds.reduced(1.5f), corner, 0.8f);
+    g.setColour(juce::Colour(kDividerHighlight).withAlpha(0.10f));
+    g.drawRoundedRectangle(bounds.reduced(2.5f), juce::jmax(corner - 1.0f, 1.0f), 0.6f);
+
+    // LED dot on the left.
+    const float dotR = juce::jlimit(2.5f, 4.5f, rect.getHeight() * 0.18f);
+    const float dotX = rect.getX() + rect.getHeight() * 0.45f;
+    const float dotY = rect.getCentreY();
+    const juce::Rectangle<float> dot(dotX - dotR, dotY - dotR, dotR * 2.0f, dotR * 2.0f);
+
+    if (isOn)
+    {
+        // Bright halo + crisp core.
+        g.setColour(juce::Colour(kAccentWhite).withAlpha(0.55f));
+        g.fillEllipse(dot.expanded(2.0f));
+        g.setColour(juce::Colour(kAccentWhite));
+        g.fillEllipse(dot);
+    }
+    else
+    {
+        // Recessed dark dot when off.
+        g.setColour(juce::Colour(kLedOff));
+        g.fillEllipse(dot);
+        g.setColour(juce::Colours::black.withAlpha(0.5f));
+        g.drawEllipse(dot, 0.5f);
+    }
+}
+
+void MaybeDuckLookAndFeel::drawPushButtonLabel (juce::Graphics& g, juce::Rectangle<float> bounds,
+                                                const juce::String& text,
+                                                bool isOn, bool /*isMouseOver*/, bool isDown) const
+{
+    if (text.isEmpty()) return;
+
+    auto rect = bounds.reduced(2.0f);
+    if (isDown) rect = rect.translated(0.0f, 1.0f);
+
+    // Carve out the LED-dot column on the left.
+    rect.removeFromLeft(rect.getHeight() * 0.9f);
+    rect.removeFromRight(4.0f);
+
+    const float fontSize = juce::jlimit(9.5f, 13.5f, rect.getHeight() * 0.45f);
+    juce::Font font(getMediumTypeface());
+    font.setHeight(fontSize);
+    font.setExtraKerningFactor(0.04f);
+    g.setFont(font);
+
+    // Soft drop-shadow under the text.
+    g.setColour(juce::Colours::black.withAlpha(0.55f));
+    g.drawText(text.toUpperCase(),
+               rect.translated(0.0f, 0.7f).toNearestInt(),
+               juce::Justification::centredLeft, false);
+
+    // Main text — bright when on, slightly muted when off.
+    const juce::Colour textColour = isOn ? juce::Colour(kAccentWhite)
+                                         : juce::Colour(0xffB4ADA0);
+    g.setColour(textColour);
+    g.drawText(text.toUpperCase(), rect.toNearestInt(),
+               juce::Justification::centredLeft, false);
+}
+
+void MaybeDuckLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton& b,
+                                             bool isOver, bool isDown)
+{
+    const auto bounds = b.getLocalBounds().toFloat();
+    const bool isOn = b.getToggleState();
+    drawPushButtonBody (g, bounds, isOn, isOver, isDown);
+    drawPushButtonLabel(g, bounds, b.getButtonText(), isOn, isOver, isDown);
+}
+
+void MaybeDuckLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& b,
+                                                 const juce::Colour& /*bg*/,
+                                                 bool isOver, bool isDown)
+{
+    drawPushButtonBody(g, b.getLocalBounds().toFloat(),
+                       b.getToggleState(), isOver, isDown);
+}
+
+void MaybeDuckLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& b,
+                                           bool isOver, bool isDown)
+{
+    drawPushButtonLabel(g, b.getLocalBounds().toFloat(),
+                        b.getButtonText(), b.getToggleState(), isOver, isDown);
+}
+
 void MaybeDuckLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height,
                                              float sliderPos,
                                              float rotaryStart, float rotaryEnd,
-                                             juce::Slider& /*slider*/)
+                                             juce::Slider& slider)
 {
     const auto bounds = juce::Rectangle<int>(x, y, width, height).toFloat();
     const auto centre = bounds.getCentre();
@@ -128,6 +249,24 @@ void MaybeDuckLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, in
     const float discR       = radius * 0.66f;
     const float tickInnerR  = radius * 0.83f;
     const float tickOuterR  = radius * 0.94f;
+
+    // --- Detect bipolar configuration (set via applyBipolarBehavior)
+    bool isBipolar = false;
+    float centreProp = 0.5f;
+    {
+        const auto& props = slider.getProperties();
+        if (props.contains("bipolarCentre"))
+        {
+            const double centreValue = static_cast<double>(props["bipolarCentre"]);
+            const double prop = slider.valueToProportionOfLength(centreValue);
+            isBipolar = true;
+            centreProp = juce::jlimit(0.0f, 1.0f, static_cast<float>(prop));
+        }
+    }
+
+    auto angleAt = [&](float prop) {
+        return rotaryStart + prop * (rotaryEnd - rotaryStart);
+    };
 
     // --- Engraved chassis tick marks (11 across the 270° sweep)
     constexpr int kNumTicks = 11;
@@ -151,6 +290,22 @@ void MaybeDuckLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, in
         g.setColour(juce::Colour(kDividerHighlight).withAlpha(0.35f));
         g.drawLine(inner.x + 0.6f, inner.y + 0.6f,
                    outer.x + 0.6f, outer.y + 0.6f, 0.6f);
+    }
+
+    // --- Bold centre tick for bipolar sliders (drawn on top of the 11 ticks
+    // since the centre may not coincide with one of them).
+    if (isBipolar)
+    {
+        const float screenAngle = angleAt(centreProp) - juce::MathConstants<float>::halfPi;
+        const float c = std::cos(screenAngle);
+        const float s = std::sin(screenAngle);
+        const float innerR = tickInnerR - 1.5f;
+        const float outerR = tickOuterR + 1.5f;
+        const juce::Point<float> inner(centre.x + c * innerR, centre.y + s * innerR);
+        const juce::Point<float> outer(centre.x + c * outerR, centre.y + s * outerR);
+
+        g.setColour(juce::Colour(kEngravedText));
+        g.drawLine(inner.x, inner.y, outer.x, outer.y, 2.4f);
     }
 
     // --- Drop shadow under the disc
@@ -181,6 +336,33 @@ void MaybeDuckLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, in
     g.drawEllipse(discRect, 1.0f);
     g.setColour(juce::Colour(kDividerHighlight).withAlpha(0.12f));
     g.drawEllipse(discRect.reduced(0.8f), 0.6f);
+
+    // --- Bipolar fill arc: thin ring just outside the disc, filled from centre to current value.
+    if (isBipolar)
+    {
+        const float arcRadius = discR * 1.10f;
+        const float startAngle = angleAt(centreProp);
+        const float endAngle   = angleAt(sliderPos);
+
+        // Heuristic for "heavy": >75 % of available deflection from centre.
+        const float deflection    = std::abs(sliderPos - centreProp);
+        const float maxDeflection = juce::jmax(centreProp, 1.0f - centreProp);
+        const float deflectionRatio = (maxDeflection > 0.0001f) ? deflection / maxDeflection : 0.0f;
+        const bool  heavy = deflectionRatio > 0.75f;
+
+        juce::Path arc;
+        if (endAngle >= startAngle)
+            arc.addCentredArc(centre.x, centre.y, arcRadius, arcRadius, 0.0f,
+                              startAngle, endAngle, true);
+        else
+            arc.addCentredArc(centre.x, centre.y, arcRadius, arcRadius, 0.0f,
+                              endAngle, startAngle, true);
+
+        g.setColour(juce::Colour(heavy ? kAccentAmber : kAccentWhite));
+        g.strokePath(arc, juce::PathStrokeType(2.0f,
+                                               juce::PathStrokeType::curved,
+                                               juce::PathStrokeType::rounded));
+    }
 
     // --- White V-notch indicator at sliderPos
     const float indicatorAngle = rotaryStart + sliderPos * (rotaryEnd - rotaryStart);

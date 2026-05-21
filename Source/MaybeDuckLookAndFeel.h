@@ -44,11 +44,39 @@ public:
     // for every rotary so the drawRotarySlider override sees the right angle range.
     void applyRotaryConfiguration (juce::Slider&) const;
 
+    // Mark a slider as bipolar (with a meaningful 'centre' value). drawRotarySlider
+    // will draw a bold centre tick + a fill arc from centre to the current value,
+    // shifting to amber once deflection exceeds ~75 % of either side.
+    // Also enables double-click-to-reset to the centre.
+    void applyBipolarBehavior (juce::Slider&, double centreValue) const;
+
     // --- LookAndFeel overrides
     void drawRotarySlider (juce::Graphics&, int x, int y, int width, int height,
                            float sliderPosProportional,
                            float rotaryStartAngle, float rotaryEndAngle,
                            juce::Slider&) override;
+
+    void drawToggleButton (juce::Graphics&, juce::ToggleButton&,
+                           bool shouldDrawButtonAsHighlighted,
+                           bool shouldDrawButtonAsDown) override;
+
+    void drawButtonBackground (juce::Graphics&, juce::Button&,
+                               const juce::Colour& backgroundColour,
+                               bool shouldDrawButtonAsHighlighted,
+                               bool shouldDrawButtonAsDown) override;
+
+    void drawButtonText (juce::Graphics&, juce::TextButton&,
+                         bool shouldDrawButtonAsHighlighted,
+                         bool shouldDrawButtonAsDown) override;
+
+private:
+    void drawPushButtonBody  (juce::Graphics&, juce::Rectangle<float> bounds,
+                              bool isOn, bool isMouseOver, bool isDown) const;
+    void drawPushButtonLabel (juce::Graphics&, juce::Rectangle<float> bounds,
+                              const juce::String& text,
+                              bool isOn, bool isMouseOver, bool isDown) const;
+
+public:
 
 private:
     juce::Typeface::Ptr regularTypeface;
