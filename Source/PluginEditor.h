@@ -87,6 +87,7 @@ private:
     MaybeDuckAudioProcessor& audioProcessor;
 
     MaybeDuckLookAndFeel mdLookAndFeel;
+    juce::TooltipWindow  tooltipWindow { this, 700 };
 
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;

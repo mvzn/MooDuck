@@ -75,14 +75,28 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
     setupLabel(kneeLabel,      "Knee");
     setupLabel(outputLabel,    "Output");
 
-    sidechainButton.setButtonText("Enable Sidechain");
+    sidechainButton.setButtonText("Sidechain");
     softKneeButton.setButtonText("Soft Knee");
-    limiterButton.setButtonText("Limiter");
+    limiterButton.setButtonText("Hard Duck");
     addAndMakeVisible(sidechainButton);
     addAndMakeVisible(softKneeButton);
     addAndMakeVisible(limiterButton);
 
     addAndMakeVisible(compressorMeter);
+
+    // --- Tooltips
+    thresholdSlider .setTooltip("Sidechain level above which ducking begins (dB).");
+    ratioSlider     .setTooltip("Ducking slope above threshold. 4:1 = 0.75 dB GR per dB of sidechain excess.");
+    attackSlider    .setTooltip("How fast the ducking ramps on (ms).");
+    holdSlider      .setTooltip("Minimum time the gain reduction is held at its peak before release begins (ms).");
+    releaseSlider   .setTooltip("How fast the ducking ramps off after the sidechain falls below threshold (ms).");
+    lookaheadSlider .setTooltip("Delays the main signal so the ducking aligns with the sidechain transient (ms). Adds host latency.");
+    kneeSlider      .setTooltip("Width of the soft transition around the threshold (dB).");
+    outputSlider    .setTooltip("Make-up gain applied after the dynamics stage (dB).");
+
+    sidechainButton .setTooltip("Use the external sidechain bus as the trigger. When off, ducking is driven by the main input.");
+    softKneeButton  .setTooltip("Smooth the curve around the threshold instead of a hard corner.");
+    limiterButton   .setTooltip("Force 1:1 sidechain-excess to gain reduction (steepest possible ducking). Overrides the Ratio knob.");
 
     thresholdAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, "threshold", thresholdSlider);
     ratioAttachment     = std::make_unique<SliderAttachment>(audioProcessor.apvts, "ratio", ratioSlider);
@@ -101,26 +115,39 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
     setupGroup(modeGroup, "Sidechain Mode");
 
     const juce::String modeNames[3] = { "Wideband", "Multiband", "Spectral" };
+    const juce::String modeTips [3] = {
+        "Wideband: detect the whole sidechain spectrum at once.",
+        "Multiband: split the sidechain at the crossovers and detect per band, then sum the per-band ducking.",
+        "Spectral: frequency-domain detection over the sidechain FFT spectrum."
+    };
     for (int i = 0; i < 3; ++i)
     {
         modeButtons[i].setButtonText(modeNames[i]);
         modeButtons[i].setClickingTogglesState(false);
         modeButtons[i].setRadioGroupId(0x101);
+        modeButtons[i].setTooltip(modeTips[i]);
         addAndMakeVisible(modeButtons[i]);
         modeButtons[i].onClick = [this, i] { setModeFromButton(i); };
     }
 
     fftConvButton.setButtonText("FFT Conv");
+    fftConvButton.setTooltip("Switch detection to FFT convolution. Adds latency proportional to the FFT size.");
     addAndMakeVisible(fftConvButton);
     fftConvAttachment = std::make_unique<ButtonAttachment>(
         audioProcessor.apvts, "fftConvolution", fftConvButton);
 
     const juce::String convSizeNames[3] = { "512", "1024", "2048" };
+    const juce::String convSizeTips [3] = {
+        "512 samples — lowest latency, coarsest frequency resolution.",
+        "1024 samples — balanced latency/resolution.",
+        "2048 samples — highest frequency resolution, highest latency."
+    };
     for (int i = 0; i < 3; ++i)
     {
         convSizeButtons[i].setButtonText(convSizeNames[i]);
         convSizeButtons[i].setClickingTogglesState(false);
         convSizeButtons[i].setRadioGroupId(0x102);
+        convSizeButtons[i].setTooltip(convSizeTips[i]);
         addAndMakeVisible(convSizeButtons[i]);
         convSizeButtons[i].onClick = [this, i] { setConvSizeFromButton(i); };
     }
@@ -128,6 +155,7 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
     convLatencyLabel.setText("Latency: 0 samples (0.0 ms)", juce::dontSendNotification);
     convLatencyLabel.setJustificationType(juce::Justification::centredLeft);
     convLatencyLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+    convLatencyLabel.setTooltip("Reported plugin latency in samples and milliseconds. Increases with FFT size.");
     addAndMakeVisible(convLatencyLabel);
 
     // ----- Crossover group -----
@@ -135,6 +163,12 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
 
     const juce::String xoverNames[] = { "Low", "Low-Mid", "High-Mid", "High" };
     const juce::String xoverIds[]   = { "xover0", "xover1", "xover2", "xover3" };
+    const juce::String xoverTips[]  = {
+        "Crossover frequency between band 1 and band 2.",
+        "Crossover frequency between band 2 and band 3.",
+        "Crossover frequency between band 3 and band 4.",
+        "Crossover frequency between band 4 and band 5."
+    };
 
     for (int i = 0; i < 4; ++i)
     {
@@ -142,6 +176,7 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
         xoverSliders[i].setTextBoxStyle(juce::Slider::TextBoxBelow, false, 80, 20);
         xoverSliders[i].setTextValueSuffix(" Hz");
         xoverSliders[i].setNumDecimalPlacesToDisplay(0);
+        xoverSliders[i].setTooltip(xoverTips[i]);
         addAndMakeVisible(xoverSliders[i]);
 
         xoverLabels[i].setText(xoverNames[i], juce::dontSendNotification);
@@ -160,9 +195,11 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
     for (int i = 0; i < 5; ++i)
     {
         mdLookAndFeel.applyRotaryConfiguration(bandScaleSliders[i]);
+        mdLookAndFeel.applyBipolarBehavior(bandScaleSliders[i], 0.0);
         bandScaleSliders[i].setTextBoxStyle(juce::Slider::TextBoxBelow, false, 70, 20);
         bandScaleSliders[i].setTextValueSuffix(" dB");
         bandScaleSliders[i].setNumDecimalPlacesToDisplay(1);
+        bandScaleSliders[i].setTooltip("Per-band ducking depth offset (dB). Negative = less ducking in this band, positive = more.");
         addAndMakeVisible(bandScaleSliders[i]);
 
         bandScaleLabels[i].setText(bandNames[i], juce::dontSendNotification);
@@ -188,6 +225,15 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
 
     // EQ gain knobs (low, mid, high) are bipolar in dB, centred at 0.
     const bool eqGainIndex[] = { false, true, false, true, false, false, true };
+    const juce::String eqTips[] = {
+        "Low-shelf corner frequency (Hz).",
+        "Low-shelf gain (dB). Centred at 0; amber past extreme.",
+        "Mid bell centre frequency (Hz).",
+        "Mid bell gain (dB). Centred at 0; amber past extreme.",
+        "Mid bell Q — narrower at higher values.",
+        "High-shelf corner frequency (Hz).",
+        "High-shelf gain (dB). Centred at 0; amber past extreme."
+    };
 
     for (int i = 0; i < 7; ++i)
     {
@@ -197,6 +243,7 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
         eqSliders[i].setTextBoxStyle(juce::Slider::TextBoxBelow, false, 70, 20);
         eqSliders[i].setTextValueSuffix(eqSuffix[i]);
         eqSliders[i].setNumDecimalPlacesToDisplay(eqDecimals[i]);
+        eqSliders[i].setTooltip(eqTips[i]);
         addAndMakeVisible(eqSliders[i]);
 
         eqLabels[i].setText(eqLabelsText[i], juce::dontSendNotification);
@@ -210,6 +257,11 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
 
     startTimerHz(30);
     setSize(kWindowW, kWindowH);
+
+    setResizable(true, true);
+    setResizeLimits(600, 500, 1400, 1100);
+    if (auto* c = getConstrainer())
+        c->setFixedAspectRatio(static_cast<double>(kWindowW) / static_cast<double>(kWindowH));
 }
 
 MaybeDuckAudioProcessorEditor::~MaybeDuckAudioProcessorEditor()
