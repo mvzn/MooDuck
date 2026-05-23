@@ -13,8 +13,8 @@ namespace {
     static constexpr float kRatioSteps[]  = { 1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 8.0f, 16.0f, 20.0f, 40.0f, 60.0f };
     static constexpr int   kNumRatioSteps = 10;
 
-    static constexpr float kLookaheadSteps[]  = { 0.0f, 3.0f, 6.0f, 10.0f };
-    static constexpr int   kNumLookaheadSteps = 4;
+    static constexpr float kLookaheadSteps[]  = { 0.0f, 3.0f, 6.0f, 10.0f, 16.0f };
+    static constexpr int   kNumLookaheadSteps = 5;
 }
 
 //==============================================================================
@@ -106,7 +106,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout MaybeDuckAudioProcessor::cre
         });
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
-        "ratio", "Ratio", ratioRange, 4.0f));
+        juce::ParameterID { "ratio", 1 }, "Ratio", ratioRange, 4.0f,
+        juce::AudioParameterFloatAttributes()
+            .withStringFromValueFunction([](float v, int) {
+                if (std::abs(v - std::round(v)) < 0.01f)
+                    return juce::String((int) std::round(v)) + ":1";
+                return juce::String(v, 1) + ":1";
+            })));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "attack", "Attack", juce::NormalisableRange<float>(0.0f, 5000.0f, 0.1f, 0.5f), 10.0f));
@@ -117,9 +123,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout MaybeDuckAudioProcessor::cre
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "hold", "Hold", juce::NormalisableRange<float>(0.0f, 2000.0f, 1.0f, 0.5f), 0.0f));
 
-    // Lookahead is stepped: 0 / 3 / 6 / 10 ms
+    // Lookahead is stepped: 0 / 3 / 6 / 10 / 16 ms
     juce::NormalisableRange<float> lookaheadRange(
-        0.0f, 10.0f,
+        0.0f, 16.0f,
         [](float, float, float v) -> float {
             const int idx = juce::roundToInt(v * (float)(kNumLookaheadSteps - 1));
             return kLookaheadSteps[juce::jlimit(0, kNumLookaheadSteps - 1, idx)];
@@ -332,8 +338,8 @@ void MaybeDuckAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
     scBandBufL.setSize(numBands, samplesPerBlock);
     scBandBufR.setSize(numBands, samplesPerBlock);
 
-    // Lookahead delay line: max 12 ms at current sample rate (slider goes 0-10 ms).
-    const int maxLookahead = static_cast<int>(std::ceil(0.012 * sampleRate));
+    // Lookahead delay line: max 18 ms at current sample rate (slider goes 0-16 ms, +2 ms margin).
+    const int maxLookahead = static_cast<int>(std::ceil(0.018 * sampleRate));
     lookaheadDelayL.setMaximumDelayInSamples(maxLookahead);
     lookaheadDelayR.setMaximumDelayInSamples(maxLookahead);
     juce::dsp::ProcessSpec lookSpec { sampleRate, (juce::uint32) samplesPerBlock, 1 };

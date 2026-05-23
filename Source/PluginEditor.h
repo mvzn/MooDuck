@@ -15,7 +15,8 @@
 
 //==============================================================================
 class MaybeDuckAudioProcessorEditor  : public juce::AudioProcessorEditor,
-                                       private juce::Timer
+                                       private juce::Timer,
+                                       private juce::AudioProcessorValueTreeState::Listener
 {
 public:
     MaybeDuckAudioProcessorEditor (MaybeDuckAudioProcessor&);
@@ -27,8 +28,14 @@ public:
 
     void timerCallback() override;
 
+    void parameterChanged(const juce::String& paramID, float newValue) override;
+
 private:
     MaybeDuckAudioProcessor& audioProcessor;
+
+    // E6: cache the user's chosen ratio so it can be restored when Hard Duck releases.
+    float previousRatioValue = 4.0f;
+    void applyLimiterRatioLock(bool limiterOn);
 
     MaybeDuckLookAndFeel mdLookAndFeel;
     juce::TooltipWindow  tooltipWindow { this, 700 };
