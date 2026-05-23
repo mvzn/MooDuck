@@ -12,7 +12,7 @@
 namespace {
     constexpr int kWindowW       = 820;
     constexpr int kWindowH       = 760;
-    constexpr int kOuterMargin   = 10;
+    constexpr int kOuterMargin   = 22;
     constexpr int kGroupGap      = 6;
     constexpr int kGroupTitleH   = 22;
 
@@ -188,8 +188,11 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
             audioProcessor.apvts, xoverIds[i], xoverSliders[i]);
     }
 
-    // ----- Per-band duck scale group -----
+    // ----- Per-band duck scale group (hidden in UI but DSP attachments remain) -----
+    // E3: section is invisible in this build; the APVTS attachments are kept so the
+    // DSP keeps reading the band-scale params (which default to 0 dB = neutral).
     setupGroup(bandScaleGroup, "Per-Band Duck Scale");
+    bandScaleGroup.setVisible(false);
 
     const juce::String bandNames[] = { "B1", "B2", "B3", "B4", "B5" };
     for (int i = 0; i < 5; ++i)
@@ -200,12 +203,12 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
         bandScaleSliders[i].setTextValueSuffix(" dB");
         bandScaleSliders[i].setNumDecimalPlacesToDisplay(1);
         bandScaleSliders[i].setTooltip("Per-band ducking depth offset (dB). Negative = less ducking in this band, positive = more.");
-        addAndMakeVisible(bandScaleSliders[i]);
+        addChildComponent(bandScaleSliders[i]);
 
         bandScaleLabels[i].setText(bandNames[i], juce::dontSendNotification);
         bandScaleLabels[i].setJustificationType(juce::Justification::centred);
         bandScaleLabels[i].setColour(juce::Label::textColourId, juce::Colours::white);
-        addAndMakeVisible(bandScaleLabels[i]);
+        addChildComponent(bandScaleLabels[i]);
 
         bandScaleAttachments[i] = std::make_unique<SliderAttachment>(
             audioProcessor.apvts, "bandScale" + juce::String(i), bandScaleSliders[i]);
@@ -255,6 +258,20 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
             audioProcessor.apvts, eqIds[i], eqSliders[i]);
     }
 
+    // E6: listen for Hard Duck changes so we can lock/unlock the ratio knob.
+    audioProcessor.apvts.addParameterListener("limiter", this);
+
+    // Initial sync of the lock state — only adjust the slider's enabled flag and
+    // remember the current ratio. We deliberately don't re-write the param value
+    // here so reloading a saved state with limiter ON keeps the ratio at 1:1
+    // (which the DSP ignores anyway when limiter is on) and limiter OFF keeps
+    // the user's stored ratio.
+    {
+        previousRatioValue = *audioProcessor.apvts.getRawParameterValue("ratio");
+        const bool limiterOn = (*audioProcessor.apvts.getRawParameterValue("limiter") > 0.5f);
+        ratioSlider.setEnabled(! limiterOn);
+    }
+
     startTimerHz(30);
     setSize(kWindowW, kWindowH);
 
@@ -266,7 +283,50 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
 
 MaybeDuckAudioProcessorEditor::~MaybeDuckAudioProcessorEditor()
 {
+    audioProcessor.apvts.removeParameterListener("limiter", this);
     setLookAndFeel(nullptr);
+}
+
+void MaybeDuckAudioProcessorEditor::parameterChanged(const juce::String& paramID, float newValue)
+{
+    if (paramID == "limiter")
+    {
+        // Hop to the message thread — parameter listeners may fire from the
+        // audio thread, and we touch component state below.
+        const bool limiterOn = newValue > 0.5f;
+        juce::MessageManager::callAsync([this, limiterOn]
+        {
+            applyLimiterRatioLock(limiterOn);
+        });
+    }
+}
+
+void MaybeDuckAudioProcessorEditor::applyLimiterRatioLock(bool limiterOn)
+{
+    auto* ratioParam = audioProcessor.apvts.getParameter("ratio");
+    if (ratioParam == nullptr)
+        return;
+
+    if (limiterOn)
+    {
+        // Cache the user's chosen ratio, then snap to 1:1.
+        const float currentRatio = *audioProcessor.apvts.getRawParameterValue("ratio");
+        if (std::abs(currentRatio - 1.0f) > 0.01f)
+            previousRatioValue = currentRatio;
+
+        ratioParam->beginChangeGesture();
+        ratioParam->setValueNotifyingHost(ratioParam->convertTo0to1(1.0f));
+        ratioParam->endChangeGesture();
+        ratioSlider.setEnabled(false);
+    }
+    else
+    {
+        ratioSlider.setEnabled(true);
+        // Restore the cached ratio for a friendlier UX.
+        ratioParam->beginChangeGesture();
+        ratioParam->setValueNotifyingHost(ratioParam->convertTo0to1(previousRatioValue));
+        ratioParam->endChangeGesture();
+    }
 }
 
 void MaybeDuckAudioProcessorEditor::setModeFromButton(int idx)
@@ -332,7 +392,33 @@ void MaybeDuckAudioProcessorEditor::resized()
 {
     auto area = getLocalBounds().reduced(kOuterMargin);
 
-    // --- Dynamics group: 8-knob row + toggles row, GR meter on the right
+    // --- Mode group (moved to the top of the editor) -----------------------
+    // 2 rows: mode select + conv config. Buttons are bigger now (E10).
+    constexpr int modeRowH   = 44;
+    constexpr int modeGroupH = kGroupTitleH + modeRowH * 2 + 14;
+    auto modeArea = area.removeFromTop(modeGroupH);
+    modeGroup.setBounds(modeArea);
+
+    auto modeInner = modeArea.reduced(8, 6);
+    modeInner.removeFromTop(kGroupTitleH - 8);
+
+    auto modeRow = modeInner.removeFromTop(modeRowH);
+    constexpr int modeBtnW = 150;
+    for (int i = 0; i < 3; ++i)
+        modeButtons[i].setBounds(modeRow.removeFromLeft(modeBtnW).reduced(2));
+
+    // The conv row's bounds are allocated unconditionally so the section height
+    // is stable even when the conv controls are hidden (see timerCallback for
+    // the spectral-mode visibility logic — E9).
+    auto convRow = modeInner.removeFromTop(modeRowH);
+    fftConvButton.setBounds(convRow.removeFromLeft(140).reduced(2));
+    for (int i = 0; i < 3; ++i)
+        convSizeButtons[i].setBounds(convRow.removeFromLeft(70).reduced(2));
+    convLatencyLabel.setBounds(convRow.reduced(4));
+
+    area.removeFromTop(kGroupGap);
+
+    // --- Dynamics group: 8-knob row + toggles row, GR meter on the right ---
     constexpr int dynamicsKnobsH  = 130;
     constexpr int dynamicsToggleH = 32;
     constexpr int dynamicsGroupH  = kGroupTitleH + dynamicsKnobsH + dynamicsToggleH + 14;
@@ -343,7 +429,7 @@ void MaybeDuckAudioProcessorEditor::resized()
     auto dynamicsInner = dynamicsArea.reduced(8, 6);
     dynamicsInner.removeFromTop(kGroupTitleH - 8);   // leave space for group title
 
-    // Give the VU meter (with its IN/SC LED strips) a wider slot than the old vertical bar.
+    // Three-strip meter (IN / SC / GR) lives in the wider slot on the right.
     auto meterArea = dynamicsInner.removeFromRight(230);
     vuMeter.setBounds(meterArea);
 
@@ -371,29 +457,7 @@ void MaybeDuckAudioProcessorEditor::resized()
 
     area.removeFromTop(kGroupGap);
 
-    // --- Mode group: 2 rows (mode + conv)
-    constexpr int modeRowH   = 32;
-    constexpr int modeGroupH = kGroupTitleH + modeRowH * 2 + 14;
-    auto modeArea = area.removeFromTop(modeGroupH);
-    modeGroup.setBounds(modeArea);
-
-    auto modeInner = modeArea.reduced(8, 6);
-    modeInner.removeFromTop(kGroupTitleH - 8);
-
-    auto modeRow = modeInner.removeFromTop(modeRowH);
-    constexpr int modeBtnW = 110;
-    for (int i = 0; i < 3; ++i)
-        modeButtons[i].setBounds(modeRow.removeFromLeft(modeBtnW).reduced(2));
-
-    auto convRow = modeInner.removeFromTop(modeRowH);
-    fftConvButton.setBounds(convRow.removeFromLeft(110).reduced(2));
-    for (int i = 0; i < 3; ++i)
-        convSizeButtons[i].setBounds(convRow.removeFromLeft(60).reduced(2));
-    convLatencyLabel.setBounds(convRow.reduced(4));
-
-    area.removeFromTop(kGroupGap);
-
-    // --- Crossover group: 4 knobs
+    // --- Crossover group: 4 knobs ------------------------------------------
     constexpr int xoverRowH   = 108;
     constexpr int xoverGroupH = kGroupTitleH + xoverRowH + 14;
     auto xoverArea = area.removeFromTop(xoverGroupH);
@@ -412,26 +476,11 @@ void MaybeDuckAudioProcessorEditor::resized()
 
     area.removeFromTop(kGroupGap);
 
-    // --- Per-band duck scale group: 5 knobs
-    constexpr int bsRowH   = 96;
-    constexpr int bsGroupH = kGroupTitleH + bsRowH + 14;
-    auto bsArea = area.removeFromTop(bsGroupH);
-    bandScaleGroup.setBounds(bsArea);
+    // --- Per-band duck scale group: hidden in this UI pass (E3). -----------
+    // We don't claim any vertical space — the EQ section moves up to fill the gap.
+    // Children remain invisible so the DSP keeps reading their (neutral) values.
 
-    auto bsInner = bsArea.reduced(8, 6);
-    bsInner.removeFromTop(kGroupTitleH - 8);
-    auto bsKnobs = bsInner.removeFromTop(bsRowH);
-    const int bsColW = bsKnobs.getWidth() / 5;
-    for (int i = 0; i < 5; ++i)
-    {
-        auto col = bsKnobs.removeFromLeft(bsColW).reduced(4);
-        bandScaleLabels[i].setBounds(col.removeFromTop(18));
-        bandScaleSliders[i].setBounds(col);
-    }
-
-    area.removeFromTop(kGroupGap);
-
-    // --- Post-ducking EQ group: 7 knobs
+    // --- Post-ducking EQ group: 7 knobs ------------------------------------
     constexpr int eqRowH   = 96;
     constexpr int eqGroupH = kGroupTitleH + eqRowH + 14;
     auto eqArea = area.removeFromTop(eqGroupH);
@@ -471,12 +520,16 @@ void MaybeDuckAudioProcessorEditor::timerCallback()
     for (int i = 0; i < 3; ++i)
         modeButtons[i].setToggleState(i == mode, juce::dontSendNotification);
 
-    fftConvButton.setEnabled(spectralActive);
+    // E9: collapse the conv config controls when not in Spectral mode. The
+    // convRow's space stays allocated in resized() so the section height
+    // doesn't churn — just the controls themselves disappear.
+    fftConvButton.setVisible(spectralActive);
     for (int i = 0; i < 3; ++i)
     {
-        convSizeButtons[i].setEnabled(spectralActive && fftConvOn);
+        convSizeButtons[i].setVisible(spectralActive && fftConvOn);
         convSizeButtons[i].setToggleState(i == sizeIdx, juce::dontSendNotification);
     }
+    // Latency label stays visible — relevant for lookahead even when FFT is off.
 
     // Crossover, band-scale, and band-routing controls are inert in Wideband
     for (int i = 0; i < 4; ++i) xoverSliders[i].setEnabled(mode != 0);

@@ -3,17 +3,15 @@
 
     VuMeterComponent.h
 
-    Drop-in metering component for MaybeDuck.
+    Three vertical segmented LED meter strips for MaybeDuck.
 
     Layout:
-      [IN] [SC]  |   <-------  Horizontal VU dial  ------->
-                 |        cream face, red needle, ~120° sweep
-                 |        engraved dB scale 0/-3/-6/-12/-18/-24
-                 |        digital peak readout below
+      [IN] [SC] [ ----- GR ----- ]
 
-    The two vertical strips on the left show IN (main input) and SC
-    (sidechain) levels as segmented LEDs (white -> amber > -6 dBFS ->
-    red at clip).
+    IN  : main input level (white -> amber > -6 dBFS -> red at clip), fills upward.
+    SC  : sidechain level, same scale and colouring as IN, fills upward.
+    GR  : gain reduction, solid amber throughout, fills DOWNWARD from the top.
+          Range 0..24 dB of reduction maps to empty..full.
 
   ==============================================================================
 */
@@ -30,8 +28,8 @@ public:
     ~VuMeterComponent() override;
 
     // Called from the editor's timerCallback() with raw values read from the
-    // processor's atomics. levels are in dB; gainReductionDb is positive
-    // (e.g. 8.0 means -8 dB of GR — i.e. signal pulled down by 8 dB).
+    // processor's atomics. inputDb / sidechainDb are in dBFS (negative). The
+    // gainReductionDb argument is positive (e.g. 8.0 means -8 dB of GR).
     void setLevels(float inputDb, float sidechainDb, float gainReductionDb);
 
     void paint(juce::Graphics&) override;
@@ -40,25 +38,22 @@ public:
 private:
     void timerCallback() override;
 
-    // Smoothed / ballistic state
-    float displayedGrDb = 0.0f;      // PPM-smoothed value used for the needle
-    float peakHoldGrDb  = 0.0f;
-    int   peakHoldTicks = 0;
+    // Ballistic state for the GR strip (PPM-fast attack, slow release).
+    float displayedGrDb = 0.0f;
 
     float targetInputDb     = -100.0f;
     float targetSidechainDb = -100.0f;
     float targetGrDb        = 0.0f;
 
-    // Layout rectangles computed in resized()
-    juce::Rectangle<int> dialArea, peakReadoutArea, inStripArea, scStripArea;
+    // Layout rectangles computed in resized().
+    juce::Rectangle<int> inStripArea, scStripArea, grStripArea;
 
-    void drawDialFace(juce::Graphics&) const;
-    void drawNeedle(juce::Graphics&, float grDb) const;
-    void drawPeakReadout(juce::Graphics&, float peakDb) const;
     void drawLevelStrip(juce::Graphics&, juce::Rectangle<int> area, float dbValue,
                         const juce::String& caption) const;
 
-    static float grDbToAngle(float grDb);    // -24..0 dB → angle in radians for needle
+    // GR strip is solid amber and fills from the top down — separate drawer.
+    void drawGrStrip(juce::Graphics&, juce::Rectangle<int> area, float grDb,
+                     const juce::String& caption) const;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(VuMeterComponent)
 };
