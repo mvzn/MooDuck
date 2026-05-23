@@ -18,7 +18,7 @@ public:
     static constexpr juce::uint32 kKnobMatteBlack   = 0xff1A1A1A;
     static constexpr juce::uint32 kAccentWhite      = 0xffFFFFFF;
     static constexpr juce::uint32 kAccentAmber      = 0xffE8A23E;
-    static constexpr juce::uint32 kEngravedText     = 0xff3C3633;
+    static constexpr juce::uint32 kEngravedText     = 0xffEFE7D7;
 
     static constexpr juce::uint32 kLedOff           = 0xff5A5450;
     static constexpr juce::uint32 kLedOn            = 0xffFFFFFF;

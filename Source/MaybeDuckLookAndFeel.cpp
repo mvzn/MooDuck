@@ -23,8 +23,10 @@ MaybeDuckLookAndFeel::MaybeDuckLookAndFeel()
         for (int x = 0; x < grainImage.getWidth(); ++x)
         {
             // Bias toward horizontal streaks: alpha varies with x more than y.
+            // Bumped from 0.18f -> 0.26f so individual streaks read from a metre away
+            // without becoming wallpaper-textured at close range.
             const float a = juce::jlimit(0.0f, 1.0f,
-                                         rng.nextFloat() * 0.18f - 0.07f);
+                                         rng.nextFloat() * 0.26f - 0.07f);
             const auto tint = (rng.nextBool() ? juce::Colour(kChassisHighlight)
                                               : juce::Colour(kChassisShadow));
             grainImage.setPixelAt(x, y, tint.withAlpha(a));
@@ -44,8 +46,10 @@ void MaybeDuckLookAndFeel::drawBrushedChassis (juce::Graphics& g, juce::Rectangl
     g.fillRect(area);
 
     // Composite the cached grain overlay, tiled across the area at full size.
-    g.setOpacity(0.45f);
-    g.setTiledImageFill(grainImage, 0, 0, 0.45f);
+    // Tile opacity bumped 0.45 -> 0.55 in tandem with the denser per-pixel alpha
+    // so the streaks read at distance without becoming wallpaper-textured.
+    g.setOpacity(0.55f);
+    g.setTiledImageFill(grainImage, 0, 0, 0.55f);
     g.fillRect(area);
     g.setOpacity(1.0f);
 
@@ -144,10 +148,13 @@ void MaybeDuckLookAndFeel::drawPushButtonBody (juce::Graphics& g, juce::Rectangl
     g.fillRoundedRectangle(rect, corner);
 
     // Hover lift: very subtle top highlight.
+    // NB: use withHeight (non-mutating) — removeFromTop would shrink `rect`
+    // and shift the LED-dot computation below into the lower half.
     if (isMouseOver)
     {
         g.setColour(juce::Colour(kAccentWhite).withAlpha(0.06f));
-        g.fillRoundedRectangle(rect.removeFromTop(rect.getHeight() * 0.5f), corner);
+        const auto highlight = rect.withHeight(rect.getHeight() * 0.5f);
+        g.fillRoundedRectangle(highlight, corner);
     }
 
     // Thin rim.
@@ -320,6 +327,12 @@ void MaybeDuckLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, in
     const float tickInnerR  = radius * 0.83f;
     const float tickOuterR  = radius * 0.94f;
 
+    // Disabled knobs (e.g. crossover/bandscale in Wideband mode) should read
+    // visibly "off" — desaturated disc, dim indicator, faint bipolar fill.
+    // The 11 chassis ticks stay full-strength because they're engraved into
+    // the chassis, not into the knob itself.
+    const bool isEnabled = slider.isEnabled();
+
     // --- Detect bipolar configuration (set via applyBipolarBehavior)
     bool isBipolar = false;
     float centreProp = 0.5f;
@@ -363,8 +376,9 @@ void MaybeDuckLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, in
     }
 
     // --- Bold centre tick for bipolar sliders (drawn on top of the 11 ticks
-    // since the centre may not coincide with one of them).
-    if (isBipolar)
+    // since the centre may not coincide with one of them). Skipped when disabled
+    // — a disabled bipolar knob shouldn't advertise its centre detent.
+    if (isBipolar && isEnabled)
     {
         const float screenAngle = angleAt(centreProp) - juce::MathConstants<float>::halfPi;
         const float c = std::cos(screenAngle);
@@ -391,10 +405,19 @@ void MaybeDuckLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, in
     discRect = discRect.withCentre(centre);
 
     {
+        // When disabled, mix the dome stops toward the chassis-shadow tone so
+        // the disc reads as a flat, lifeless puck rather than a glossy black knob.
+        const auto highlightStop = isEnabled
+            ? juce::Colour(0xff3C3936)
+            : juce::Colour(0xff3C3936).interpolatedWith(juce::Colour(kChassisShadow), 0.55f);
+        const auto shadowStop = isEnabled
+            ? juce::Colour(kKnobMatteBlack)
+            : juce::Colour(kKnobMatteBlack).interpolatedWith(juce::Colour(kChassisShadow), 0.45f);
+
         juce::ColourGradient domeGrad(
-            juce::Colour(0xff3C3936),                 // highlight peak (upper-left)
+            highlightStop,                            // highlight peak (upper-left)
             centre.x - discR * 0.35f, centre.y - discR * 0.45f,
-            juce::Colour(kKnobMatteBlack),            // body tone (lower-right)
+            shadowStop,                               // body tone (lower-right)
             centre.x + discR * 0.55f, centre.y + discR * 0.55f,
             true);
         g.setGradientFill(domeGrad);
@@ -428,7 +451,9 @@ void MaybeDuckLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, in
             arc.addCentredArc(centre.x, centre.y, arcRadius, arcRadius, 0.0f,
                               endAngle, startAngle, true);
 
-        g.setColour(juce::Colour(heavy ? kAccentAmber : kAccentWhite));
+        const auto arcColour = juce::Colour(heavy ? kAccentAmber : kAccentWhite)
+                                  .withAlpha(isEnabled ? 1.0f : 0.18f);
+        g.setColour(arcColour);
         g.strokePath(arc, juce::PathStrokeType(2.0f,
                                                juce::PathStrokeType::curved,
                                                juce::PathStrokeType::rounded));
@@ -454,11 +479,16 @@ void MaybeDuckLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, in
                                                      .translated(centre.x, centre.y);
 
         // Soft inner glow first (sells the recessed-paint look).
-        g.setColour(juce::Colour(kAccentWhite).withAlpha(0.18f));
+        // When disabled, drop the indicator + glow alpha so the knob reads as inactive
+        // while still being identifiable as a knob.
+        const float glowAlpha   = isEnabled ? 0.18f : 0.06f;
+        const float notchAlpha  = isEnabled ? 1.00f : 0.30f;
+
+        g.setColour(juce::Colour(kAccentWhite).withAlpha(glowAlpha));
         g.fillPath(notch, transform.scaled(1.5f, 1.5f).translated(centre.x * -0.5f,
                                                                   centre.y * -0.5f));
 
-        g.setColour(juce::Colour(kAccentWhite));
+        g.setColour(juce::Colour(kAccentWhite).withAlpha(notchAlpha));
         g.fillPath(notch, transform);
     }
 }
