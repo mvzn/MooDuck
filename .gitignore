@@ -10,8 +10,12 @@
 /tests/build/
 /tests/runtests
 
-# CMake build directory (used by GitHub Actions CI; local dev uses Projucer)
+# CMake build directories (CI uses /build/; local dev sometimes uses /build-cmake/)
 /build/
+/build-cmake/
+
+# Claude Code local files and parallel-agent worktrees (the latter are GBs)
+/.claude/
 
 # Ignore ST folder
 **/.stfolder/

@@ -1,17 +1,26 @@
 /*
   ==============================================================================
 
-    VuMeterComponent.cpp
+    LevelMeterComponent.cpp
 
     Three-strip segmented LED meter: IN, SC, GR.
 
   ==============================================================================
 */
 
-#include "VuMeterComponent.h"
+#include "LevelMeterComponent.h"
 
 namespace
 {
+    // METER TUNING — change these to re-scale or re-colour the three meter strips.
+    // The IN/SC strips span kStripMinDb..kStripMaxDb over kStripSegments LED blocks
+    // and switch colour at the kStripAmber/Clip thresholds (white -> amber -> red).
+    // The GR strip spans 0..kGrMaxDb of reduction and is solid amber. Raise
+    // kGrMaxDb for a meter that shows more dB of ducking before pegging. The
+    // ballistics below control only how fast the GR readout reacts, not its scale.
+    // The strip WIDTHS/positions are set in resized(); the segment COLOURS come
+    // from the palette in MaybeDuckLookAndFeel.h (kAccentWhite/Amber, kMeterClipRed).
+
     // --- Ballistic time constants (used for the GR strip) ---------------------
     constexpr double kTimerHz       = 60.0;
     constexpr double kTimeStepSec   = 1.0 / kTimerHz;
@@ -32,16 +41,16 @@ namespace
 }
 
 //==============================================================================
-VuMeterComponent::VuMeterComponent()
+LevelMeterComponent::LevelMeterComponent()
 {
     setOpaque(false);
     startTimerHz(static_cast<int>(kTimerHz));
 }
 
-VuMeterComponent::~VuMeterComponent() = default;
+LevelMeterComponent::~LevelMeterComponent() = default;
 
 //==============================================================================
-void VuMeterComponent::setLevels(float inputDb, float sidechainDb, float gainReductionDb)
+void LevelMeterComponent::setLevels(float inputDb, float sidechainDb, float gainReductionDb)
 {
     targetInputDb     = inputDb;
     targetSidechainDb = sidechainDb;
@@ -50,7 +59,7 @@ void VuMeterComponent::setLevels(float inputDb, float sidechainDb, float gainRed
 }
 
 //==============================================================================
-void VuMeterComponent::timerCallback()
+void LevelMeterComponent::timerCallback()
 {
     // PPM-fast ballistic smoothing on the GR strip:
     //   attack (= GR increasing) is fast, release (= GR returning toward 0) is slow.
@@ -64,13 +73,13 @@ void VuMeterComponent::timerCallback()
 }
 
 //==============================================================================
-void VuMeterComponent::resized()
+void LevelMeterComponent::resized()
 {
     auto r = getLocalBounds().reduced(6);
 
     // Three vertical strips, left-to-right: IN, SC, GR.
-    // IN and SC are narrow (10 px); GR is wider (~18 px) since it inherits
-    // the area that used to hold the dial.
+    // IN and SC are narrow (10 px); GR is wider (~18 px) as the primary
+    // gain-reduction readout.
     constexpr int sideStripWidth = 10;
     constexpr int stripGap       = 4;
     constexpr int grStripWidth   = 18;
@@ -88,7 +97,7 @@ void VuMeterComponent::resized()
 }
 
 //==============================================================================
-void VuMeterComponent::paint(juce::Graphics& g)
+void LevelMeterComponent::paint(juce::Graphics& g)
 {
     // Background chassis fill behind the whole component.
     g.setColour(juce::Colour(MaybeDuckLookAndFeel::kChassisShadow).withAlpha(0.35f));
@@ -100,7 +109,7 @@ void VuMeterComponent::paint(juce::Graphics& g)
 }
 
 //==============================================================================
-void VuMeterComponent::drawLevelStrip(juce::Graphics& g,
+void LevelMeterComponent::drawLevelStrip(juce::Graphics& g,
                                       juce::Rectangle<int> area,
                                       float dbValue,
                                       const juce::String& caption) const
@@ -138,7 +147,7 @@ void VuMeterComponent::drawLevelStrip(juce::Graphics& g,
 
         juce::Colour segColour;
         if (segDb >= kStripClipDb)
-            segColour = juce::Colour(MaybeDuckLookAndFeel::kVuNeedleRed);
+            segColour = juce::Colour(MaybeDuckLookAndFeel::kMeterClipRed);
         else if (segDb >= kStripAmberDb)
             segColour = juce::Colour(MaybeDuckLookAndFeel::kAccentAmber);
         else
@@ -163,7 +172,7 @@ void VuMeterComponent::drawLevelStrip(juce::Graphics& g,
 }
 
 //==============================================================================
-void VuMeterComponent::drawGrStrip(juce::Graphics& g,
+void LevelMeterComponent::drawGrStrip(juce::Graphics& g,
                                    juce::Rectangle<int> area,
                                    float grDb,
                                    const juce::String& caption) const

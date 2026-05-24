@@ -323,6 +323,11 @@ void MaybeDuckLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, in
     const auto centre = bounds.getCentre();
     const float radius = juce::jmin(bounds.getWidth(), bounds.getHeight()) * 0.5f;
 
+    // KNOB PROPORTIONS — every size below is a fraction of `radius` (half the
+    // slot the editor hands us), so knobs scale with the window. To make the
+    // black disc bigger/smaller change discR; to move the engraved ring of tick
+    // marks in/out change tickInner/OuterR. The actual draw order further down
+    // is: chassis ticks -> disc shadow -> disc -> bipolar fill arc -> indicator.
     const float discR       = radius * 0.66f;
     const float tickInnerR  = radius * 0.83f;
     const float tickOuterR  = radius * 0.94f;

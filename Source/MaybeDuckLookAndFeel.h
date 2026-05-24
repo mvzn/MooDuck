@@ -8,6 +8,23 @@ public:
     MaybeDuckLookAndFeel();
     ~MaybeDuckLookAndFeel() override = default;
 
+    // ============================ HOW TO RESTYLE ============================
+    // PALETTE — this is the single place to change every colour in the plugin.
+    // Each value is a 32-bit ARGB hex literal: 0xAARRGGBB
+    //   AA = opacity (ff = opaque), RR/GG/BB = red/green/blue, 00..ff each.
+    // e.g. 0xffE8A23E -> fully opaque, R=E8 G=A2 B=3E (the amber accent).
+    // Change a constant here and everything that references it updates at once
+    // (knobs, meters, buttons, engraved text all pull from these). To recolour
+    // just one widget instead, edit its draw method in MaybeDuckLookAndFeel.cpp.
+    //
+    //   kChassis*  : the brushed-metal background gradient (top->bottom).
+    //   kDivider*  : engraved section divider lines + tick highlights/shadows.
+    //   kKnobMatteBlack / kAccentWhite / kAccentAmber : knob body + indicators.
+    //   kAccentAmber doubles as the "hot"/over-threshold colour on meters.
+    //   kEngravedText : the carved-label tone used for titles and knob labels.
+    //   kLed* : the little on/off dot on toggle + push buttons.
+    //   kMeterClipRed : the red clip-segment colour on the level-meter strips.
+    // ========================================================================
     // --- Palette (warm brushed nickel + matte black + white/amber accents)
     static constexpr juce::uint32 kChassisHighlight = 0xffC7BFB3;
     static constexpr juce::uint32 kChassisMid       = 0xffA8A097;
@@ -23,14 +40,17 @@ public:
     static constexpr juce::uint32 kLedOff           = 0xff5A5450;
     static constexpr juce::uint32 kLedOn            = 0xffFFFFFF;
 
-    static constexpr juce::uint32 kVuDialCream      = 0xffEDE3CC;
-    static constexpr juce::uint32 kVuNeedleRed      = 0xffC84030;
+    static constexpr juce::uint32 kMeterClipRed     = 0xffC84030;
 
     juce::Typeface::Ptr getRegularTypeface() const { return regularTypeface; }
     juce::Typeface::Ptr getMediumTypeface()  const { return mediumTypeface; }
 
     // --- Rotary angles: classic 270° travel, 7 o'clock to 5 o'clock.
     // Angles are radians measured clockwise from 12 o'clock per JUCE convention.
+    // Want a different knob sweep? Change these two values (in radians). Common
+    // choices: ±135° (270° sweep, default below) or ±150° (300° sweep ≈ ±2.618).
+    // They feed applyRotaryConfiguration() and drawRotarySlider() together, so
+    // the indicator and the engraved tick marks always stay in agreement.
     static constexpr float kRotaryStartAngle = -2.35619449f; // -135°
     static constexpr float kRotaryEndAngle   =  2.35619449f; // +135°
 

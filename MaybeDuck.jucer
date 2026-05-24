@@ -14,6 +14,14 @@
       <FILE id="uo7tsz" name="PluginEditor.cpp" compile="1" resource="0"
             file="Source/PluginEditor.cpp"/>
       <FILE id="p9yJIo" name="PluginEditor.h" compile="0" resource="0" file="Source/PluginEditor.h"/>
+      <FILE id="MdLnFc" name="MaybeDuckLookAndFeel.cpp" compile="1" resource="0"
+            file="Source/MaybeDuckLookAndFeel.cpp"/>
+      <FILE id="MdLnFh" name="MaybeDuckLookAndFeel.h" compile="0" resource="0"
+            file="Source/MaybeDuckLookAndFeel.h"/>
+      <FILE id="LvMtrC" name="LevelMeterComponent.cpp" compile="1" resource="0"
+            file="Source/LevelMeterComponent.cpp"/>
+      <FILE id="LvMtrH" name="LevelMeterComponent.h" compile="0" resource="0"
+            file="Source/LevelMeterComponent.h"/>
     </GROUP>
   </MAINGROUP>
   <MODULES>

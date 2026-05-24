@@ -9,6 +9,15 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
+// ============================ HOW TO RE-LAYOUT ==============================
+// These are the global layout knobs. The window opens at kWindowW x kWindowH
+// (and that ratio is locked in the constructor via setFixedAspectRatio, so the
+// window only ever scales proportionally). kOuterMargin is the dead border
+// around everything; kGroupGap is the vertical space between sections;
+// kGroupTitleH is the height reserved for each section's engraved title row.
+// Per-section heights (knob-row heights etc.) live as local constexprs inside
+// resized() — see that method to resize or reorder individual sections.
+// ===========================================================================
 namespace {
     constexpr int kWindowW       = 820;
     constexpr int kWindowH       = 760;
@@ -23,8 +32,19 @@ namespace {
 MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProcessor& p)
     : AudioProcessorEditor (&p), audioProcessor (p)
 {
+    // setLookAndFeel installs our custom MaybeDuckLookAndFeel on this editor and
+    // every child below it — that's what makes the knobs/buttons/labels render
+    // with the brushed-metal style instead of JUCE's stock grey widgets.
     setLookAndFeel(&mdLookAndFeel);
 
+    // ---- Shared "setup" helpers -------------------------------------------
+    // Every knob, text label, and section header is created through one of these
+    // three lambdas, so they're the one place to change defaults that apply to
+    // ALL of that widget type. Want every knob's value box wider, or every label
+    // a different colour? Edit it here once rather than per-control. addAndMakeVisible
+    // registers the component as a child so it actually draws and receives mouse input.
+
+    // A rotary knob: applies the 270° rotary config + a value read-out box below it.
     auto setupSlider = [this](juce::Slider& s, const juce::String& name)
     {
         mdLookAndFeel.applyRotaryConfiguration(s);
@@ -33,6 +53,7 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
         addAndMakeVisible(s);
     };
 
+    // The static caption sitting above each knob (the LookAndFeel draws it engraved).
     auto setupLabel = [this](juce::Label& l, const juce::String& text)
     {
         l.setText(text, juce::dontSendNotification);
@@ -41,6 +62,7 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
         addAndMakeVisible(l);
     };
 
+    // A section header: title text + the engraved divider line drawn by the LookAndFeel.
     auto setupGroup = [this](juce::GroupComponent& g, const juce::String& title)
     {
         g.setText(title);
@@ -49,6 +71,18 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
         g.setTextLabelPosition(juce::Justification::centredLeft);
         addAndMakeVisible(g);
     };
+
+    // ======================= HOW TO ADD/EDIT A CONTROL =======================
+    // The rest of this constructor BUILDS the controls (text, tooltips, suffixes,
+    // ranges). resized() further down POSITIONS them. A control has three parts:
+    //   1. Declare the member (juce::Slider / ToggleButton / Label) in PluginEditor.h
+    //   2. Configure it here (setupSlider/Label/Group, .setButtonText, .setTooltip...)
+    //   3. Bind it to a parameter with a *Attachment so moving it updates the DSP
+    //      (the parameter ID string, e.g. "threshold", must match one registered in
+    //       PluginProcessor.cpp's createParameterLayout).
+    // To just rename a knob or change its tooltip/units, only step 2 below matters.
+    // setTextValueSuffix adds the unit shown in the value box (e.g. " ms", " Hz").
+    // =========================================================================
 
     // ----- Dynamics group -----
     setupGroup(dynamicsGroup, "Dynamics");
@@ -82,7 +116,7 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
     addAndMakeVisible(softKneeButton);
     addAndMakeVisible(limiterButton);
 
-    addAndMakeVisible(vuMeter);
+    addAndMakeVisible(levelMeter);
 
     // --- Tooltips
     thresholdSlider .setTooltip("Sidechain level above which ducking begins (dB).");
@@ -350,6 +384,12 @@ void MaybeDuckAudioProcessorEditor::setConvSizeFromButton(int idx)
 }
 
 //==============================================================================
+// paint() draws the fixed BACKGROUND decoration only — the brushed-metal panel,
+// the four corner screws, and the engraved wordmark. The interactive widgets
+// (knobs, buttons, meters) paint themselves on top via the LookAndFeel; you do
+// NOT draw them here. Add static artwork (logos, panel labels, lines) in this
+// method. The actual textures live in MaybeDuckLookAndFeel.cpp (drawBrushedChassis,
+// drawScrew, drawEngravedText), so tweak their look there; tweak placement here.
 void MaybeDuckAudioProcessorEditor::paint (juce::Graphics& g)
 {
     const auto area = getLocalBounds().toFloat();
@@ -388,6 +428,18 @@ void MaybeDuckAudioProcessorEditor::paint (juce::Graphics& g)
                                  versionFont.withHeight(9.5f));
 }
 
+// resized() is called by JUCE every time the window opens or is resized. It is
+// where every component gets its position + size. We never use fixed pixel
+// coordinates; instead we start from the full window and slice pieces off a
+// shrinking `area` rectangle:
+//   removeFromTop(h)  -> chops an h-tall strip off the top and RETURNS it,
+//                        leaving `area` shorter for the next section.
+//   removeFromLeft(w) -> same, but a w-wide column off the left edge.
+//   reduced(n)        -> insets a rectangle by n px on all sides (padding).
+// So sections are laid out top-to-bottom in the ORDER they appear below — to
+// reorder sections on screen, reorder these blocks. To make a section taller,
+// bump its local *GroupH / *RowH constant. Each section: claim its rectangle,
+// inset it, drop the title row, then lay knobs left-to-right inside what's left.
 void MaybeDuckAudioProcessorEditor::resized()
 {
     auto area = getLocalBounds().reduced(kOuterMargin);
@@ -431,7 +483,7 @@ void MaybeDuckAudioProcessorEditor::resized()
 
     // Three-strip meter (IN / SC / GR) lives in the wider slot on the right.
     auto meterArea = dynamicsInner.removeFromRight(230);
-    vuMeter.setBounds(meterArea);
+    levelMeter.setBounds(meterArea);
 
     auto dynKnobs = dynamicsInner.removeFromTop(dynamicsKnobsH);
     const int colW = dynKnobs.getWidth() / 8;
@@ -500,13 +552,9 @@ void MaybeDuckAudioProcessorEditor::resized()
 
 void MaybeDuckAudioProcessorEditor::timerCallback()
 {
-    // Derive an absolute-dB sidechain level for the IN/SC strips on the meter.
-    const float threshDb = audioProcessor.apvts.getRawParameterValue("threshold")->load();
-    const float scDb     = threshDb + audioProcessor.getAboveThresholdDb();
-
-    vuMeter.setLevels(audioProcessor.getInputLevelDb(),
-                      scDb,
-                      audioProcessor.getGainReductionAmountDb());
+    levelMeter.setLevels(audioProcessor.getInputLevelDb(),
+                         audioProcessor.getSidechainLevelDb(),
+                         audioProcessor.getGainReductionAmountDb());
 
     // --- Sync mode + conv-size button visual state from APVTS via toggle state
     // so the LookAndFeel-drawn LED dot reflects the active radio.

@@ -96,7 +96,7 @@ public:
     float getGainReductionDb() const noexcept      { return gainReductionDb.load(); }   // negative or zero internally
     float getGainReductionAmountDb() const noexcept{ return gainReductionAmountDb.load(); } // positive for meter
     float getInputLevelDb() const noexcept         { return inputLevelDb.load(); }
-    float getAboveThresholdDb() const noexcept     { return aboveThresholdDb.load(); }
+    float getSidechainLevelDb() const noexcept     { return sidechainLevelDb.load(); }
     double getCurrentSampleRateHz() const noexcept { return currentSampleRate.load(); }
     int getCurrentBlockSize() const noexcept       { return currentBlockSize.load(); }
     bool isSidechainConnected() const noexcept     { return sidechainConnected.load(); }
@@ -189,12 +189,13 @@ private:
     std::atomic<float> gainReductionDb { 0.0f };
     std::atomic<float> gainReductionAmountDb { 0.0f };
     std::atomic<float> inputLevelDb { -100.0f };
-    std::atomic<float> aboveThresholdDb { 0.0f };
+    std::atomic<float> sidechainLevelDb { -100.0f };
     std::atomic<double> currentSampleRate { 44100.0 };
     std::atomic<int> currentBlockSize { 0 };
     std::atomic<bool> sidechainConnected { false };
 
     float inputLevelSmoothedDb = -100.0f;
+    float sidechainLevelSmoothedDb = -100.0f;
     float gainReductionSmoothedDb = 0.0f;
     //==============================================================================
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MaybeDuckAudioProcessor)

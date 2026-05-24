@@ -11,7 +11,7 @@
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
 #include "MaybeDuckLookAndFeel.h"
-#include "VuMeterComponent.h"
+#include "LevelMeterComponent.h"
 
 //==============================================================================
 class MaybeDuckAudioProcessorEditor  : public juce::AudioProcessorEditor,
@@ -50,7 +50,7 @@ private:
     juce::Label thresholdLabel, ratioLabel, attackLabel, holdLabel, releaseLabel,
                 lookaheadLabel, kneeLabel, outputLabel;
     juce::ToggleButton sidechainButton, softKneeButton, limiterButton;
-    VuMeterComponent vuMeter;
+    LevelMeterComponent levelMeter;
     std::unique_ptr<SliderAttachment> thresholdAttachment, ratioAttachment, attackAttachment,
                                       holdAttachment, releaseAttachment, lookaheadAttachment,
                                       kneeAttachment, outputAttachment;

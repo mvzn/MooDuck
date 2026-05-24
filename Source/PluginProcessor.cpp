@@ -804,19 +804,23 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         }
     }
 
-    const float monPeakIn  = useSidechain ? sidechainPeakIn : blockPeakIn;
-    const float blockPeakDb = monPeakIn > 0.000001f
-                              ? juce::Decibels::gainToDecibels(monPeakIn)
-                              : -100.0f;
+    // Absolute-dB peaks for the meter strips: IN follows the main input,
+    // SC follows the external sidechain (empty when no sidechain is routed).
+    const float mainInDb = blockPeakIn > 0.000001f
+                           ? juce::Decibels::gainToDecibels(blockPeakIn)
+                           : -100.0f;
+    const float scInDb   = (useSidechain && sidechainPeakIn > 0.000001f)
+                           ? juce::Decibels::gainToDecibels(sidechainPeakIn)
+                           : -100.0f;
 
-    const float aboveThreshold = std::max(0.0f, blockPeakDb - static_cast<float>(dynParams.threshold_dB));
-
-    inputLevelSmoothedDb    = juce::jmax(blockPeakDb, inputLevelSmoothedDb - 0.8f);
-    gainReductionSmoothedDb = juce::jmax(grAmountDb,  gainReductionSmoothedDb - 0.35f);
+    inputLevelSmoothedDb     = juce::jmax(mainInDb, inputLevelSmoothedDb - 0.8f);
+    sidechainLevelSmoothedDb = juce::jmax(scInDb,   sidechainLevelSmoothedDb - 0.8f);
+    gainReductionSmoothedDb  = juce::jmax(grAmountDb, gainReductionSmoothedDb - 0.35f);
 
     gainReductionDb.store(-grAmountDb);
     gainReductionAmountDb.store(gainReductionSmoothedDb);
     inputLevelDb.store(inputLevelSmoothedDb);
+    sidechainLevelDb.store(sidechainLevelSmoothedDb);
 
     // Surface the GR amount to the host as a recordable parameter. Skip the notify when
     // the value hasn't moved by at least 0.05 dB so steady-state doesn't spam listeners.
@@ -837,7 +841,6 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         ? static_cast<float>(100.0 * elapsedMs / blockDurationMs)
         : 0.0f);
 
-    aboveThresholdDb.store(aboveThreshold);
     currentBlockSize.store(numSamples);
     sidechainConnected.store(scConnected);
 }

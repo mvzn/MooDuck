@@ -1,7 +1,7 @@
 /*
   ==============================================================================
 
-    VuMeterComponent.h
+    LevelMeterComponent.h
 
     Three vertical segmented LED meter strips for MaybeDuck.
 
@@ -21,11 +21,11 @@
 #include <JuceHeader.h>
 #include "MaybeDuckLookAndFeel.h"
 
-class VuMeterComponent : public juce::Component, private juce::Timer
+class LevelMeterComponent : public juce::Component, private juce::Timer
 {
 public:
-    VuMeterComponent();
-    ~VuMeterComponent() override;
+    LevelMeterComponent();
+    ~LevelMeterComponent() override;
 
     // Called from the editor's timerCallback() with raw values read from the
     // processor's atomics. inputDb / sidechainDb are in dBFS (negative). The
@@ -55,5 +55,5 @@ private:
     void drawGrStrip(juce::Graphics&, juce::Rectangle<int> area, float grDb,
                      const juce::String& caption) const;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(VuMeterComponent)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(LevelMeterComponent)
 };
