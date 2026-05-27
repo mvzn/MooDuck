@@ -23,6 +23,12 @@
       <FILE id="LvMtrH" name="LevelMeterComponent.h" compile="0" resource="0"
             file="Source/LevelMeterComponent.h"/>
     </GROUP>
+    <GROUP id="{B1F0E2C3-4A5D-6E7F-8901-23456789ABCD}" name="Resources">
+      <FILE id="ttfReg" name="IBMPlexSansCondensed-Regular.ttf" compile="0"
+            resource="1" file="Resources/fonts/IBMPlexSansCondensed-Regular.ttf"/>
+      <FILE id="ttfMed" name="IBMPlexSansCondensed-Medium.ttf" compile="0"
+            resource="1" file="Resources/fonts/IBMPlexSansCondensed-Medium.ttf"/>
+    </GROUP>
   </MAINGROUP>
   <MODULES>
     <MODULE id="juce_analytics" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>

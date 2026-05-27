@@ -30,6 +30,9 @@ public:
     bool isBusesLayoutSupported (const BusesLayout& layouts) const override;
    #endif
 
+    // We only implement the float path; bring the base double overload into scope
+    // so it isn't hidden (it falls back to AudioProcessor's default conversion).
+    using juce::AudioProcessor::processBlock;
     void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
 
     //==============================================================================
@@ -56,6 +59,14 @@ public:
     void setStateInformation (const void* data, int sizeInBytes) override;
     
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
+
+    // --- Discrete step tables (single source of truth). The Ratio and Lookahead
+    // params snap to these values; the editor reads the counts to draw one tick
+    // per step. Counts derive from the array sizes so they can never drift.
+    static constexpr float kRatioSteps[]      = { 1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 8.0f, 16.0f, 20.0f, 40.0f, 60.0f };
+    static constexpr int   kNumRatioSteps     = (int) (sizeof(kRatioSteps) / sizeof(kRatioSteps[0]));
+    static constexpr float kLookaheadSteps[]  = { 0.0f, 3.0f, 6.0f, 10.0f, 16.0f };
+    static constexpr int   kNumLookaheadSteps = (int) (sizeof(kLookaheadSteps) / sizeof(kLookaheadSteps[0]));
 
     juce::AudioProcessorValueTreeState apvts;
 

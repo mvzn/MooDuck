@@ -9,13 +9,8 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
-namespace {
-    static constexpr float kRatioSteps[]  = { 1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 8.0f, 16.0f, 20.0f, 40.0f, 60.0f };
-    static constexpr int   kNumRatioSteps = 10;
-
-    static constexpr float kLookaheadSteps[]  = { 0.0f, 3.0f, 6.0f, 10.0f, 16.0f };
-    static constexpr int   kNumLookaheadSteps = 5;
-}
+// The Ratio/Lookahead step tables live in PluginProcessor.h as public static
+// members (single source of truth, shared with the editor's tick drawing).
 
 //==============================================================================
 MaybeDuckAudioProcessor::MaybeDuckAudioProcessor()
@@ -442,6 +437,7 @@ bool MaybeDuckAudioProcessor::isBusesLayoutSupported(const BusesLayout &layouts)
 
 void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
 {
+    juce::ignoreUnused(midiMessages);   // no MIDI handling in this effect
     juce::ScopedNoDenormals noDenormals;
     auto totalNumInputChannels  = getTotalNumInputChannels();
     auto totalNumOutputChannels = getTotalNumOutputChannels();
@@ -766,7 +762,7 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         const float highFreq = pEqHighFreq ? pEqHighFreq->load() : 8000.0f;
         const float highGain = pEqHighGain ? pEqHighGain->load() : 0.0f;
 
-        if (lowFreq != prevEqLowFreq || lowGain != prevEqLowGain)
+        if (! juce::exactlyEqual(lowFreq, prevEqLowFreq) || ! juce::exactlyEqual(lowGain, prevEqLowGain))
         {
             auto c = juce::dsp::IIR::Coefficients<float>::makeLowShelf(
                 sr, lowFreq, 0.707f, juce::Decibels::decibelsToGain(lowGain));
@@ -774,7 +770,7 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
             *eqLowR.coefficients = *c;
             prevEqLowFreq = lowFreq; prevEqLowGain = lowGain;
         }
-        if (midFreq != prevEqMidFreq || midGain != prevEqMidGain || midQ != prevEqMidQ)
+        if (! juce::exactlyEqual(midFreq, prevEqMidFreq) || ! juce::exactlyEqual(midGain, prevEqMidGain) || ! juce::exactlyEqual(midQ, prevEqMidQ))
         {
             auto c = juce::dsp::IIR::Coefficients<float>::makePeakFilter(
                 sr, midFreq, midQ, juce::Decibels::decibelsToGain(midGain));
@@ -782,7 +778,7 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
             *eqMidR.coefficients = *c;
             prevEqMidFreq = midFreq; prevEqMidGain = midGain; prevEqMidQ = midQ;
         }
-        if (highFreq != prevEqHighFreq || highGain != prevEqHighGain)
+        if (! juce::exactlyEqual(highFreq, prevEqHighFreq) || ! juce::exactlyEqual(highGain, prevEqHighGain))
         {
             auto c = juce::dsp::IIR::Coefficients<float>::makeHighShelf(
                 sr, highFreq, 0.707f, juce::Decibels::decibelsToGain(highGain));
@@ -866,9 +862,9 @@ void MaybeDuckAudioProcessor::processConvFrame(int fftSize, int sizeIdx,
         convScWork[i] = convScRing[(convScWritePos + i) % fftSize];
     std::fill(convScWork + fftSize, convScWork + 2 * fftSize, 0.0f);
 
-    win.multiplyWithWindowingTable(convWorkL,  fftSize);
-    win.multiplyWithWindowingTable(convWorkR,  fftSize);
-    win.multiplyWithWindowingTable(convScWork, fftSize);
+    win.multiplyWithWindowingTable(convWorkL,  static_cast<size_t>(fftSize));
+    win.multiplyWithWindowingTable(convWorkR,  static_cast<size_t>(fftSize));
+    win.multiplyWithWindowingTable(convScWork, static_cast<size_t>(fftSize));
 
     fft.performRealOnlyForwardTransform(convWorkL);
     fft.performRealOnlyForwardTransform(convWorkR);

@@ -19,11 +19,16 @@
 // resized() — see that method to resize or reorder individual sections.
 // ===========================================================================
 namespace {
+    // >>> PLUGIN WINDOW SIZE <<< — change these two to resize the whole UI. The
+    // aspect ratio is locked to kWindowW:kWindowH in the constructor. The sections
+    // below are fixed pixels, so there's a content floor (~660 tall at the current
+    // section heights). To go shorter, trim dynamicsToggleH / xoverRowH / eqRowH.
     constexpr int kWindowW       = 820;
-    constexpr int kWindowH       = 760;
+    constexpr int kWindowH       = 665;   // was 760
     constexpr int kOuterMargin   = 22;
     constexpr int kGroupGap      = 6;
     constexpr int kGroupTitleH   = 22;
+    constexpr int kKnobLabelH    = 18;   // height of the caption above every knob
 
     juce::Colour groupTextColour = juce::Colours::lightgrey;
 }
@@ -44,11 +49,25 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
     // a different colour? Edit it here once rather than per-control. addAndMakeVisible
     // registers the component as a child so it actually draws and receives mouse input.
 
+    // Restyle a slider's value read-out box: dark matte plate, with the border and
+    // the number both in the engraved off-white. Applied per-slider because a
+    // slider bakes its value-box colours at setTextBoxStyle time — before it is
+    // parented to our LookAndFeel — so setting them on the LookAndFeel alone leaves
+    // the JUCE default (blue-grey) border in place.
+    auto styleValueBox = [](juce::Slider& s)
+    {
+        s.setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour(MaybeDuckLookAndFeel::kKnobMatteBlack));
+        s.setColour(juce::Slider::textBoxOutlineColourId,    juce::Colour(MaybeDuckLookAndFeel::kEngravedText));
+        s.setColour(juce::Slider::textBoxTextColourId,       juce::Colour(MaybeDuckLookAndFeel::kEngravedText));
+        s.setColour(juce::Slider::textBoxHighlightColourId,  juce::Colour(MaybeDuckLookAndFeel::kAccentAmber).withAlpha(0.35f));
+    };
+
     // A rotary knob: applies the 270° rotary config + a value read-out box below it.
-    auto setupSlider = [this](juce::Slider& s, const juce::String& name)
+    auto setupSlider = [this, &styleValueBox](juce::Slider& s, const juce::String& name)
     {
         mdLookAndFeel.applyRotaryConfiguration(s);
         s.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 70, 20);
+        styleValueBox(s);
         s.setName(name);
         addAndMakeVisible(s);
     };
@@ -100,6 +119,12 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
     lookaheadSlider.setTextValueSuffix(" ms");
     lookaheadSlider.setNumDecimalPlacesToDisplay(0);
 
+    // Ratio and Lookahead are stepped — give them a tick at each step position
+    // (where the dot lands) instead of the uniform Moog graduation. The counts come
+    // straight from the processor's step tables, so they can never fall out of sync.
+    ratioSlider.getProperties().set("stepTicks", MaybeDuckAudioProcessor::kNumRatioSteps);
+    lookaheadSlider.getProperties().set("stepTicks", MaybeDuckAudioProcessor::kNumLookaheadSteps);
+
     setupLabel(thresholdLabel, "Threshold");
     setupLabel(ratioLabel,     "Ratio");
     setupLabel(attackLabel,    "Attack");
@@ -120,7 +145,7 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
 
     // --- Tooltips
     thresholdSlider .setTooltip("Sidechain level above which ducking begins (dB).");
-    ratioSlider     .setTooltip("Ducking slope above threshold. 4:1 = 0.75 dB GR per dB of sidechain excess.");
+    ratioSlider     .setTooltip("Ducking slope above threshold (e.g. 4:1 = 0.75 dB gain reduction per dB of sidechain over threshold). Hard Duck overrides this with brick-wall " + juce::String(juce::CharPointer_UTF8("\xE2\x88\x9E")) + ":1.");
     attackSlider    .setTooltip("How fast the ducking ramps on (ms).");
     holdSlider      .setTooltip("Minimum time the gain reduction is held at its peak before release begins (ms).");
     releaseSlider   .setTooltip("How fast the ducking ramps off after the sidechain falls below threshold (ms).");
@@ -130,7 +155,7 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
 
     sidechainButton .setTooltip("Use the external sidechain bus as the trigger. When off, ducking is driven by the main input.");
     softKneeButton  .setTooltip("Smooth the curve around the threshold instead of a hard corner.");
-    limiterButton   .setTooltip("Force 1:1 sidechain-excess to gain reduction (steepest possible ducking). Overrides the Ratio knob.");
+    limiterButton   .setTooltip("Hard Duck: brick-wall ducking (" + juce::String(juce::CharPointer_UTF8("\xE2\x88\x9E")) + ":1). Every dB the sidechain exceeds the threshold removes 1 dB from the main signal. Overrides the Ratio knob, which reads " + juce::String(juce::CharPointer_UTF8("\xE2\x88\x9E")) + ":1 while engaged.");
 
     thresholdAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, "threshold", thresholdSlider);
     ratioAttachment     = std::make_unique<SliderAttachment>(audioProcessor.apvts, "ratio", ratioSlider);
@@ -208,6 +233,7 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
     {
         mdLookAndFeel.applyRotaryConfiguration(xoverSliders[i]);
         xoverSliders[i].setTextBoxStyle(juce::Slider::TextBoxBelow, false, 80, 20);
+        styleValueBox(xoverSliders[i]);
         xoverSliders[i].setTextValueSuffix(" Hz");
         xoverSliders[i].setNumDecimalPlacesToDisplay(0);
         xoverSliders[i].setTooltip(xoverTips[i]);
@@ -234,6 +260,7 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
         mdLookAndFeel.applyRotaryConfiguration(bandScaleSliders[i]);
         mdLookAndFeel.applyBipolarBehavior(bandScaleSliders[i], 0.0);
         bandScaleSliders[i].setTextBoxStyle(juce::Slider::TextBoxBelow, false, 70, 20);
+        styleValueBox(bandScaleSliders[i]);
         bandScaleSliders[i].setTextValueSuffix(" dB");
         bandScaleSliders[i].setNumDecimalPlacesToDisplay(1);
         bandScaleSliders[i].setTooltip("Per-band ducking depth offset (dB). Negative = less ducking in this band, positive = more.");
@@ -278,6 +305,7 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
         if (eqGainIndex[i])
             mdLookAndFeel.applyBipolarBehavior(eqSliders[i], 0.0);
         eqSliders[i].setTextBoxStyle(juce::Slider::TextBoxBelow, false, 70, 20);
+        styleValueBox(eqSliders[i]);
         eqSliders[i].setTextValueSuffix(eqSuffix[i]);
         eqSliders[i].setNumDecimalPlacesToDisplay(eqDecimals[i]);
         eqSliders[i].setTooltip(eqTips[i]);
@@ -295,16 +323,10 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
     // E6: listen for Hard Duck changes so we can lock/unlock the ratio knob.
     audioProcessor.apvts.addParameterListener("limiter", this);
 
-    // Initial sync of the lock state — only adjust the slider's enabled flag and
-    // remember the current ratio. We deliberately don't re-write the param value
-    // here so reloading a saved state with limiter ON keeps the ratio at 1:1
-    // (which the DSP ignores anyway when limiter is on) and limiter OFF keeps
-    // the user's stored ratio.
-    {
-        previousRatioValue = *audioProcessor.apvts.getRawParameterValue("ratio");
-        const bool limiterOn = (*audioProcessor.apvts.getRawParameterValue("limiter") > 0.5f);
-        ratioSlider.setEnabled(! limiterOn);
-    }
+    // Initial sync of the Hard Duck state — freeze + relabel the ratio knob if it
+    // loads with Hard Duck already engaged. The ratio param is never re-written
+    // (the DSP ignores it under Hard Duck), so the user's stored ratio is kept.
+    applyLimiterRatioLock(*audioProcessor.apvts.getRawParameterValue("limiter") > 0.5f);
 
     startTimerHz(30);
     setSize(kWindowW, kWindowH);
@@ -343,24 +365,26 @@ void MaybeDuckAudioProcessorEditor::applyLimiterRatioLock(bool limiterOn)
 
     if (limiterOn)
     {
-        // Cache the user's chosen ratio, then snap to 1:1.
-        const float currentRatio = *audioProcessor.apvts.getRawParameterValue("ratio");
-        if (std::abs(currentRatio - 1.0f) > 0.01f)
-            previousRatioValue = currentRatio;
-
-        ratioParam->beginChangeGesture();
-        ratioParam->setValueNotifyingHost(ratioParam->convertTo0to1(1.0f));
-        ratioParam->endChangeGesture();
-        ratioSlider.setEnabled(false);
+        // Hard Duck replaces the ratio curve with brick-wall (∞:1) ducking and the
+        // DSP ignores the ratio value entirely. So we DON'T touch the param (the
+        // user's ratio is preserved for when they disengage) — we just freeze the
+        // knob and relabel its read-out ∞:1, instead of the misleading old "1:1".
+        ratioSlider.textFromValueFunction = [](double)
+        {
+            return juce::String(juce::CharPointer_UTF8("\xE2\x88\x9E:1")); // ∞:1
+        };
     }
     else
     {
-        ratioSlider.setEnabled(true);
-        // Restore the cached ratio for a friendlier UX.
-        ratioParam->beginChangeGesture();
-        ratioParam->setValueNotifyingHost(ratioParam->convertTo0to1(previousRatioValue));
-        ratioParam->endChangeGesture();
+        // Restore the parameter's own "N:1" formatter (what the attachment installs).
+        ratioSlider.textFromValueFunction = [ratioParam](double value)
+        {
+            return ratioParam->getText(ratioParam->convertTo0to1(static_cast<float>(value)), 0);
+        };
     }
+
+    ratioSlider.setEnabled(! limiterOn);
+    ratioSlider.updateText();
 }
 
 void MaybeDuckAudioProcessorEditor::setModeFromButton(int idx)
@@ -415,10 +439,10 @@ void MaybeDuckAudioProcessorEditor::paint (juce::Graphics& g)
     const juce::Font wordmarkFont(mdLookAndFeel.getMediumTypeface());
     const juce::Font versionFont (mdLookAndFeel.getRegularTypeface());
 
-    juce::Rectangle<float> wordmarkArea(area.getRight() - 130.0f,
-                                        area.getBottom() - 36.0f, 110.0f, 16.0f);
-    juce::Rectangle<float> versionArea (area.getRight() - 130.0f,
-                                        area.getBottom() - 20.0f, 110.0f, 12.0f);
+    juce::Rectangle<float> wordmarkArea(area.getRight() - 150.0f,
+                                        area.getBottom() - 33.0f, 110.0f, 16.0f);
+    juce::Rectangle<float> versionArea (area.getRight() - 150.0f,
+                                        area.getBottom() - 17.0f, 110.0f, 12.0f);
 
     mdLookAndFeel.drawEngravedText(g, "MAYBEDUCK", wordmarkArea,
                                  juce::Justification::centredRight,
@@ -444,36 +468,49 @@ void MaybeDuckAudioProcessorEditor::resized()
 {
     auto area = getLocalBounds().reduced(kOuterMargin);
 
-    // --- Mode group (moved to the top of the editor) -----------------------
-    // 2 rows: mode select + conv config. Buttons are bigger now (E10).
-    constexpr int modeRowH   = 44;
-    constexpr int modeGroupH = kGroupTitleH + modeRowH * 2 + 14;
+    // --- Sidechain Mode group: ONE row --------------------------------------
+    // Vertical layout is pad-driven: [title][modeTopPad][button row][modeBotPad],
+    // so the buttons sit with equal breathing room above and below the title bar.
+    // Mode-select buttons hug the left; the smaller FFT-conv toggle + size buttons
+    // hug the right (shown only in Spectral mode — see timerCallback) and read as
+    // secondary. The latency readout sits at the editor's bottom-left, not here.
+    constexpr int modeTopPad     = 12;  // gap under the group title (buttons were cramped to it)
+    constexpr int modeBotPad     = 12;  // gap below the buttons (matches the top)
+    constexpr int modeBtnH       = 40;  // main mode-button height
+    constexpr int convBtnH       = 30;  // conv controls height -> shorter so they read as secondary
+    constexpr int modeBtnW       = 112; // mode-select button width
+    constexpr int convBtnW       = 120; // "FFT Conv" toggle button width
+    constexpr int convSizeW      = 84;  // buffer-size button width (wider so 1024/2048 aren't cramped)
+    constexpr int convRightInset = 6;   // keep the conv cluster off the group's right edge
+    constexpr int modeGroupH     = kGroupTitleH + modeTopPad + modeBtnH + modeBotPad;
     auto modeArea = area.removeFromTop(modeGroupH);
     modeGroup.setBounds(modeArea);
 
-    auto modeInner = modeArea.reduced(8, 6);
-    modeInner.removeFromTop(kGroupTitleH - 8);
+    auto modeInner = modeArea.reduced(8, 0);   // horizontal inset only; vertical handled by the pads
+    modeInner.removeFromTop(kGroupTitleH);     // clear the engraved title row
+    modeInner.removeFromTop(modeTopPad);       // <- modeTopPad (gap under the title)
+    auto modeRow = modeInner.removeFromTop(modeBtnH); // <- modeBtnH (main row height)
 
-    auto modeRow = modeInner.removeFromTop(modeRowH);
-    constexpr int modeBtnW = 150;
+    // Main mode buttons hug the left.
+    auto mainRow = modeRow;
     for (int i = 0; i < 3; ++i)
-        modeButtons[i].setBounds(modeRow.removeFromLeft(modeBtnW).reduced(2));
+        modeButtons[i].setBounds(mainRow.removeFromLeft(modeBtnW).reduced(2, 0)); // <- modeBtnW (width)
 
-    // The conv row's bounds are allocated unconditionally so the section height
-    // is stable even when the conv controls are hidden (see timerCallback for
-    // the spectral-mode visibility logic — E9).
-    auto convRow = modeInner.removeFromTop(modeRowH);
-    fftConvButton.setBounds(convRow.removeFromLeft(140).reduced(2));
-    for (int i = 0; i < 3; ++i)
-        convSizeButtons[i].setBounds(convRow.removeFromLeft(70).reduced(2));
-    convLatencyLabel.setBounds(convRow.reduced(4));
+    // Conv controls hug the right: shorter (convBtnH, vertically centred against
+    // the main row) + a right inset, so the cluster reads as secondary. Peeled
+    // right-to-left so the on-screen order is [FFT Conv][512][1024][2048].
+    auto convCluster = modeRow.withSizeKeepingCentre(modeRow.getWidth(), convBtnH); // <- convBtnH
+    convCluster.removeFromRight(convRightInset);                                    // <- convRightInset
+    for (int i = 2; i >= 0; --i)
+        convSizeButtons[i].setBounds(convCluster.removeFromRight(convSizeW).reduced(2, 0)); // <- convSizeW
+    fftConvButton.setBounds(convCluster.removeFromRight(convBtnW).reduced(2, 0));            // <- convBtnW
 
     area.removeFromTop(kGroupGap);
 
     // --- Dynamics group: 8-knob row + toggles row, GR meter on the right ---
-    constexpr int dynamicsKnobsH  = 130;
-    constexpr int dynamicsToggleH = 32;
-    constexpr int dynamicsGroupH  = kGroupTitleH + dynamicsKnobsH + dynamicsToggleH + 14;
+    constexpr int dynamicsKnobsH  = 100;  // knob-row height (knobs are width-limited by the 8-col split, so this just sets the row's vertical air)
+    constexpr int dynamicsToggleH = 55;   // toggle-row slot  -> vertical position of the toggle buttons
+    constexpr int dynamicsGroupH  = kGroupTitleH + dynamicsKnobsH + dynamicsToggleH;
 
     auto dynamicsArea = area.removeFromTop(dynamicsGroupH);
     dynamicsGroup.setBounds(dynamicsArea);
@@ -482,16 +519,16 @@ void MaybeDuckAudioProcessorEditor::resized()
     dynamicsInner.removeFromTop(kGroupTitleH - 8);   // leave space for group title
 
     // Three-strip meter (IN / SC / GR) lives in the wider slot on the right.
-    auto meterArea = dynamicsInner.removeFromRight(230);
+    auto meterArea = dynamicsInner.removeFromRight(60);   // <- 230 = meter width (height spans both rows)
     levelMeter.setBounds(meterArea);
 
-    auto dynKnobs = dynamicsInner.removeFromTop(dynamicsKnobsH);
-    const int colW = dynKnobs.getWidth() / 8;
+    auto dynKnobs = dynamicsInner.removeFromTop(dynamicsKnobsH); // <- dynamicsKnobsH (knob-row height)
+    const int colW = dynKnobs.getWidth() / 8;                   // 8 columns -> width derived, not fixed
     auto layoutKnob = [&](juce::Slider& s, juce::Label& l)
     {
         auto col = dynKnobs.removeFromLeft(colW).reduced(4);
-        l.setBounds(col.removeFromTop(18));
-        s.setBounds(col);
+        l.setBounds(col.removeFromTop(kKnobLabelH));  // <- kKnobLabelH (caption height)
+        s.setBounds(col);                             // knob fills the rest of the column
     };
     layoutKnob(thresholdSlider, thresholdLabel);
     layoutKnob(ratioSlider,     ratioLabel);
@@ -502,15 +539,18 @@ void MaybeDuckAudioProcessorEditor::resized()
     layoutKnob(kneeSlider,      kneeLabel);
     layoutKnob(outputSlider,    outputLabel);
 
-    auto toggles = dynamicsInner.removeFromTop(dynamicsToggleH);
-    sidechainButton.setBounds(toggles.removeFromLeft(170));
-    softKneeButton.setBounds (toggles.removeFromLeft(120));
-    limiterButton.setBounds  (toggles.removeFromLeft(100));
+    auto toggles = dynamicsInner.removeFromTop(dynamicsToggleH);              // <- dynamicsToggleH (row slot)
+    constexpr int toggleBtnH = 40;                                           // <- toggle button height (size)
+    toggles.removeFromTop(juce::jmax(0, dynamicsToggleH - toggleBtnH));      // spare slot height pushes buttons DOWN (needs slot >= toggleBtnH)
+    toggles = toggles.removeFromTop(toggleBtnH);                             // lock the row to the button height
+    sidechainButton.setBounds(toggles.removeFromLeft(170));                   // <- Sidechain button width
+    softKneeButton.setBounds (toggles.removeFromLeft(120));                   // <- Soft Knee button width
+    limiterButton.setBounds  (toggles.removeFromLeft(120));                   // <- Hard Duck button width
 
     area.removeFromTop(kGroupGap);
 
     // --- Crossover group: 4 knobs ------------------------------------------
-    constexpr int xoverRowH   = 108;
+    constexpr int xoverRowH   = 108;  // knob-row height -> also the knob size
     constexpr int xoverGroupH = kGroupTitleH + xoverRowH + 14;
     auto xoverArea = area.removeFromTop(xoverGroupH);
     crossoverGroup.setBounds(xoverArea);
@@ -518,11 +558,11 @@ void MaybeDuckAudioProcessorEditor::resized()
     auto xoverInner = xoverArea.reduced(8, 6);
     xoverInner.removeFromTop(kGroupTitleH - 8);
     auto xoverKnobs = xoverInner.removeFromTop(xoverRowH);
-    const int xoverColW = xoverKnobs.getWidth() / 4;
+    const int xoverColW = xoverKnobs.getWidth() / 4;   // 4 columns -> width derived
     for (int i = 0; i < 4; ++i)
     {
         auto col = xoverKnobs.removeFromLeft(xoverColW).reduced(4);
-        xoverLabels[i].setBounds(col.removeFromTop(18));
+        xoverLabels[i].setBounds(col.removeFromTop(kKnobLabelH));  // <- kKnobLabelH (caption height)
         xoverSliders[i].setBounds(col);
     }
 
@@ -532,22 +572,32 @@ void MaybeDuckAudioProcessorEditor::resized()
     // We don't claim any vertical space — the EQ section moves up to fill the gap.
     // Children remain invisible so the DSP keeps reading their (neutral) values.
 
-    // --- Post-ducking EQ group: 7 knobs ------------------------------------
-    constexpr int eqRowH   = 96;
-    constexpr int eqGroupH = kGroupTitleH + eqRowH + 14;
+    // --- Post-ducking EQ group: 7 knobs, MAAG-style zig-zag --------------------
+    constexpr int eqRowH    = 96;   // per-knob block height (caption + knob); also the knob size
+    constexpr int eqStagger = 34;   // zig-zag offset: alternate knobs drop by this
+    constexpr int eqGroupH  = kGroupTitleH + eqRowH + eqStagger + 14;
     auto eqArea = area.removeFromTop(eqGroupH);
     eqGroup.setBounds(eqArea);
 
     auto eqInner = eqArea.reduced(8, 6);
     eqInner.removeFromTop(kGroupTitleH - 8);
-    auto eqKnobs = eqInner.removeFromTop(eqRowH);
-    const int eqColW = eqKnobs.getWidth() / 7;
+    auto eqKnobs = eqInner.removeFromTop(eqRowH + eqStagger);   // band including the zig-zag room
+    const int eqColW = eqKnobs.getWidth() / 7;   // 7 columns -> width derived
     for (int i = 0; i < 7; ++i)
     {
         auto col = eqKnobs.removeFromLeft(eqColW).reduced(4);
-        eqLabels[i].setBounds(col.removeFromTop(18));
+        // Zig-zag: odd columns drop by eqStagger, even columns ride high.
+        col.removeFromTop((i % 2 == 1) ? eqStagger : 0);
+        col = col.removeFromTop(eqRowH);
+        eqLabels[i].setBounds(col.removeFromTop(kKnobLabelH));  // <- kKnobLabelH (caption height)
         eqSliders[i].setBounds(col);
     }
+
+    // --- Latency readout: bottom-left corner of the editor, engraved into the
+    // chassis (mirrors the wordmark at the bottom-right). Offset right of the
+    // corner screw so the two don't overlap.
+    auto full = getLocalBounds();
+    convLatencyLabel.setBounds(full.getX() + 28, full.getBottom() - 20, 340, 16); // <- bottom-left, vertically centred on the corner screw
 }
 
 void MaybeDuckAudioProcessorEditor::timerCallback()
@@ -568,13 +618,13 @@ void MaybeDuckAudioProcessorEditor::timerCallback()
     for (int i = 0; i < 3; ++i)
         modeButtons[i].setToggleState(i == mode, juce::dontSendNotification);
 
-    // E9: collapse the conv config controls when not in Spectral mode. The
-    // convRow's space stays allocated in resized() so the section height
-    // doesn't churn — just the controls themselves disappear.
-    fftConvButton.setVisible(spectralActive);
+    // Conv config controls stay visible but grey out (disabled) when they don't
+    // apply: FFT Conv only in Spectral mode; the size buttons only when FFT Conv
+    // is also on. The greyed look matches the disabled knobs.
+    fftConvButton.setEnabled(spectralActive);
     for (int i = 0; i < 3; ++i)
     {
-        convSizeButtons[i].setVisible(spectralActive && fftConvOn);
+        convSizeButtons[i].setEnabled(spectralActive && fftConvOn);
         convSizeButtons[i].setToggleState(i == sizeIdx, juce::dontSendNotification);
     }
     // Latency label stays visible — relevant for lookahead even when FFT is off.

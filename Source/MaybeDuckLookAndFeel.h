@@ -99,10 +99,10 @@ public:
 
 private:
     void drawPushButtonBody  (juce::Graphics&, juce::Rectangle<float> bounds,
-                              bool isOn, bool isMouseOver, bool isDown) const;
+                              bool isOn, bool isMouseOver, bool isDown, bool isEnabled) const;
     void drawPushButtonLabel (juce::Graphics&, juce::Rectangle<float> bounds,
                               const juce::String& text,
-                              bool isOn, bool isMouseOver, bool isDown) const;
+                              bool isOn, bool isMouseOver, bool isDown, bool isEnabled) const;
 
 public:
 
@@ -110,7 +110,8 @@ private:
     juce::Typeface::Ptr regularTypeface;
     juce::Typeface::Ptr mediumTypeface;
 
-    juce::Image grainImage; // cached brushed-grain noise overlay, generated once
+    juce::Image grainImage;    // cached brushed-grain noise overlay, generated once
+    juce::Image metalCapImage; // cached spun-aluminium knob-cap disc, generated once
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MaybeDuckLookAndFeel)
 };

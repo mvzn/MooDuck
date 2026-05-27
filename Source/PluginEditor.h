@@ -33,8 +33,8 @@ public:
 private:
     MaybeDuckAudioProcessor& audioProcessor;
 
-    // E6: cache the user's chosen ratio so it can be restored when Hard Duck releases.
-    float previousRatioValue = 4.0f;
+    // Hard Duck freezes the ratio knob and relabels its read-out ∞:1 (the DSP
+    // ignores the ratio value while Hard Duck is engaged).
     void applyLimiterRatioLock(bool limiterOn);
 
     MaybeDuckLookAndFeel mdLookAndFeel;
