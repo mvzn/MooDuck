@@ -524,18 +524,23 @@ void MaybeDuckAudioProcessorEditor::paint (juce::Graphics& g)
             const float rotaryH = kr.getHeight() - (float) kKnobLabelH - 20.0f;  // minus caption + value box
             const float knobR   = juce::jmin(colW - 8.0f, rotaryH) * 0.5f;       // matches drawRotarySlider
             const float cy      = kr.getY() + (float) kKnobLabelH + rotaryH * 0.5f;
-            const float curveH  = juce::jlimit(24.0f, 42.0f, rotaryH * 0.78f);
             const float kc[4]   = { (float) xoverBandDivX[0], (float) xoverBandDivX[1],
                                     (float) xoverBandDivX[2], (float) xoverBandDivX[3] };
             // Gap spans: [innerL | k0]  k0|k1  k1|k2  k2|k3  [k3 | innerR]
             const float gapL[5] = { innerL, kc[0] + knobR, kc[1] + knobR, kc[2] + knobR, kc[3] + knobR };
             const float gapR[5] = { kc[0] - knobR, kc[1] - knobR, kc[2] - knobR, kc[3] - knobR, innerR };
-            constexpr float kCurveScale = 0.5f;   // all curves drawn at half the available gap size
+
+            // ONE uniform size for every band so LP/HP read the same as BP. The
+            // outer (end) gaps are tighter than the inter-knob gaps, so size every
+            // curve to fit the SMALLEST gap rather than scaling per gap.
+            float minGap = gapR[0] - gapL[0];
+            for (int b = 1; b < 5; ++b) minGap = juce::jmin(minGap, gapR[b] - gapL[b]);
+            const float curveW = juce::jlimit(28.0f, 56.0f, minGap - 8.0f);
+            const float curveH = curveW * 0.42f;
             for (int b = 0; b < 5; ++b)
             {
                 const float cx = (gapL[b] + gapR[b]) * 0.5f;
-                const float w  = juce::jlimit(30.0f, 108.0f, (gapR[b] - gapL[b]) - 6.0f) * kCurveScale;
-                drawFilterGlyph(juce::Rectangle<float>(w, curveH * kCurveScale).withCentre({ cx, cy }), ftype[b]);
+                drawFilterGlyph(juce::Rectangle<float>(curveW, curveH).withCentre({ cx, cy }), ftype[b]);
             }
         }
 
