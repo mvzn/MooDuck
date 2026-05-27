@@ -65,8 +65,13 @@ public:
     // per step. Counts derive from the array sizes so they can never drift.
     static constexpr float kRatioSteps[]      = { 1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 8.0f, 16.0f, 20.0f, 40.0f, 60.0f };
     static constexpr int   kNumRatioSteps     = (int) (sizeof(kRatioSteps) / sizeof(kRatioSteps[0]));
-    static constexpr float kLookaheadSteps[]  = { 0.0f, 3.0f, 6.0f, 10.0f, 16.0f };
+    static constexpr float kLookaheadSteps[]  = { 0.0f, 3.0f, 6.0f, 10.0f, 16.0f, 32.0f, 50.0f };
     static constexpr int   kNumLookaheadSteps = (int) (sizeof(kLookaheadSteps) / sizeof(kLookaheadSteps[0]));
+
+    // "Xtreme Lookahead" switches the lookahead knob to this wide creative range
+    // (up to 10 s). Off = the normal kLookaheadSteps above.
+    static constexpr float kXtremeLookaheadSteps[]  = { 100.0f, 200.0f, 500.0f, 1000.0f, 2000.0f, 5000.0f, 10000.0f };
+    static constexpr int   kNumXtremeLookaheadSteps = (int) (sizeof(kXtremeLookaheadSteps) / sizeof(kXtremeLookaheadSteps[0]));
 
     juce::AudioProcessorValueTreeState apvts;
 
@@ -82,6 +87,8 @@ public:
     std::atomic<float>* pScEnable  = nullptr;
     std::atomic<float>* pSoftKnee  = nullptr;
     std::atomic<float>* pLimiter   = nullptr;
+    std::atomic<float>* pXtremeLookahead  = nullptr;
+    std::atomic<float>* pLookaheadXtreme  = nullptr;   // the wide-range lookahead value (used when Xtreme is on)
     std::atomic<float>* pXover[StereoMultibandCrossover::numCrossoverPoints] = {};
     std::atomic<float>* pBandScale[StereoMultibandCrossover::numBands] = {};
     std::atomic<float>* pSidechainMode = nullptr;

@@ -35,6 +35,8 @@ MaybeDuckAudioProcessor::MaybeDuckAudioProcessor()
     pRelease   = apvts.getRawParameterValue("release");
     pHold      = apvts.getRawParameterValue("hold");
     pLookahead = apvts.getRawParameterValue("lookahead");
+    pXtremeLookahead = apvts.getRawParameterValue("xtremeLookahead");
+    pLookaheadXtreme = apvts.getRawParameterValue("lookaheadXtreme");
     pKnee      = apvts.getRawParameterValue("knee");
     pOutput    = apvts.getRawParameterValue("output");
     pScEnable  = apvts.getRawParameterValue("sidechainEnable");
@@ -118,33 +120,39 @@ juce::AudioProcessorValueTreeState::ParameterLayout MaybeDuckAudioProcessor::cre
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "hold", "Hold", juce::NormalisableRange<float>(0.0f, 2000.0f, 1.0f, 0.5f), 0.0f));
 
-    // Lookahead is stepped: 0 / 3 / 6 / 10 / 16 ms
-    juce::NormalisableRange<float> lookaheadRange(
-        0.0f, 16.0f,
-        [](float, float, float v) -> float {
-            const int idx = juce::roundToInt(v * (float)(kNumLookaheadSteps - 1));
-            return kLookaheadSteps[juce::jlimit(0, kNumLookaheadSteps - 1, idx)];
-        },
-        [](float, float, float v) -> float {
-            int best = 0;
-            float bestDist = std::abs(v - kLookaheadSteps[0]);
-            for (int i = 1; i < kNumLookaheadSteps; ++i) {
-                const float d = std::abs(v - kLookaheadSteps[i]);
-                if (d < bestDist) { bestDist = d; best = i; }
-            }
-            return (float) best / (float)(kNumLookaheadSteps - 1);
-        },
-        [](float, float, float v) -> float {
-            float best = kLookaheadSteps[0];
-            float bestDist = std::abs(v - kLookaheadSteps[0]);
-            for (int i = 1; i < kNumLookaheadSteps; ++i) {
-                const float d = std::abs(v - kLookaheadSteps[i]);
-                if (d < bestDist) { bestDist = d; best = kLookaheadSteps[i]; }
-            }
-            return best;
-        });
+    // Build a NormalisableRange that snaps to an arbitrary table of step values,
+    // evenly spaced across knob travel (step i sits at normalised i/(n-1)).
+    auto makeSteppedRange = [](const float* steps, int n)
+    {
+        return juce::NormalisableRange<float>(
+            steps[0], steps[n - 1],
+            [steps, n](float, float, float v) {
+                return steps[juce::jlimit(0, n - 1, juce::roundToInt(v * (float)(n - 1)))];
+            },
+            [steps, n](float, float, float v) {
+                int best = 0; float bd = std::abs(v - steps[0]);
+                for (int i = 1; i < n; ++i) { float d = std::abs(v - steps[i]); if (d < bd) { bd = d; best = i; } }
+                return (float) best / (float)(n - 1);
+            },
+            [steps, n](float, float, float v) {
+                float best = steps[0], bd = std::abs(v - steps[0]);
+                for (int i = 1; i < n; ++i) { float d = std::abs(v - steps[i]); if (d < bd) { bd = d; best = steps[i]; } }
+                return best;
+            });
+    };
+    auto msIntString = [](float v, int) { return juce::String(juce::roundToInt(v)) + " ms"; };
+
+    // Lookahead is stepped: 0 / 3 / 6 / 10 / 16 ms (the normal range).
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
-        "lookahead", "Lookahead", lookaheadRange, 0.0f));
+        juce::ParameterID { "lookahead", 1 }, "Lookahead",
+        makeSteppedRange(kLookaheadSteps, kNumLookaheadSteps), 0.0f,
+        juce::AudioParameterFloatAttributes().withStringFromValueFunction(msIntString)));
+
+    // Xtreme Lookahead range: 50 ms … 10 s (used when the Xtreme toggle is on).
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "lookaheadXtreme", 1 }, "Lookahead (Xtreme)",
+        makeSteppedRange(kXtremeLookaheadSteps, kNumXtremeLookaheadSteps), 100.0f,
+        juce::AudioParameterFloatAttributes().withStringFromValueFunction(msIntString)));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "knee", "Knee", juce::NormalisableRange<float>(0.0f, 24.0f, 0.1f), 6.0f));
@@ -160,6 +168,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout MaybeDuckAudioProcessor::cre
 
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         "limiter", "Hard Duck", false));
+
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        "xtremeLookahead", "Xtreme Lookahead", false));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "xover0", "Crossover 1",
@@ -243,7 +254,10 @@ int MaybeDuckAudioProcessor::getConvLatencySamples() const noexcept
     if (pLookahead)
     {
         const double sr = juce::jmax(1.0, currentSampleRate.load());
-        look = static_cast<int>(std::round(static_cast<double>(*pLookahead) * 0.001 * sr));
+        const bool xtreme = pXtremeLookahead && pXtremeLookahead->load() > 0.5f;
+        const double ms = (xtreme && pLookaheadXtreme) ? static_cast<double>(*pLookaheadXtreme)
+                                                       : static_cast<double>(*pLookahead);
+        look = static_cast<int>(std::round(ms * 0.001 * sr));
     }
     return conv + look;
 }
@@ -334,7 +348,10 @@ void MaybeDuckAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
     scBandBufR.setSize(numBands, samplesPerBlock);
 
     // Lookahead delay line: max 18 ms at current sample rate (slider goes 0-16 ms, +2 ms margin).
-    const int maxLookahead = static_cast<int>(std::ceil(0.018 * sampleRate));
+    // Sized for the worst case (the largest Xtreme step) so the wide range can be
+    // selected at runtime without reallocating on the audio thread.
+    const double maxLookaheadMs = kXtremeLookaheadSteps[kNumXtremeLookaheadSteps - 1]; // 10 s
+    const int maxLookahead = static_cast<int>(std::ceil((maxLookaheadMs * 0.001) * sampleRate)) + 1;
     lookaheadDelayL.setMaximumDelayInSamples(maxLookahead);
     lookaheadDelayR.setMaximumDelayInSamples(maxLookahead);
     juce::dsp::ProcessSpec lookSpec { sampleRate, (juce::uint32) samplesPerBlock, 1 };
@@ -491,7 +508,9 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
 
     // --- Lookahead: clamp to allocated max, set tap, update latency report
     const double sr = juce::jmax(1.0, getSampleRate());
-    const float lookaheadMs = pLookahead ? pLookahead->load() : 0.0f;
+    const bool  xtremeLook  = pXtremeLookahead && pXtremeLookahead->load() > 0.5f;
+    const float lookaheadMs = (xtremeLook && pLookaheadXtreme) ? pLookaheadXtreme->load()
+                                                               : (pLookahead ? pLookahead->load() : 0.0f);
     const int lookaheadSamples = juce::jlimit(
         0, lookaheadDelayL.getMaximumDelayInSamples(),
         static_cast<int>(std::round(static_cast<double>(lookaheadMs) * 0.001 * sr)));

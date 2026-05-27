@@ -116,8 +116,8 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
     setupSlider(outputSlider,    "Output");
 
     holdSlider.setTextValueSuffix(" ms");
-    lookaheadSlider.setTextValueSuffix(" ms");
-    lookaheadSlider.setNumDecimalPlacesToDisplay(0);
+    // Lookahead's " ms" + integer formatting come from the param's stringFromValue
+    // (PluginProcessor), so no slider-side suffix here (that would double it).
 
     // Ratio and Lookahead are stepped — give them a tick at each step position
     // (where the dot lands) instead of the uniform Moog graduation. The counts come
@@ -137,9 +137,11 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
     sidechainButton.setButtonText("Sidechain");
     softKneeButton.setButtonText("Soft Knee");
     limiterButton.setButtonText("Hard Duck");
+    xtremeLookaheadButton.setButtonText("Xtreme Lookahead");
     addAndMakeVisible(sidechainButton);
     addAndMakeVisible(softKneeButton);
     addAndMakeVisible(limiterButton);
+    addAndMakeVisible(xtremeLookaheadButton);
 
     addAndMakeVisible(levelMeter);
 
@@ -156,6 +158,7 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
     sidechainButton .setTooltip("Use the external sidechain bus as the trigger. When off, ducking is driven by the main input.");
     softKneeButton  .setTooltip("Smooth the curve around the threshold instead of a hard corner.");
     limiterButton   .setTooltip("Hard Duck: brick-wall ducking (" + juce::String(juce::CharPointer_UTF8("\xE2\x88\x9E")) + ":1). Every dB the sidechain exceeds the threshold removes 1 dB from the main signal. Overrides the Ratio knob, which reads " + juce::String(juce::CharPointer_UTF8("\xE2\x88\x9E")) + ":1 while engaged.");
+    xtremeLookaheadButton.setTooltip("Xtreme Lookahead: switches the Lookahead knob to a wide creative range (50 ms - 10 s) instead of the normal 0-16 ms. Adds large host latency — for offline/mix use, not tracking.");
 
     thresholdAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, "threshold", thresholdSlider);
     ratioAttachment     = std::make_unique<SliderAttachment>(audioProcessor.apvts, "ratio", ratioSlider);
@@ -169,6 +172,7 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
     sidechainAttachment = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "sidechainEnable", sidechainButton);
     softKneeAttachment  = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "softKnee", softKneeButton);
     limiterAttachment   = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "limiter", limiterButton);
+    xtremeLookaheadAttachment = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "xtremeLookahead", xtremeLookaheadButton);
 
     // ----- Sidechain Mode group -----
     setupGroup(modeGroup, "Sidechain Mode");
@@ -320,13 +324,16 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
             audioProcessor.apvts, eqIds[i], eqSliders[i]);
     }
 
-    // E6: listen for Hard Duck changes so we can lock/unlock the ratio knob.
+    // Listen for Hard Duck / Xtreme Lookahead so we can freeze + relabel the knobs
+    // they override (ratio and lookahead respectively).
     audioProcessor.apvts.addParameterListener("limiter", this);
+    audioProcessor.apvts.addParameterListener("xtremeLookahead", this);
 
-    // Initial sync of the Hard Duck state — freeze + relabel the ratio knob if it
-    // loads with Hard Duck already engaged. The ratio param is never re-written
-    // (the DSP ignores it under Hard Duck), so the user's stored ratio is kept.
+    // Initial sync — freeze + relabel if loaded with either already engaged. The
+    // underlying params are never re-written (the DSP ignores them while engaged),
+    // so the user's stored ratio / lookahead are kept.
     applyLimiterRatioLock(*audioProcessor.apvts.getRawParameterValue("limiter") > 0.5f);
+    applyXtremeLookaheadLock(*audioProcessor.apvts.getRawParameterValue("xtremeLookahead") > 0.5f);
 
     startTimerHz(30);
     setSize(kWindowW, kWindowH);
@@ -340,21 +347,19 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
 MaybeDuckAudioProcessorEditor::~MaybeDuckAudioProcessorEditor()
 {
     audioProcessor.apvts.removeParameterListener("limiter", this);
+    audioProcessor.apvts.removeParameterListener("xtremeLookahead", this);
     setLookAndFeel(nullptr);
 }
 
 void MaybeDuckAudioProcessorEditor::parameterChanged(const juce::String& paramID, float newValue)
 {
+    // Hop to the message thread — parameter listeners may fire from the audio
+    // thread, and we touch component state below.
+    const bool on = newValue > 0.5f;
     if (paramID == "limiter")
-    {
-        // Hop to the message thread — parameter listeners may fire from the
-        // audio thread, and we touch component state below.
-        const bool limiterOn = newValue > 0.5f;
-        juce::MessageManager::callAsync([this, limiterOn]
-        {
-            applyLimiterRatioLock(limiterOn);
-        });
-    }
+        juce::MessageManager::callAsync([this, on] { applyLimiterRatioLock(on); });
+    else if (paramID == "xtremeLookahead")
+        juce::MessageManager::callAsync([this, on] { applyXtremeLookaheadLock(on); });
 }
 
 void MaybeDuckAudioProcessorEditor::applyLimiterRatioLock(bool limiterOn)
@@ -385,6 +390,23 @@ void MaybeDuckAudioProcessorEditor::applyLimiterRatioLock(bool limiterOn)
 
     ratioSlider.setEnabled(! limiterOn);
     ratioSlider.updateText();
+}
+
+void MaybeDuckAudioProcessorEditor::applyXtremeLookaheadLock(bool xtremeOn)
+{
+    // Xtreme swaps the knob between the normal and wide lookahead PARAMS, so the
+    // knob stays a live selector in both — its range, value, value-box text and
+    // tick count all follow whichever param is attached.
+    lookaheadAttachment.reset();   // detach before re-attaching to the other param
+    lookaheadAttachment = std::make_unique<SliderAttachment>(
+        audioProcessor.apvts,
+        xtremeOn ? "lookaheadXtreme" : "lookahead",
+        lookaheadSlider);
+
+    lookaheadSlider.getProperties().set("stepTicks",
+        xtremeOn ? MaybeDuckAudioProcessor::kNumXtremeLookaheadSteps
+                 : MaybeDuckAudioProcessor::kNumLookaheadSteps);
+    lookaheadSlider.repaint();
 }
 
 void MaybeDuckAudioProcessorEditor::setModeFromButton(int idx)
@@ -450,6 +472,93 @@ void MaybeDuckAudioProcessorEditor::paint (juce::Graphics& g)
     mdLookAndFeel.drawEngravedText(g, "v1.0",       versionArea,
                                  juce::Justification::centredRight,
                                  versionFont.withHeight(9.5f));
+
+    // --- Crossover filter-band engravings ----------------------------------
+    // Row 1 (the knob row): BIG engraved filter-response curves in the gaps
+    // between the knob circles — LP | BP | BP | BP | HP, one per band, showing
+    // through the transparent areas of the slider components.
+    // Row 2 (the strip below): boundary ticks under each knob + the band names.
+    if (! xoverBandStrip.isEmpty())
+    {
+        const auto strip = xoverBandStrip.toFloat();
+        const float top = strip.getY(), bot = strip.getBottom();
+        const float innerL = strip.getX(), innerR = strip.getRight();
+        const float edges[6] = { innerL,
+                                 (float) xoverBandDivX[0], (float) xoverBandDivX[1],
+                                 (float) xoverBandDivX[2], (float) xoverBandDivX[3],
+                                 innerR };
+        static const char* const names[5] = { "LOW", "LO-MID", "MID", "HI-MID", "HIGH" };
+        static const int          ftype[5] = { 0, 1, 1, 1, 2 };  // LP, BP, BP, BP, HP
+
+        // Engraved filter-response glyph (0=LP, 1=BP, 2=HP) filling rect r.
+        auto drawFilterGlyph = [&g](juce::Rectangle<float> r, int type)
+        {
+            auto X = [&](float fx) { return r.getX() + fx * r.getWidth();  };
+            auto Y = [&](float fy) { return r.getY() + fy * r.getHeight(); };
+            juce::Path p;
+            if (type == 0) {            // low pass: flat lows, roll off highs
+                p.startNewSubPath(X(0.0f),  Y(0.16f));
+                p.lineTo         (X(0.46f), Y(0.16f));
+                p.quadraticTo    (X(0.72f), Y(0.26f), X(1.0f), Y(0.96f));
+            } else if (type == 2) {     // high pass: roll up lows, flat highs
+                p.startNewSubPath(X(0.0f),  Y(0.96f));
+                p.quadraticTo    (X(0.28f), Y(0.26f), X(0.54f), Y(0.16f));
+                p.lineTo         (X(1.0f),  Y(0.16f));
+            } else {                    // band pass: hump
+                p.startNewSubPath(X(0.0f),  Y(0.96f));
+                p.quadraticTo    (X(0.27f), Y(0.52f), X(0.5f), Y(0.10f));
+                p.quadraticTo    (X(0.73f), Y(0.52f), X(1.0f), Y(0.96f));
+            }
+            g.setColour(juce::Colour(MaybeDuckLookAndFeel::kDividerShadow).withAlpha(0.9f));
+            g.strokePath(p, juce::PathStrokeType(1.8f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            g.setColour(juce::Colour(MaybeDuckLookAndFeel::kDividerHighlight).withAlpha(0.4f));
+            g.strokePath(p, juce::PathStrokeType(0.9f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded),
+                         juce::AffineTransform::translation(0.6f, 0.8f));
+        };
+
+        // Row 1: big curves centred in each knob-row gap, at the knob circles' height.
+        if (! xoverKnobRow.isEmpty())
+        {
+            const auto kr = xoverKnobRow.toFloat();
+            const float colW    = kr.getWidth() / 4.0f;
+            const float rotaryH = kr.getHeight() - (float) kKnobLabelH - 20.0f;  // minus caption + value box
+            const float knobR   = juce::jmin(colW - 8.0f, rotaryH) * 0.5f;       // matches drawRotarySlider
+            const float cy      = kr.getY() + (float) kKnobLabelH + rotaryH * 0.5f;
+            const float curveH  = juce::jlimit(24.0f, 42.0f, rotaryH * 0.78f);
+            const float kc[4]   = { (float) xoverBandDivX[0], (float) xoverBandDivX[1],
+                                    (float) xoverBandDivX[2], (float) xoverBandDivX[3] };
+            // Gap spans: [innerL | k0]  k0|k1  k1|k2  k2|k3  [k3 | innerR]
+            const float gapL[5] = { innerL, kc[0] + knobR, kc[1] + knobR, kc[2] + knobR, kc[3] + knobR };
+            const float gapR[5] = { kc[0] - knobR, kc[1] - knobR, kc[2] - knobR, kc[3] - knobR, innerR };
+            constexpr float kCurveScale = 0.5f;   // all curves drawn at half the available gap size
+            for (int b = 0; b < 5; ++b)
+            {
+                const float cx = (gapL[b] + gapR[b]) * 0.5f;
+                const float w  = juce::jlimit(30.0f, 108.0f, (gapR[b] - gapL[b]) - 6.0f) * kCurveScale;
+                drawFilterGlyph(juce::Rectangle<float>(w, curveH * kCurveScale).withCentre({ cx, cy }), ftype[b]);
+            }
+        }
+
+        // Row 2: boundary ticks under each crossover knob (dark groove + highlight).
+        for (int i = 0; i < 4; ++i)
+        {
+            const float bx = (float) xoverBandDivX[i];
+            g.setColour(juce::Colour(MaybeDuckLookAndFeel::kDividerShadow).withAlpha(0.8f));
+            g.drawLine(bx, top, bx, bot, 1.0f);
+            g.setColour(juce::Colour(MaybeDuckLookAndFeel::kDividerHighlight).withAlpha(0.35f));
+            g.drawLine(bx + 0.6f, top, bx + 0.6f, bot, 0.6f);
+        }
+
+        // Row 2: band names, centred in each segment.
+        juce::Font bandFont(mdLookAndFeel.getRegularTypeface());
+        bandFont.setHeight(9.5f);
+        for (int i = 0; i < 5; ++i)
+        {
+            juce::Rectangle<float> seg(edges[i], top, edges[i + 1] - edges[i], bot - top);
+            mdLookAndFeel.drawEngravedText(g, names[i], seg.reduced(3.0f, 1.0f),
+                                           juce::Justification::centred, bandFont);
+        }
+    }
 }
 
 // resized() is called by JUCE every time the window opens or is resized. It is
@@ -543,28 +652,34 @@ void MaybeDuckAudioProcessorEditor::resized()
     constexpr int toggleBtnH = 40;                                           // <- toggle button height (size)
     toggles.removeFromTop(juce::jmax(0, dynamicsToggleH - toggleBtnH));      // spare slot height pushes buttons DOWN (needs slot >= toggleBtnH)
     toggles = toggles.removeFromTop(toggleBtnH);                             // lock the row to the button height
-    sidechainButton.setBounds(toggles.removeFromLeft(170));                   // <- Sidechain button width
-    softKneeButton.setBounds (toggles.removeFromLeft(120));                   // <- Soft Knee button width
-    limiterButton.setBounds  (toggles.removeFromLeft(120));                   // <- Hard Duck button width
+    // reduced(2,0) gives the same 2px side gap between buttons as the Mode row.
+    sidechainButton.setBounds      (toggles.removeFromLeft(135).reduced(2, 0));  // <- Sidechain
+    softKneeButton.setBounds       (toggles.removeFromLeft(115).reduced(2, 0));  // <- Soft Knee
+    limiterButton.setBounds        (toggles.removeFromLeft(110).reduced(2, 0));  // <- Hard Duck
+    xtremeLookaheadButton.setBounds(toggles.removeFromLeft(170).reduced(2, 0));  // <- Xtreme Lookahead
 
     area.removeFromTop(kGroupGap);
 
-    // --- Crossover group: 4 knobs ------------------------------------------
-    constexpr int xoverRowH   = 108;  // knob-row height -> also the knob size
-    constexpr int xoverGroupH = kGroupTitleH + xoverRowH + 14;
+    // --- Crossover group: 4 knobs + engraved 5-band ruler -------------------
+    constexpr int xoverRowH   = 96;   // knob-row height (trimmed from 108 to make room for the band ruler)
+    constexpr int xoverBandH  = 18;   // engraved band ruler under the knobs (drawn in paint())
+    constexpr int xoverGroupH = kGroupTitleH + xoverRowH + xoverBandH + 8;
     auto xoverArea = area.removeFromTop(xoverGroupH);
     crossoverGroup.setBounds(xoverArea);
 
     auto xoverInner = xoverArea.reduced(8, 6);
     xoverInner.removeFromTop(kGroupTitleH - 8);
     auto xoverKnobs = xoverInner.removeFromTop(xoverRowH);
+    xoverKnobRow = xoverKnobs;   // store the knob row; big filter curves are drawn in its gaps (paint())
     const int xoverColW = xoverKnobs.getWidth() / 4;   // 4 columns -> width derived
     for (int i = 0; i < 4; ++i)
     {
         auto col = xoverKnobs.removeFromLeft(xoverColW).reduced(4);
         xoverLabels[i].setBounds(col.removeFromTop(kKnobLabelH));  // <- kKnobLabelH (caption height)
         xoverSliders[i].setBounds(col);
+        xoverBandDivX[i] = col.getCentreX();   // crossover boundary x = knob centre (for the ruler)
     }
+    xoverBandStrip = xoverInner.removeFromTop(xoverBandH);  // ruler area, full inner width
 
     area.removeFromTop(kGroupGap);
 

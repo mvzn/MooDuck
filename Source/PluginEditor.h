@@ -37,6 +37,10 @@ private:
     // ignores the ratio value while Hard Duck is engaged).
     void applyLimiterRatioLock(bool limiterOn);
 
+    // Xtreme Lookahead freezes the lookahead knob and relabels it 5000 ms (the DSP
+    // overrides the lookahead value while engaged).
+    void applyXtremeLookaheadLock(bool xtremeOn);
+
     MaybeDuckLookAndFeel mdLookAndFeel;
     juce::TooltipWindow  tooltipWindow { this, 700 };
 
@@ -49,12 +53,13 @@ private:
                  lookaheadSlider, kneeSlider, outputSlider;
     juce::Label thresholdLabel, ratioLabel, attackLabel, holdLabel, releaseLabel,
                 lookaheadLabel, kneeLabel, outputLabel;
-    juce::ToggleButton sidechainButton, softKneeButton, limiterButton;
+    juce::ToggleButton sidechainButton, softKneeButton, limiterButton, xtremeLookaheadButton;
     LevelMeterComponent levelMeter;
     std::unique_ptr<SliderAttachment> thresholdAttachment, ratioAttachment, attackAttachment,
                                       holdAttachment, releaseAttachment, lookaheadAttachment,
                                       kneeAttachment, outputAttachment;
-    std::unique_ptr<ButtonAttachment> sidechainAttachment, softKneeAttachment, limiterAttachment;
+    std::unique_ptr<ButtonAttachment> sidechainAttachment, softKneeAttachment, limiterAttachment,
+                                      xtremeLookaheadAttachment;
 
     // --- Sidechain mode group
     juce::GroupComponent modeGroup;
@@ -72,6 +77,11 @@ private:
     juce::Slider xoverSliders[4];
     juce::Label  xoverLabels[4];
     std::unique_ptr<SliderAttachment> xoverAttachments[4];
+    // Engraved band ruler under the crossover knobs (geometry set in resized(),
+    // drawn in paint()). xoverBandDivX = x of each crossover boundary (knob centre).
+    juce::Rectangle<int> xoverBandStrip;   // row 2: band-name ruler + boundary ticks
+    juce::Rectangle<int> xoverKnobRow;     // row 1: knob row (big filter curves drawn in its gaps)
+    int                  xoverBandDivX[4] {};
 
     // --- Per-band duck scale group
     juce::GroupComponent bandScaleGroup;
