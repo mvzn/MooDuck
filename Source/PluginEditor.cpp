@@ -509,6 +509,9 @@ void MaybeDuckAudioProcessorEditor::paint (juce::Graphics& g)
                 p.quadraticTo    (X(0.27f), Y(0.52f), X(0.5f), Y(0.10f));
                 p.quadraticTo    (X(0.73f), Y(0.52f), X(1.0f), Y(0.96f));
             }
+            // Recessed/engraved look (carved INTO the panel): a dark groove line is
+            // the main stroke, with a thin lit edge just below-right (the lower lip of
+            // the groove catching light) — so it reads as inset, not popping out.
             g.setColour(juce::Colour(MaybeDuckLookAndFeel::kDividerShadow).withAlpha(0.9f));
             g.strokePath(p, juce::PathStrokeType(1.8f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
             g.setColour(juce::Colour(MaybeDuckLookAndFeel::kDividerHighlight).withAlpha(0.4f));
@@ -520,22 +523,21 @@ void MaybeDuckAudioProcessorEditor::paint (juce::Graphics& g)
         if (! xoverKnobRow.isEmpty())
         {
             const auto kr = xoverKnobRow.toFloat();
-            const float colW    = kr.getWidth() / 4.0f;
+            const float cellW   = kr.getWidth() / 5.0f;   // knobs evenly distributed: 4 knobs, 5 cells
             const float rotaryH = kr.getHeight() - (float) kKnobLabelH - 20.0f;  // minus caption + value box
-            const float knobR   = juce::jmin(colW - 8.0f, rotaryH) * 0.5f;       // matches drawRotarySlider
+            const float knobR   = juce::jmin(cellW - 8.0f, rotaryH) * 0.5f;      // matches drawRotarySlider
             const float cy      = kr.getY() + (float) kKnobLabelH + rotaryH * 0.5f;
             const float kc[4]   = { (float) xoverBandDivX[0], (float) xoverBandDivX[1],
                                     (float) xoverBandDivX[2], (float) xoverBandDivX[3] };
-            // Gap spans: [innerL | k0]  k0|k1  k1|k2  k2|k3  [k3 | innerR]
+
+            // Curves centred in each gap: LP left of knob 1, BP between knobs, HP
+            // right of knob 4 — symmetric, MID dead-centre. One uniform size, fit
+            // to the smallest gap so LP/HP read the same as BP.
             const float gapL[5] = { innerL, kc[0] + knobR, kc[1] + knobR, kc[2] + knobR, kc[3] + knobR };
             const float gapR[5] = { kc[0] - knobR, kc[1] - knobR, kc[2] - knobR, kc[3] - knobR, innerR };
-
-            // ONE uniform size for every band so LP/HP read the same as BP. The
-            // outer (end) gaps are tighter than the inter-knob gaps, so size every
-            // curve to fit the SMALLEST gap rather than scaling per gap.
             float minGap = gapR[0] - gapL[0];
             for (int b = 1; b < 5; ++b) minGap = juce::jmin(minGap, gapR[b] - gapL[b]);
-            const float curveW = juce::jlimit(28.0f, 56.0f, minGap - 8.0f);
+            const float curveW = juce::jlimit(28.0f, 56.0f, minGap - 6.0f);
             const float curveH = curveW * 0.42f;
             for (int b = 0; b < 5; ++b)
             {
@@ -676,13 +678,21 @@ void MaybeDuckAudioProcessorEditor::resized()
     xoverInner.removeFromTop(kGroupTitleH - 8);
     auto xoverKnobs = xoverInner.removeFromTop(xoverRowH);
     xoverKnobRow = xoverKnobs;   // store the knob row; big filter curves are drawn in its gaps (paint())
-    const int xoverColW = xoverKnobs.getWidth() / 4;   // 4 columns -> width derived
+    // 4 knobs spread symmetrically: the outer two sit `margin` from the edges, the
+    // rest evenly between, so the whole row (knobs + the filter curves between them)
+    // is left-right symmetric with the MID band-pass curve dead centre. Smaller
+    // margin = wider spread (the 1/5 even distribution would be margin = 0.2 W).
+    const int xoverMargin = xoverKnobs.getWidth() * 15 / 100;        // 0.15 W edge margin
+    const int xoverSpan   = xoverKnobs.getWidth() - 2 * xoverMargin; // span between the outer knob centres
+    const int xoverCellW  = xoverKnobs.getWidth() / 5;              // per-knob cell (label/box width)
     for (int i = 0; i < 4; ++i)
     {
-        auto col = xoverKnobs.removeFromLeft(xoverColW).reduced(4);
+        const int cx = xoverKnobs.getX() + xoverMargin + xoverSpan * i / 3;
+        auto col = juce::Rectangle<int>(cx - xoverCellW / 2, xoverKnobs.getY(),
+                                        xoverCellW, xoverKnobs.getHeight()).reduced(4);
         xoverLabels[i].setBounds(col.removeFromTop(kKnobLabelH));  // <- kKnobLabelH (caption height)
         xoverSliders[i].setBounds(col);
-        xoverBandDivX[i] = col.getCentreX();   // crossover boundary x = knob centre (for the ruler)
+        xoverBandDivX[i] = cx;   // crossover boundary x = knob centre (for the ruler)
     }
     xoverBandStrip = xoverInner.removeFromTop(xoverBandH);  // ruler area, full inner width
 
