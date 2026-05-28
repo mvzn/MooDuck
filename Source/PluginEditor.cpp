@@ -659,11 +659,18 @@ void MaybeDuckAudioProcessorEditor::resized()
     constexpr int toggleBtnH = 40;                                           // <- toggle button height (size)
     toggles.removeFromTop(juce::jmax(0, dynamicsToggleH - toggleBtnH));      // spare slot height pushes buttons DOWN (needs slot >= toggleBtnH)
     toggles = toggles.removeFromTop(toggleBtnH);                             // lock the row to the button height
-    // reduced(2,0) gives the same 2px side gap between buttons as the Mode row.
-    sidechainButton.setBounds      (toggles.removeFromLeft(135).reduced(2, 0));  // <- Sidechain
-    softKneeButton.setBounds       (toggles.removeFromLeft(115).reduced(2, 0));  // <- Soft Knee
-    limiterButton.setBounds        (toggles.removeFromLeft(110).reduced(2, 0));  // <- Hard Duck
-    xtremeLookaheadButton.setBounds(toggles.removeFromLeft(170).reduced(2, 0));  // <- Xtreme Lookahead
+    {
+        juce::FlexBox fb;
+        fb.flexDirection  = juce::FlexBox::Direction::row;
+        fb.justifyContent = juce::FlexBox::JustifyContent::flexStart;
+        fb.alignItems     = juce::FlexBox::AlignItems::stretch;
+        const juce::FlexItem::Margin m(0.0f, 2.0f, 0.0f, 2.0f);
+        fb.items.add(juce::FlexItem(sidechainButton)      .withFlex(1.0f).withMargin(m));
+        fb.items.add(juce::FlexItem(softKneeButton)       .withFlex(1.0f).withMargin(m));
+        fb.items.add(juce::FlexItem(limiterButton)        .withFlex(1.0f).withMargin(m));
+        fb.items.add(juce::FlexItem(xtremeLookaheadButton).withFlex(1.0f).withMargin(m));
+        fb.performLayout(toggles.toFloat());
+    }
 
     area.removeFromTop(kGroupGap);
 
@@ -682,17 +689,15 @@ void MaybeDuckAudioProcessorEditor::resized()
     // rest evenly between, so the whole row (knobs + the filter curves between them)
     // is left-right symmetric with the MID band-pass curve dead centre. Smaller
     // margin = wider spread (the 1/5 even distribution would be margin = 0.2 W).
-    const int xoverMargin = xoverKnobs.getWidth() * 15 / 100;        // 0.15 W edge margin
-    const int xoverSpan   = xoverKnobs.getWidth() - 2 * xoverMargin; // span between the outer knob centres
-    const int xoverCellW  = xoverKnobs.getWidth() / 5;              // per-knob cell (label/box width)
+    const int xoverCellW = xoverKnobs.getWidth() / 4;  // 4 equal cells spanning the full inner width
+    auto xoverTrack = xoverKnobs;
     for (int i = 0; i < 4; ++i)
     {
-        const int cx = xoverKnobs.getX() + xoverMargin + xoverSpan * i / 3;
-        auto col = juce::Rectangle<int>(cx - xoverCellW / 2, xoverKnobs.getY(),
-                                        xoverCellW, xoverKnobs.getHeight()).reduced(4);
-        xoverLabels[i].setBounds(col.removeFromTop(kKnobLabelH));  // <- kKnobLabelH (caption height)
+        auto cellRect = xoverTrack.removeFromLeft(xoverCellW);
+        xoverBandDivX[i] = cellRect.getCentreX();
+        auto col = cellRect.reduced(4);
+        xoverLabels[i].setBounds(col.removeFromTop(kKnobLabelH));
         xoverSliders[i].setBounds(col);
-        xoverBandDivX[i] = cx;   // crossover boundary x = knob centre (for the ruler)
     }
     xoverBandStrip = xoverInner.removeFromTop(xoverBandH);  // ruler area, full inner width
 
