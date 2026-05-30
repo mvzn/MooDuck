@@ -1354,114 +1354,6 @@ void diag_sat_harmonic_spectrum()
 // Phase 7 — inter-stage transformer / LF-coupling diagnostics
 // =========================================================================
 
-// DIAG (Tier 1 sanity): print ABSOLUTE gains at 60 Hz and 8 kHz for HF Boost
-// 0 / 6 / 16 dB, with the experimental output high-pass swept across cutoffs.
-// Purpose: determine whether the HF-Boost LF-coupling artifact is an absolute
-// LF lift (which a linear output HP can roll off) or a differential coupling
-// (boost vs base), which a linear HP cannot change because it scales base and
-// boost identically.  This goes/no-goes the Tier-1 workaround hypothesis.
-void diag_xfmr_tier1_hp_probe()
-{
-    std::printf("\n== DIAG: Tier-1 output-HP probe (HF Sel=8 kHz, BW=0.9 narrow) ==\n");
-    std::printf("  Columns: 60Hz abs / 8kHz abs (dB); lift = boost - base at that freq\n");
-
-    const double hpCutoffs[] = { 0.0, 5.0, 10.0, 20.0, 50.0 };
-    const float  boosts[]    = { 0.0f, 6.0f, 16.0f };
-
-    for (double hp : hpCutoffs)
-    {
-        std::printf("  --- output HP fc = %s ---\n",
-                    hp <= 0.0 ? "OFF" : std::to_string((int) hp).c_str());
-
-        // Baseline (HF boost 0) at this HP setting.
-        auto baseCfg = [hp](PultecEQP1A& e) {
-            e.setLfBoostDb(0); e.setLfAttenDb(0);
-            e.setHfFreqIndex(3); e.setHfBoostDb(0); e.setHfBandwidth(0.9f);
-            e.setHfAttenFreqIndex(2); e.setHfAttenDb(0);
-            e.setOutputHpCutoff(hp);
-        };
-        const double base60 = freshMeasure(baseCfg,   60.0);
-        const double base8k = freshMeasure(baseCfg, 8000.0);
-
-        for (float b : boosts)
-        {
-            auto cfg = [hp, b](PultecEQP1A& e) {
-                e.setLfBoostDb(0); e.setLfAttenDb(0);
-                e.setHfFreqIndex(3); e.setHfBoostDb(b); e.setHfBandwidth(0.9f);
-                e.setHfAttenFreqIndex(2); e.setHfAttenDb(0);
-                e.setOutputHpCutoff(hp);
-            };
-            const double g60 = freshMeasure(cfg,   60.0);
-            const double g8k = freshMeasure(cfg, 8000.0);
-            std::printf("    boost=%+5.1f dB  60Hz=%+6.2f (lift %+5.2f)   8kHz=%+6.2f (lift %+5.2f)\n",
-                        b, g60, g60 - base60, g8k, g8k - base8k);
-        }
-    }
-}
-
-// DIAG (Tier 2 go/no-go): does the EQ output impedance at node J vary with HF
-// Boost?  The inter-stage transformer's ONLY boost-dependence enters through
-// Z_out(boost): its LF divider is Lp/(Z_out + sLp).  If Z_out is ~constant
-// across boost, a loaded transformer CANNOT move the 60 Hz differential and
-// Tier 2 is a dead end too.  We probe by hanging a resistive load on node J and
-// measuring the level drop vs the open-circuit output, then back out a Thevenin
-// |Z_out| ≈ R·(V_open/V_load − 1).  We also print the raw 60 Hz lift (boost −
-// base) at each load to see whether loading reshapes the coupling at all.
-void diag_xfmr_zout_vs_boost()
-{
-    std::printf("\n== DIAG: Z_out vs HF Boost at node J (HF Sel=8 kHz, BW=0.9 narrow) ==\n");
-    std::printf("  Probe @ 60 Hz. Load on J swept; |Z_out| backed out from level drop.\n");
-
-    const double loads[] = { 0.0 /*open*/, 1.0e3, 10.0, 1.0, 0.1 };
-    const float  boosts[] = { 0.0f, 6.0f, 16.0f };
-
-    auto cfgFor = [](float b, double load) {
-        return [b, load](PultecEQP1A& e) {
-            e.setLfBoostDb(0); e.setLfAttenDb(0);
-            e.setHfFreqIndex(3); e.setHfBoostDb(b); e.setHfBandwidth(0.9f);
-            e.setHfAttenFreqIndex(2); e.setHfAttenDb(0);
-            e.setOutputTestLoad(load);
-        };
-    };
-
-    // Open-circuit 60 Hz level per boost (reference for the Thevenin extraction).
-    double vOpenDb[3];
-    for (int bi = 0; bi < 3; ++bi)
-        vOpenDb[bi] = freshMeasure(cfgFor(boosts[bi], 0.0), 60.0);
-
-    const double base60open = vOpenDb[0];
-
-    for (double load : loads)
-    {
-        std::printf("  --- load on J = %s ---\n",
-                    load <= 0.0 ? "OPEN" : (std::to_string((int) load) + " ohm").c_str());
-
-        const double base60 = freshMeasure(cfgFor(0.0f, load), 60.0);
-
-        for (int bi = 0; bi < 3; ++bi)
-        {
-            const double g60 = freshMeasure(cfgFor(boosts[bi], load), 60.0);
-
-            // Thevenin |Z_out| from level drop relative to this boost's own open-circuit level.
-            std::string zStr = "  (ref)";
-            if (load > 0.0)
-            {
-                const double vOpen = std::pow(10.0, vOpenDb[bi] / 20.0);
-                const double vLoad = std::pow(10.0, g60        / 20.0);
-                const double ratio = vOpen / std::max(vLoad, 1e-12);
-                const double zOut  = load * (ratio - 1.0);
-                char buf[32];
-                std::snprintf(buf, sizeof(buf), " |Zout|~%8.1f", zOut);
-                zStr = buf;
-            }
-
-            std::printf("    boost=%+5.1f  60Hz=%+6.2f dB  lift(vs base@load)=%+5.2f  lift(vs base open)=%+5.2f%s\n",
-                        boosts[bi], g60, g60 - base60, g60 - base60open, zStr.c_str());
-        }
-    }
-    std::printf("  >> GO if |Zout| swings strongly with boost; NO-GO if ~flat.\n");
-}
-
 // =========================================================================
 // Phase 7 (Tier 2) — isolated transformer element validation
 // =========================================================================
@@ -1549,6 +1441,40 @@ void test_xfmr_isolated_response()
     expectTrue(std::abs(gN1 - aN1) < 0.1 && std::abs(gN2 - aN2) < 0.1, "xfmr turns-ratio scales in-band gain as n*R1/(Rs+R1)");
 }
 
+// DIAG (Tier 2 result): does inserting the authentic HS-29 inter-stage
+// transformer (1:2, Lp=600 H) change the HF-Boost 60 Hz LF-coupling artifact?
+// A/B the transformer OFF vs ON at boost 0/6/16.  Prediction: with Lp=600 H the
+// transformer is a near-transparent linear post-element, so the +5.46 dB lift
+// is unchanged (it cannot be fixed by the inter-stage transformer).
+void diag_xfmr_artifact_ab()
+{
+    std::printf("\n== DIAG: HS-29 transformer ON/OFF vs 60 Hz HF-Boost coupling ==\n");
+
+    auto cfg = [](float boost, bool xfmr) {
+        return [boost, xfmr](PultecEQP1A& e) {
+            e.setTransformerEnabled(xfmr);
+            e.setLfBoostDb(0); e.setLfAttenDb(0);
+            e.setHfFreqIndex(3); e.setHfBoostDb(boost); e.setHfBandwidth(0.9f);
+            e.setHfAttenFreqIndex(2); e.setHfAttenDb(0);
+        };
+    };
+
+    for (bool xfmr : { false, true })
+    {
+        std::printf("  --- transformer %s ---\n", xfmr ? "ON (HS-29 1:2, 600H)" : "OFF");
+        const double base60 = freshMeasure(cfg(0.0f, xfmr),   60.0);
+        const double base8k = freshMeasure(cfg(0.0f, xfmr), 8000.0);
+        for (float b : { 0.0f, 6.0f, 16.0f })
+        {
+            const double g60 = freshMeasure(cfg(b, xfmr),   60.0);
+            const double g8k = freshMeasure(cfg(b, xfmr), 8000.0);
+            std::printf("    boost=%+5.1f  60Hz=%+6.2f (lift %+5.2f)   8kHz=%+6.2f (lift %+5.2f)\n",
+                        b, g60, g60 - base60, g8k, g8k - base8k);
+        }
+    }
+    std::printf("  >> If the 60 Hz lift is identical ON vs OFF, the inter-stage transformer is NOT the fix.\n");
+}
+
 #endif // PULTEC_CORE_AVAILABLE
 
 } // namespace
@@ -1581,9 +1507,8 @@ int main()
     test_pultec_plugin_call_pattern();
     diag_hfboost_vs_attensel();
     diag_hfboost_vs_bw_and_gain();
-    diag_xfmr_tier1_hp_probe();
-    diag_xfmr_zout_vs_boost();
     test_xfmr_isolated_response();
+    diag_xfmr_artifact_ab();
 #endif
 
     std::printf("\n----------------\n");

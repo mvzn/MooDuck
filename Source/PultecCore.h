@@ -100,6 +100,59 @@ private:
 };
 
 //==============================================================================
+//  Inter-stage transformer stage (Phase 7, Tier 2) — Triad HS-29
+//==============================================================================
+//  Models the EQP-1A's inter-stage transformer that sits between the passive
+//  EQ output and the 12AX7 grid:
+//      Vsrc(EQ out) --[Rs = EQ output Z]--+-- Lp (600 H magnetising) --gnd
+//                                         +-- xfmr 1:n -- Rgrid (12AX7 grid) -gnd
+//      output = secondary voltage = voltage(Rgrid)
+//
+//  Datasheet (Triad HS-29): turns ratio 1:2, primary inductance Lp = 600 H.
+//  With Lp that high and the EQ's low output impedance, the LF corner
+//  (Rs||R1)/(2*pi*Lp) sits well below 1 Hz, so the transformer is essentially
+//  transparent in band (a ~unity, ~+6 dB-step-up element with a sub-1 Hz DC
+//  block).  It is therefore a LINEAR POST-ELEMENT on the EQ output: by design
+//  it cannot alter the HF-Boost LF-coupling differential (see Tier-1 proof).
+//  Included for structural fidelity + empirical confirmation, not as a fix.
+struct InterstageXfmr
+{
+    static constexpr double GRID_R = 1.0e6;   // 12AX7 grid input impedance (Ω)
+    static constexpr double SRC_R  = 600.0;   // EQ output / design source Z (Ω)
+
+    wdft::ResistorT<double>  Rgrid { GRID_R };
+    IdealTransformerT<double, decltype(Rgrid)> Xfmr { Rgrid, 2.0 };   // 1:2 step-up
+    wdft::InductorT<double>  Lp { 600.0 };                            // HS-29 primary L
+    wdft::WDFParallelT<double, decltype(Lp), decltype(Xfmr)> load { Lp, Xfmr };
+    wdft::ResistorT<double>  Rs { SRC_R };
+    wdft::WDFSeriesT<double, decltype(Rs), decltype(load)> top { Rs, load };
+    wdft::IdealVoltageSourceT<double, decltype(top)> Vsrc { top };
+
+    double turns = 2.0;
+
+    void prepare (double fs) { Lp.prepare (fs); }
+
+    /** In-band (HP >> corner) voltage gain: n * R1 / (Rs + R1), R1 = Rgrid/n^2.
+        Used to normalise the stage so flat response stays at unity. */
+    double nominalGain() const noexcept
+    {
+        const double R1 = GRID_R / (turns * turns);
+        return turns * R1 / (SRC_R + R1);
+    }
+
+    inline double process (double vIn) noexcept
+    {
+        Vsrc.setVoltage (vIn);
+        Vsrc.incident (top.reflected());
+        top.incident (Vsrc.reflected());
+        return wdft::voltage<double> (Rgrid);
+    }
+
+    void setTurnsRatio (double n) { turns = n; Xfmr.setTurnsRatio (n); }
+    void setPrimaryL   (double H) { Lp.setInductanceValue (H); }
+};
+
+//==============================================================================
 //  Internal: one channel of the full EQP-1A WDF tree
 //==============================================================================
 
@@ -191,20 +244,9 @@ struct EQP1AChannel
     wdft::WDFSeriesT<double, decltype(R2), decltype(R3)>
         I { R2, R3 };
 
-    // LF: parallel(RBoostLo, LoFreqC2) → Jcore
+    // LF: parallel(RBoostLo, LoFreqC2) → J
     wdft::WDFParallelT<double, decltype(RBoostLo), decltype(LoFreqC2)>
-        Jcore { RBoostLo, LoFreqC2 };
-
-    // Phase 7 (Tier 2) — output-node test load.  This is where the inter-stage
-    // transformer's primary (+ magnetising inductance Lp) will eventually hang.
-    // Defaulted to ~open (1e12 Ω) so it is a numerical no-op for normal use; the
-    // Z_out probe sweeps it to finite values to measure the EQ's boost-dependent
-    // output impedance at node J (the node the HF-Boost LF coupling flows through).
-    wdft::ResistorT<double> RTestLoad { 1.0e12 };
-
-    // LF output node: parallel(Jcore, RTestLoad) → J  (J == the sampled output node)
-    wdft::WDFParallelT<double, decltype(Jcore), decltype(RTestLoad)>
-        J { Jcore, RTestLoad };
+        J { RBoostLo, LoFreqC2 };
 
     // Combine HF cut and LF-H-I: series(H, I) → sHI
     wdft::WDFSeriesT<double, decltype(H), decltype(I)>
@@ -273,36 +315,22 @@ public:
     bool getBypass () const noexcept             { return bypass; }
 
     // -----------------------------------------------------------------------
-    //  Phase 7 (Tier 1) — output high-pass sanity probe.
-    //  Inserts a one-pole HP on the EQ output (post-WDF, post HF-cut biquad)
-    //  to test the inter-stage-transformer LF-coupling hypothesis.  fc <= 0
-    //  disables it (default).  Diagnostic / experimental only.
+    //  Inter-stage transformer (HS-29) controls — for A/B + tuning.
     // -----------------------------------------------------------------------
-    void setOutputHpCutoff (double fcHz) noexcept
+    void setTransformerEnabled (bool on) noexcept { transformerEnabled = on; }
+    bool getTransformerEnabled () const noexcept   { return transformerEnabled; }
+
+    void setTransformerPrimaryL (double henries) noexcept
     {
-        outputHpCutoff = fcHz;
-        if (fcHz > 0.0)
-        {
-            // One-pole DC-blocker form: y = x - x1 + R*y1, R = exp(-2π fc / fs).
-            outputHpR = std::exp (-2.0 * juce::MathConstants<double>::pi * fcHz / sampleRate);
-        }
-        // Reset state so a fresh measurement doesn't inherit the previous run.
-        hpX1L = hpY1L = hpX1R = hpY1R = 0.0;
+        xfmrL.setPrimaryL (henries);
+        xfmrR.setPrimaryL (henries);
     }
 
-    // -----------------------------------------------------------------------
-    //  Phase 7 (Tier 2) — output-node test load (Z_out probe).
-    //  Sets a resistive load on node J in both channels.  R <= 0 (or huge)
-    //  means "open" (no load).  Used by diag_xfmr_zout_vs_boost to determine
-    //  whether the EQ's output impedance — and therefore the HF-Boost LF
-    //  coupling — actually varies with boost (the precondition for a loaded
-    //  inter-stage transformer to be able to cancel the artifact).
-    // -----------------------------------------------------------------------
-    void setOutputTestLoad (double rOhms) noexcept
+    void setTransformerTurns (double n) noexcept
     {
-        const double R = (rOhms <= 0.0) ? 1.0e12 : rOhms;
-        chanL.RTestLoad.setResistanceValue (R);
-        chanR.RTestLoad.setResistanceValue (R);
+        xfmrL.setTurnsRatio (n);
+        xfmrR.setTurnsRatio (n);
+        xfmrNorm = xfmrL.nominalGain();
     }
 
     void prepare (double sr, int maxBlockSize)
@@ -316,11 +344,12 @@ public:
         oversampler.initProcessing (static_cast<size_t> (maxBlockSize));
         oversampler.reset();
 
-        // Recompute HP coefficient at the (new) upsampled rate and clear state.
-        setOutputHpCutoff (outputHpCutoff);
-
         chanL.prepare (sampleRate);
         chanR.prepare (sampleRate);
+
+        xfmrL.prepare (sampleRate);
+        xfmrR.prepare (sampleRate);
+        xfmrNorm = xfmrL.nominalGain();   // normalise so flat response stays at unity
 
         hfCutL.reset();
         hfCutR.reset();
@@ -428,9 +457,15 @@ public:
         outL = static_cast<double> (hfCutL.processSample (static_cast<float> (outL)));
         outR = static_cast<double> (hfCutR.processSample (static_cast<float> (outR)));
 
-        // Tier-1 output high-pass (experimental; no-op when disabled)
-        left  = static_cast<float> (applyOutputHp (outL, hpX1L, hpY1L));
-        right = static_cast<float> (applyOutputHp (outR, hpX1R, hpY1R));
+        // Inter-stage transformer (HS-29), normalised to unity in-band gain
+        if (transformerEnabled)
+        {
+            outL = xfmrL.process (outL) / xfmrNorm;
+            outR = xfmrR.process (outR) / xfmrNorm;
+        }
+
+        left  = static_cast<float> (outL);
+        right = static_cast<float> (outR);
     }
 
     /** Process a stereo block through the 4x-oversampled EQP-1A network.
@@ -463,9 +498,15 @@ public:
             outL = static_cast<double> (hfCutL.processSample (static_cast<float> (outL)));
             outR = static_cast<double> (hfCutR.processSample (static_cast<float> (outR)));
 
-            // Tier-1 output high-pass (experimental; no-op when disabled)
-            upL[i] = static_cast<float> (applyOutputHp (outL, hpX1L, hpY1L));
-            upR[i] = static_cast<float> (applyOutputHp (outR, hpX1R, hpY1R));
+            // Inter-stage transformer (HS-29), normalised to unity in-band gain
+            if (transformerEnabled)
+            {
+                outL = xfmrL.process (outL) / xfmrNorm;
+                outR = xfmrR.process (outR) / xfmrNorm;
+            }
+
+            upL[i] = static_cast<float> (outL);
+            upR[i] = static_cast<float> (outR);
         }
 
         // Downsample back to host rate (writes into block)
@@ -492,19 +533,11 @@ private:
 
     juce::dsp::IIR::Filter<float> hfCutL, hfCutR;
 
-    // Tier-1 output high-pass (Phase 7 sanity probe) — disabled by default.
-    double outputHpCutoff = 0.0;   // Hz; <= 0 disables
-    double outputHpR      = 0.0;   // one-pole coefficient at upsampled rate
-    double hpX1L = 0.0, hpY1L = 0.0, hpX1R = 0.0, hpY1R = 0.0;
-
-    inline double applyOutputHp (double x, double& x1, double& y1) noexcept
-    {
-        if (outputHpCutoff <= 0.0) return x;   // no-op when disabled
-        double y = x - x1 + outputHpR * y1;
-        x1 = x;
-        y1 = y;
-        return y;
-    }
+    // Inter-stage transformer (Triad HS-29) — one per channel.  Applied as a
+    // normalised post-element on the EQ output (see InterstageXfmr docs).
+    InterstageXfmr xfmrL, xfmrR;
+    bool   transformerEnabled = true;
+    double xfmrNorm           = 1.0;   // in-band normalisation = nominalGain()
 
     // Cached parameter values
     bool  bypass         = false;
