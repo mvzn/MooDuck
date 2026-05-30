@@ -37,6 +37,69 @@
 namespace wdft = chowdsp::wdft;
 
 //==============================================================================
+//  Ideal transformer WDF adaptor (Phase 7, Tier 2)
+//==============================================================================
+//  A two-port ideal transformer with voltage turns ratio n (secondary:primary):
+//      v2 = n * v1,   i1 = -n * i2   (lossless: v1*i1 + v2*i2 = 0)
+//  Up-facing port = primary (faces the parent / source side).
+//  Down-facing child = the secondary subtree (e.g. the makeup-amp grid load).
+//
+//  Wave-domain scattering (derived with R2 = n^2 * R1 for adaptation):
+//      b1 = a2 / n           (reflected toward parent  = secondary wave / n)
+//      b2 = n  * a1          (sent into secondary       = primary wave * n)
+//      R1 = R2 / n^2         (primary port impedance = secondary impedance / n^2)
+//
+//  The magnetising (primary) inductance Lp is NOT part of this element; model it
+//  explicitly as a one-port inductor in parallel with this adaptor's up-port.
+//  That parallel Lp is what produces the LF roll-off / impedance isolation that
+//  the real inter-stage transformer provides.
+template <typename T, typename SecondaryType>
+class IdealTransformerT : public wdft::BaseWDF
+{
+public:
+    explicit IdealTransformerT (SecondaryType& sec, T turnsRatio = (T) 1)
+        : secondary (sec), n (turnsRatio)
+    {
+        secondary.connectToParent (this);
+        calcImpedance();
+    }
+
+    /** Sets the voltage turns ratio n (secondary:primary). */
+    void setTurnsRatio (T turnsRatio)
+    {
+        if (n == turnsRatio) return;
+        n = turnsRatio;
+        propagateImpedanceChange();
+    }
+
+    inline void calcImpedance() override
+    {
+        wdf.R = secondary.wdf.R / (n * n);
+        wdf.G = (T) 1.0 / wdf.R;
+    }
+
+    /** Incident wave a1 into the primary -> b2 = n*a1 sent down to secondary. */
+    inline void incident (T a1) noexcept
+    {
+        wdf.a = a1;
+        secondary.incident (n * a1);
+    }
+
+    /** Reflected wave toward the parent: b1 = a2 / n (a2 = secondary reflected). */
+    inline T reflected() noexcept
+    {
+        wdf.b = secondary.reflected() / n;
+        return wdf.b;
+    }
+
+    wdft::WDFMembers<T> wdf;
+
+private:
+    SecondaryType& secondary;
+    T n;
+};
+
+//==============================================================================
 //  Internal: one channel of the full EQP-1A WDF tree
 //==============================================================================
 
@@ -128,9 +191,20 @@ struct EQP1AChannel
     wdft::WDFSeriesT<double, decltype(R2), decltype(R3)>
         I { R2, R3 };
 
-    // LF: parallel(RBoostLo, LoFreqC2) → J
+    // LF: parallel(RBoostLo, LoFreqC2) → Jcore
     wdft::WDFParallelT<double, decltype(RBoostLo), decltype(LoFreqC2)>
-        J { RBoostLo, LoFreqC2 };
+        Jcore { RBoostLo, LoFreqC2 };
+
+    // Phase 7 (Tier 2) — output-node test load.  This is where the inter-stage
+    // transformer's primary (+ magnetising inductance Lp) will eventually hang.
+    // Defaulted to ~open (1e12 Ω) so it is a numerical no-op for normal use; the
+    // Z_out probe sweeps it to finite values to measure the EQ's boost-dependent
+    // output impedance at node J (the node the HF-Boost LF coupling flows through).
+    wdft::ResistorT<double> RTestLoad { 1.0e12 };
+
+    // LF output node: parallel(Jcore, RTestLoad) → J  (J == the sampled output node)
+    wdft::WDFParallelT<double, decltype(Jcore), decltype(RTestLoad)>
+        J { Jcore, RTestLoad };
 
     // Combine HF cut and LF-H-I: series(H, I) → sHI
     wdft::WDFSeriesT<double, decltype(H), decltype(I)>
@@ -198,6 +272,39 @@ public:
     void setBypass (bool shouldBypass) noexcept { bypass = shouldBypass; }
     bool getBypass () const noexcept             { return bypass; }
 
+    // -----------------------------------------------------------------------
+    //  Phase 7 (Tier 1) — output high-pass sanity probe.
+    //  Inserts a one-pole HP on the EQ output (post-WDF, post HF-cut biquad)
+    //  to test the inter-stage-transformer LF-coupling hypothesis.  fc <= 0
+    //  disables it (default).  Diagnostic / experimental only.
+    // -----------------------------------------------------------------------
+    void setOutputHpCutoff (double fcHz) noexcept
+    {
+        outputHpCutoff = fcHz;
+        if (fcHz > 0.0)
+        {
+            // One-pole DC-blocker form: y = x - x1 + R*y1, R = exp(-2π fc / fs).
+            outputHpR = std::exp (-2.0 * juce::MathConstants<double>::pi * fcHz / sampleRate);
+        }
+        // Reset state so a fresh measurement doesn't inherit the previous run.
+        hpX1L = hpY1L = hpX1R = hpY1R = 0.0;
+    }
+
+    // -----------------------------------------------------------------------
+    //  Phase 7 (Tier 2) — output-node test load (Z_out probe).
+    //  Sets a resistive load on node J in both channels.  R <= 0 (or huge)
+    //  means "open" (no load).  Used by diag_xfmr_zout_vs_boost to determine
+    //  whether the EQ's output impedance — and therefore the HF-Boost LF
+    //  coupling — actually varies with boost (the precondition for a loaded
+    //  inter-stage transformer to be able to cancel the artifact).
+    // -----------------------------------------------------------------------
+    void setOutputTestLoad (double rOhms) noexcept
+    {
+        const double R = (rOhms <= 0.0) ? 1.0e12 : rOhms;
+        chanL.RTestLoad.setResistanceValue (R);
+        chanR.RTestLoad.setResistanceValue (R);
+    }
+
     void prepare (double sr, int maxBlockSize)
     {
         // Run the WDF tree and HF-cut biquad at 4x the host sample rate so
@@ -208,6 +315,9 @@ public:
 
         oversampler.initProcessing (static_cast<size_t> (maxBlockSize));
         oversampler.reset();
+
+        // Recompute HP coefficient at the (new) upsampled rate and clear state.
+        setOutputHpCutoff (outputHpCutoff);
 
         chanL.prepare (sampleRate);
         chanR.prepare (sampleRate);
@@ -315,8 +425,12 @@ public:
         double outR = chanR.processSample (static_cast<double> (right));
 
         // HF cut biquad (applied after WDF)
-        left  = hfCutL.processSample (static_cast<float> (outL));
-        right = hfCutR.processSample (static_cast<float> (outR));
+        outL = static_cast<double> (hfCutL.processSample (static_cast<float> (outL)));
+        outR = static_cast<double> (hfCutR.processSample (static_cast<float> (outR)));
+
+        // Tier-1 output high-pass (experimental; no-op when disabled)
+        left  = static_cast<float> (applyOutputHp (outL, hpX1L, hpY1L));
+        right = static_cast<float> (applyOutputHp (outR, hpX1R, hpY1R));
     }
 
     /** Process a stereo block through the 4x-oversampled EQP-1A network.
@@ -346,8 +460,12 @@ public:
             double outR = chanR.processSample (static_cast<double> (upR[i]));
 
             // HF cut biquad - coefficients are computed at upsampled rate too
-            upL[i] = hfCutL.processSample (static_cast<float> (outL));
-            upR[i] = hfCutR.processSample (static_cast<float> (outR));
+            outL = static_cast<double> (hfCutL.processSample (static_cast<float> (outL)));
+            outR = static_cast<double> (hfCutR.processSample (static_cast<float> (outR)));
+
+            // Tier-1 output high-pass (experimental; no-op when disabled)
+            upL[i] = static_cast<float> (applyOutputHp (outL, hpX1L, hpY1L));
+            upR[i] = static_cast<float> (applyOutputHp (outR, hpX1R, hpY1R));
         }
 
         // Downsample back to host rate (writes into block)
@@ -373,6 +491,20 @@ private:
     EQP1AChannel chanL, chanR;
 
     juce::dsp::IIR::Filter<float> hfCutL, hfCutR;
+
+    // Tier-1 output high-pass (Phase 7 sanity probe) — disabled by default.
+    double outputHpCutoff = 0.0;   // Hz; <= 0 disables
+    double outputHpR      = 0.0;   // one-pole coefficient at upsampled rate
+    double hpX1L = 0.0, hpY1L = 0.0, hpX1R = 0.0, hpY1R = 0.0;
+
+    inline double applyOutputHp (double x, double& x1, double& y1) noexcept
+    {
+        if (outputHpCutoff <= 0.0) return x;   // no-op when disabled
+        double y = x - x1 + outputHpR * y1;
+        x1 = x;
+        y1 = y;
+        return y;
+    }
 
     // Cached parameter values
     bool  bypass         = false;

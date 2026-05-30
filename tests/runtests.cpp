@@ -1350,6 +1350,205 @@ void diag_sat_harmonic_spectrum()
     }
 }
 
+// =========================================================================
+// Phase 7 — inter-stage transformer / LF-coupling diagnostics
+// =========================================================================
+
+// DIAG (Tier 1 sanity): print ABSOLUTE gains at 60 Hz and 8 kHz for HF Boost
+// 0 / 6 / 16 dB, with the experimental output high-pass swept across cutoffs.
+// Purpose: determine whether the HF-Boost LF-coupling artifact is an absolute
+// LF lift (which a linear output HP can roll off) or a differential coupling
+// (boost vs base), which a linear HP cannot change because it scales base and
+// boost identically.  This goes/no-goes the Tier-1 workaround hypothesis.
+void diag_xfmr_tier1_hp_probe()
+{
+    std::printf("\n== DIAG: Tier-1 output-HP probe (HF Sel=8 kHz, BW=0.9 narrow) ==\n");
+    std::printf("  Columns: 60Hz abs / 8kHz abs (dB); lift = boost - base at that freq\n");
+
+    const double hpCutoffs[] = { 0.0, 5.0, 10.0, 20.0, 50.0 };
+    const float  boosts[]    = { 0.0f, 6.0f, 16.0f };
+
+    for (double hp : hpCutoffs)
+    {
+        std::printf("  --- output HP fc = %s ---\n",
+                    hp <= 0.0 ? "OFF" : std::to_string((int) hp).c_str());
+
+        // Baseline (HF boost 0) at this HP setting.
+        auto baseCfg = [hp](PultecEQP1A& e) {
+            e.setLfBoostDb(0); e.setLfAttenDb(0);
+            e.setHfFreqIndex(3); e.setHfBoostDb(0); e.setHfBandwidth(0.9f);
+            e.setHfAttenFreqIndex(2); e.setHfAttenDb(0);
+            e.setOutputHpCutoff(hp);
+        };
+        const double base60 = freshMeasure(baseCfg,   60.0);
+        const double base8k = freshMeasure(baseCfg, 8000.0);
+
+        for (float b : boosts)
+        {
+            auto cfg = [hp, b](PultecEQP1A& e) {
+                e.setLfBoostDb(0); e.setLfAttenDb(0);
+                e.setHfFreqIndex(3); e.setHfBoostDb(b); e.setHfBandwidth(0.9f);
+                e.setHfAttenFreqIndex(2); e.setHfAttenDb(0);
+                e.setOutputHpCutoff(hp);
+            };
+            const double g60 = freshMeasure(cfg,   60.0);
+            const double g8k = freshMeasure(cfg, 8000.0);
+            std::printf("    boost=%+5.1f dB  60Hz=%+6.2f (lift %+5.2f)   8kHz=%+6.2f (lift %+5.2f)\n",
+                        b, g60, g60 - base60, g8k, g8k - base8k);
+        }
+    }
+}
+
+// DIAG (Tier 2 go/no-go): does the EQ output impedance at node J vary with HF
+// Boost?  The inter-stage transformer's ONLY boost-dependence enters through
+// Z_out(boost): its LF divider is Lp/(Z_out + sLp).  If Z_out is ~constant
+// across boost, a loaded transformer CANNOT move the 60 Hz differential and
+// Tier 2 is a dead end too.  We probe by hanging a resistive load on node J and
+// measuring the level drop vs the open-circuit output, then back out a Thevenin
+// |Z_out| ≈ R·(V_open/V_load − 1).  We also print the raw 60 Hz lift (boost −
+// base) at each load to see whether loading reshapes the coupling at all.
+void diag_xfmr_zout_vs_boost()
+{
+    std::printf("\n== DIAG: Z_out vs HF Boost at node J (HF Sel=8 kHz, BW=0.9 narrow) ==\n");
+    std::printf("  Probe @ 60 Hz. Load on J swept; |Z_out| backed out from level drop.\n");
+
+    const double loads[] = { 0.0 /*open*/, 1.0e3, 10.0, 1.0, 0.1 };
+    const float  boosts[] = { 0.0f, 6.0f, 16.0f };
+
+    auto cfgFor = [](float b, double load) {
+        return [b, load](PultecEQP1A& e) {
+            e.setLfBoostDb(0); e.setLfAttenDb(0);
+            e.setHfFreqIndex(3); e.setHfBoostDb(b); e.setHfBandwidth(0.9f);
+            e.setHfAttenFreqIndex(2); e.setHfAttenDb(0);
+            e.setOutputTestLoad(load);
+        };
+    };
+
+    // Open-circuit 60 Hz level per boost (reference for the Thevenin extraction).
+    double vOpenDb[3];
+    for (int bi = 0; bi < 3; ++bi)
+        vOpenDb[bi] = freshMeasure(cfgFor(boosts[bi], 0.0), 60.0);
+
+    const double base60open = vOpenDb[0];
+
+    for (double load : loads)
+    {
+        std::printf("  --- load on J = %s ---\n",
+                    load <= 0.0 ? "OPEN" : (std::to_string((int) load) + " ohm").c_str());
+
+        const double base60 = freshMeasure(cfgFor(0.0f, load), 60.0);
+
+        for (int bi = 0; bi < 3; ++bi)
+        {
+            const double g60 = freshMeasure(cfgFor(boosts[bi], load), 60.0);
+
+            // Thevenin |Z_out| from level drop relative to this boost's own open-circuit level.
+            std::string zStr = "  (ref)";
+            if (load > 0.0)
+            {
+                const double vOpen = std::pow(10.0, vOpenDb[bi] / 20.0);
+                const double vLoad = std::pow(10.0, g60        / 20.0);
+                const double ratio = vOpen / std::max(vLoad, 1e-12);
+                const double zOut  = load * (ratio - 1.0);
+                char buf[32];
+                std::snprintf(buf, sizeof(buf), " |Zout|~%8.1f", zOut);
+                zStr = buf;
+            }
+
+            std::printf("    boost=%+5.1f  60Hz=%+6.2f dB  lift(vs base@load)=%+5.2f  lift(vs base open)=%+5.2f%s\n",
+                        boosts[bi], g60, g60 - base60, g60 - base60open, zStr.c_str());
+        }
+    }
+    std::printf("  >> GO if |Zout| swings strongly with boost; NO-GO if ~flat.\n");
+}
+
+// =========================================================================
+// Phase 7 (Tier 2) — isolated transformer element validation
+// =========================================================================
+// Drives an ideal-transformer-with-magnetising-inductance subtree in isolation
+// and checks it against the analytic transfer function, BEFORE it is wired into
+// the EQ tree (planner risk register: "Unit test the transformer in isolation").
+//
+//   Vsrc --[Rs]--+-- Lp (shunt) --gnd
+//                |
+//                +-- xfmr primary : secondary (1:n) -- Rgrid -- gnd
+//   output = secondary voltage = voltage(Rgrid)
+//
+// Analytic (s-domain), R1 = Rg/n^2 (reflected grid load):
+//   Vsec/Vsrc = n * R1 * sLp / [ sLp(Rs + R1) + Rs*R1 ]      (a high-pass)
+//   HF asymptote |H|   = n * R1 / (Rs + R1)
+//   -3 dB corner f_c   = (Rs || R1) / (2*pi*Lp)
+static double measureXfmrGainDb(double freqHz, double n, double Rg,
+                                double Rs, double Lp, double fs,
+                                int warmupSamples, int measureSamples)
+{
+    wdft::ResistorT<double> Rgrid { Rg };
+    IdealTransformerT<double, decltype(Rgrid)> xfmr { Rgrid, n };
+    wdft::InductorT<double>  Lmag { Lp };
+    wdft::WDFParallelT<double, decltype(xfmr), decltype(Lmag)> primary { xfmr, Lmag };
+    wdft::ResistorT<double>  Rsrc { Rs };
+    wdft::WDFSeriesT<double, decltype(Rsrc), decltype(primary)> top { Rsrc, primary };
+    wdft::IdealVoltageSourceT<double, decltype(top)> Vin { top };
+
+    Lmag.prepare(fs);   // sets inductor fs + re-propagates impedances through the built tree
+
+    double phase = 0.0, inc = 2.0 * M_PI * freqHz / fs;
+    double sumSq = 0.0, inSumSq = 0.0;
+
+    for (int i = 0; i < warmupSamples + measureSamples; ++i)
+    {
+        const double x = std::sin(phase);
+        phase += inc;
+        Vin.setVoltage(x);
+        Vin.incident(top.reflected());
+        top.incident(Vin.reflected());
+        const double y = wdft::voltage<double>(Rgrid);
+        if (i >= warmupSamples) { sumSq += y * y; inSumSq += x * x; }
+    }
+    return 20.0 * std::log10(std::sqrt(sumSq / std::max(inSumSq, 1e-30)));
+}
+
+void test_xfmr_isolated_response()
+{
+    std::printf("\n== Transformer element (isolated) ==\n");
+    const double fs = 48000.0;
+    const double n = 2.0, Rg = 1.0e6, Rs = 600.0, Lp = 20.0;
+    const double R1 = Rg / (n * n);
+    const double hfAsym = 20.0 * std::log10(n * R1 / (Rs + R1));        // ~+5.996 dB
+    const double fc     = (Rs * R1 / (Rs + R1)) / (2.0 * M_PI * Lp);    // ~4.76 Hz
+
+    // HF asymptote (1 kHz is far above the ~4.8 Hz corner).
+    const double g1k = measureXfmrGainDb(1000.0, n, Rg, Rs, Lp, fs, 4800, 9600);
+    std::printf("  HF gain @1kHz   = %+6.3f dB (analytic %+6.3f)\n", g1k, hfAsym);
+    expectTrue(std::abs(g1k - hfAsym) < 0.1, "xfmr HF asymptote matches n*R1/(Rs+R1)");
+
+    // -3 dB corner: gain at f_c should be hfAsym - 3.01 dB.
+    const double gfc = measureXfmrGainDb(fc, n, Rg, Rs, Lp, fs,
+                                         (int) (40.0 * fs / fc), (int) (40.0 * fs / fc));
+    std::printf("  corner f_c      = %6.3f Hz, gain %+6.3f dB (analytic %+6.3f)\n",
+                fc, gfc, hfAsym - 3.0103);
+    expectTrue(std::abs(gfc - (hfAsym - 3.0103)) < 0.4, "xfmr -3dB at analytic corner f_c");
+
+    // High-pass: well below the corner it must roll off hard (DC isolation).
+    const double gLow = measureXfmrGainDb(fc / 8.0, n, Rg, Rs, Lp, fs,
+                                          (int) (80.0 * fs / (fc / 8.0)),
+                                          (int) (40.0 * fs / (fc / 8.0)));
+    std::printf("  @ f_c/8         = %+6.3f dB (expect ~ %+6.3f, ~ -18 dB/below)\n",
+                gLow, hfAsym - 18.06);
+    expectTrue(gLow < hfAsym - 12.0, "xfmr rolls off below corner (LF isolation)");
+
+    // Turns-ratio sanity: with a huge Lp (no LF roll-off in band) the in-band
+    // gain follows n*R1/(Rs+R1); doubling n should raise it accordingly.
+    const double bigLp = 5000.0;
+    const double gN1 = measureXfmrGainDb(1000.0, 1.0, Rg, Rs, bigLp, fs, 4800, 9600);
+    const double gN2 = measureXfmrGainDb(1000.0, 2.0, Rg, Rs, bigLp, fs, 4800, 9600);
+    const double aN1 = 20.0 * std::log10(1.0 * (Rg / 1.0) / (Rs + Rg / 1.0));
+    const double aN2 = 20.0 * std::log10(2.0 * (Rg / 4.0) / (Rs + Rg / 4.0));
+    std::printf("  n=1 gain %+6.3f (analytic %+6.3f); n=2 gain %+6.3f (analytic %+6.3f)\n",
+                gN1, aN1, gN2, aN2);
+    expectTrue(std::abs(gN1 - aN1) < 0.1 && std::abs(gN2 - aN2) < 0.1, "xfmr turns-ratio scales in-band gain as n*R1/(Rs+R1)");
+}
+
 #endif // PULTEC_CORE_AVAILABLE
 
 } // namespace
@@ -1382,6 +1581,9 @@ int main()
     test_pultec_plugin_call_pattern();
     diag_hfboost_vs_attensel();
     diag_hfboost_vs_bw_and_gain();
+    diag_xfmr_tier1_hp_probe();
+    diag_xfmr_zout_vs_boost();
+    test_xfmr_isolated_response();
 #endif
 
     std::printf("\n----------------\n");
