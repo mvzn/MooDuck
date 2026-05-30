@@ -291,6 +291,17 @@ struct EQP1AChannel
         // Compensate passive insertion loss (matches 12AX7 makeup amplifier at unity)
         return (-wdft::voltage<double> (J) + wdft::voltage<double> (R3)) * MAKEUP_GAIN;
     }
+
+    // Diagnostic accessors (valid after processSample).
+    //  VJ/VR3 : the two synthetic-readout terms (-V(J)+V(R3)).
+    //  Vrout  : voltage across the real output element Rout (= I = R2+R3) = V6-V7.
+    //  Vnode6 : single-ended output node 6 referenced to ground (V6) = V(I)+V(J).
+    //  Vnode7 : single-ended output node 7 referenced to ground (V7) = V(J).
+    double VJ    () const noexcept { return wdft::voltage<double> (J); }
+    double VR3   () const noexcept { return wdft::voltage<double> (R3); }
+    double Vrout () const noexcept { return wdft::voltage<double> (I); }
+    double Vnode6() const noexcept { return wdft::voltage<double> (I) + wdft::voltage<double> (J); }
+    double Vnode7() const noexcept { return wdft::voltage<double> (J); }
 };
 
 //==============================================================================
@@ -319,6 +330,10 @@ public:
     // -----------------------------------------------------------------------
     void setTransformerEnabled (bool on) noexcept { transformerEnabled = on; }
     bool getTransformerEnabled () const noexcept   { return transformerEnabled; }
+
+    // Diagnostic: 0 = normal output; 1 = raw V(J); 2 = raw V(R3) (bypasses
+    // HF-cut + transformer + makeup).  Used to localise the LF-coupling artifact.
+    void setDiagOutput (int mode) noexcept { diagOutput = mode; }
 
     void setTransformerPrimaryL (double henries) noexcept
     {
@@ -494,6 +509,13 @@ public:
             double outL = chanL.processSample (static_cast<double> (upL[i]));
             double outR = chanR.processSample (static_cast<double> (upR[i]));
 
+            if (diagOutput != 0)   // raw readout/node probe (artifact localisation)
+            {
+                upL[i] = static_cast<float> (diagProbe (chanL));
+                upR[i] = static_cast<float> (diagProbe (chanR));
+                continue;
+            }
+
             // HF cut biquad - coefficients are computed at upsampled rate too
             outL = static_cast<double> (hfCutL.processSample (static_cast<float> (outL)));
             outR = static_cast<double> (hfCutR.processSample (static_cast<float> (outR)));
@@ -538,6 +560,20 @@ private:
     InterstageXfmr xfmrL, xfmrR;
     bool   transformerEnabled = true;
     double xfmrNorm           = 1.0;   // in-band normalisation = nominalGain()
+    int    diagOutput         = 0;     // 0 normal; 1 V(J), 2 V(R3), 3 Rout, 4 node6, 5 node7
+
+    inline double diagProbe (const EQP1AChannel& ch) const noexcept
+    {
+        switch (diagOutput)
+        {
+            case 1:  return ch.VJ();
+            case 2:  return ch.VR3();
+            case 3:  return ch.Vrout();
+            case 4:  return ch.Vnode6();
+            case 5:  return ch.Vnode7();
+            default: return 0.0;
+        }
+    }
 
     // Cached parameter values
     bool  bypass         = false;

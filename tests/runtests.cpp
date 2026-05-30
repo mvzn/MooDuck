@@ -1475,6 +1475,65 @@ void diag_xfmr_artifact_ab()
     std::printf("  >> If the 60 Hz lift is identical ON vs OFF, the inter-stage transformer is NOT the fix.\n");
 }
 
+// DIAG (artifact localisation): the +5.46 dB 60 Hz HF-boost coupling lives in
+// the passive readout -V(J)+V(R3).  (a) Fine boost sweep to see the transition
+// shape (suspect: RBoostHi2 un-shorting from ~0 to finite).  (b) Decompose the
+// readout into its two terms via setDiagOutput to see which one carries the lift.
+// (c) Vary HF Sel frequency to test whether the lift tracks the LC tank.
+void diag_artifact_localize()
+{
+    std::printf("\n== DIAG: localise the 60 Hz HF-Boost coupling ==\n");
+
+    auto base = [](PultecEQP1A& e, float boost, int hfSel, int probe) {
+        e.setTransformerEnabled(false);
+        e.setDiagOutput(probe);
+        e.setLfBoostDb(0); e.setLfAttenDb(0);
+        e.setHfFreqIndex(hfSel); e.setHfBoostDb(boost); e.setHfBandwidth(0.9f);
+        e.setHfAttenFreqIndex(2); e.setHfAttenDb(0);
+    };
+
+    std::printf("  (a) fine boost sweep @60Hz (HF Sel=8kHz), normal output:\n");
+    const double b0 = freshMeasure([&](PultecEQP1A& e){ base(e,0.0f,3,0); }, 60.0);
+    for (float b : { 0.0f, 0.25f, 0.5f, 1.0f, 2.0f, 4.0f, 6.0f, 10.0f, 16.0f })
+    {
+        const double g = freshMeasure([&](PultecEQP1A& e){ base(e,b,3,0); }, 60.0);
+        std::printf("      boost=%+5.2f  60Hz lift=%+5.2f dB\n", b, g - b0);
+    }
+
+    std::printf("  (b) readout decomposition @60Hz (HF Sel=8kHz):\n");
+    for (int probe : { 1, 2 })   // 1 = V(J), 2 = V(R3)
+    {
+        const double pb0 = freshMeasure([&](PultecEQP1A& e){ base(e,0.0f,3,probe); }, 60.0);
+        std::printf("      term %s:  ", probe == 1 ? "V(J) " : "V(R3)");
+        for (float b : { 0.0f, 6.0f, 16.0f })
+        {
+            const double g = freshMeasure([&](PultecEQP1A& e){ base(e,b,3,probe); }, 60.0);
+            std::printf("b%+0.0f lift=%+5.2f  ", b, g - pb0);
+        }
+        std::printf("\n");
+    }
+
+    std::printf("  (c) 60Hz lift @ boost=6 vs HF Sel frequency:\n");
+    const int sels[] = { 0, 3, 6 };   // 3 kHz, 8 kHz, 16 kHz
+    const char* names[] = { "3kHz", "8kHz", "16kHz" };
+    for (int k = 0; k < 3; ++k)
+    {
+        const double sb0 = freshMeasure([&](PultecEQP1A& e){ base(e,0.0f,sels[k],0); }, 60.0);
+        const double g   = freshMeasure([&](PultecEQP1A& e){ base(e,6.0f,sels[k],0); }, 60.0);
+        std::printf("      HF Sel=%-5s  60Hz lift=%+5.2f dB\n", names[k], g - sb0);
+    }
+
+    std::printf("  (d) 60Hz lift by OUTPUT NODE (does any single-ended node escape it?):\n");
+    const int   probes[]  = { 0, 3, 4, 5 };
+    const char* pnames[]  = { "-V(J)+V(R3) [current]", "Rout (V6-V7)", "node6 (V6)", "node7 (V7)=V(J)" };
+    for (int k = 0; k < 4; ++k)
+    {
+        const double nb0 = freshMeasure([&](PultecEQP1A& e){ base(e,0.0f,3,probes[k]); }, 60.0);
+        const double g6  = freshMeasure([&](PultecEQP1A& e){ base(e,6.0f,3,probes[k]); }, 60.0);
+        std::printf("      %-24s  60Hz lift=%+5.2f dB\n", pnames[k], g6 - nb0);
+    }
+}
+
 #endif // PULTEC_CORE_AVAILABLE
 
 } // namespace
@@ -1509,6 +1568,7 @@ int main()
     diag_hfboost_vs_bw_and_gain();
     test_xfmr_isolated_response();
     diag_xfmr_artifact_ab();
+    diag_artifact_localize();
 #endif
 
     std::printf("\n----------------\n");
