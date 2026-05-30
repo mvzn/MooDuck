@@ -302,6 +302,21 @@ struct EQP1AChannel
     double Vrout () const noexcept { return wdft::voltage<double> (I); }
     double Vnode6() const noexcept { return wdft::voltage<double> (I) + wdft::voltage<double> (J); }
     double Vnode7() const noexcept { return wdft::voltage<double> (J); }
+    // Node-to-ground voltages walking up the series loop (gnd at J's bottom):
+    double Vnode4() const noexcept { return wdft::voltage<double> (pEFGHI) + wdft::voltage<double> (J); }
+    double Vnode3() const noexcept { return wdft::voltage<double> (pCD) + Vnode4(); }
+
+    // Debug: dump adapted port impedances (wdf.R) of every element/adaptor.
+    void dbgDumpR (const char* tag) const
+    {
+        std::printf("  [%s] RBH1=%.4g RBH2=%.4g RQ=%.4g RCH1=%.4g RCH2=%.4g CHiCut=%.4g "
+                    "C1=%.4g L1=%.4g | pCD=%.4g pFG=%.4g sEFG=%.4g H=%.4g I=%.4g sHI=%.4g "
+                    "pEFGHI=%.4g S1=%.4g S2=%.4g S3=%.4g J=%.4g RBLo=%.4g RCLo=%.4g\n",
+                    tag, RBoostHi1.wdf.R, RBoostHi2.wdf.R, RQ.wdf.R, RCutHi1.wdf.R, RCutHi2.wdf.R,
+                    CHiCut.wdf.R, C1.wdf.R, L1.wdf.R, pCD.wdf.R, pFG.wdf.R, sEFG.wdf.R, H.wdf.R,
+                    I.wdf.R, sHI.wdf.R, pEFGHI.wdf.R, S1.wdf.R, S2.wdf.R, S3.wdf.R, J.wdf.R,
+                    RBoostLo.wdf.R, RCutLo.wdf.R);
+    }
 };
 
 //==============================================================================
@@ -334,6 +349,8 @@ public:
     // Diagnostic: 0 = normal output; 1 = raw V(J); 2 = raw V(R3) (bypasses
     // HF-cut + transformer + makeup).  Used to localise the LF-coupling artifact.
     void setDiagOutput (int mode) noexcept { diagOutput = mode; }
+
+    void dbgDumpChanL (const char* tag) const { chanL.dbgDumpR (tag); }
 
     void setTransformerPrimaryL (double henries) noexcept
     {
@@ -374,6 +391,18 @@ public:
         // initialises them to RMAX; without this call they'd stay at RMAX and the
         // MAKEUP_GAIN calibration would be wrong whenever setLfFreqIndex() is called
         // before setLfBoostDb/setLfAttenDb.
+        //
+        // KNOWN ISSUE (root-caused 2026-05-30): the HF-boost pot (RBoostHi2) and Q
+        // pot (RQ) are NOT initialised here, so at HF-boost = 0 — where
+        // setHfBoostDb(0) early-returns — RBoostHi2 stays at RBOOSTHI_MAX (12 kΩ)
+        // instead of its correct ~0 Ω.  That distorts the boost=0 baseline and is the
+        // cause of the spurious ~+5.5 dB 60 Hz rise when any HF boost is dialled in
+        // (the real circuit is flat at 60 Hz per the ngspice oracle in
+        // eq-research/spice/).  Simply adding updateHfBoost()/updateHfBQ() here fixes
+        // the coupling but breaks the flat baseline, because MAKEUP_GAIN (16.598) was
+        // calibrated around this buggy default state.  The proper fix is to init the
+        // pots AND re-derive the baseline calibration against the oracle — tracked as
+        // a follow-up; left as-is here to keep the calibrated baseline shippable.
         updateLfBoost();
         updateLfCut();
         updateHfBoostCoefficients();
@@ -571,6 +600,8 @@ private:
             case 3:  return ch.Vrout();
             case 4:  return ch.Vnode6();
             case 5:  return ch.Vnode7();
+            case 6:  return ch.Vnode4();
+            case 7:  return ch.Vnode3();
             default: return 0.0;
         }
     }

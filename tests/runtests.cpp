@@ -1534,6 +1534,211 @@ void diag_artifact_localize()
     }
 }
 
+// DIAG (WDF bug hunt): walk the series loop n3 -> n4 -> n7 and compare the WDF
+// 60 Hz node transfer (boost 0 vs 6) against the SPICE oracle, to find the first
+// node where the WDF diverges from the real circuit.
+//   SPICE @60Hz:  n3: -22.96 -> -7.55 (lift +15.4)   n4: flat (-22.96)   n7: flat (-82.22)
+void diag_artifact_nodewalk()
+{
+    std::printf("\n== DIAG: WDF node-walk vs SPICE oracle @60Hz (HF Sel=8kHz, BW=0.9) ==\n");
+    std::printf("  SPICE: n3 -22.96->-7.55 (+15.4)   n4 flat -22.96   n7 flat -82.22\n");
+
+    auto cfg = [](float boost, int probe) {
+        return [boost, probe](PultecEQP1A& e) {
+            e.setTransformerEnabled(false);
+            e.setDiagOutput(probe);
+            e.setLfBoostDb(0); e.setLfAttenDb(0);
+            e.setHfFreqIndex(3); e.setHfBoostDb(boost); e.setHfBandwidth(0.9f);
+            e.setHfAttenFreqIndex(2); e.setHfAttenDb(0);
+        };
+    };
+
+    struct { const char* name; int probe; } nodes[] = {
+        { "n3", 7 }, { "n4", 6 }, { "n7", 5 }
+    };
+    for (auto& n : nodes)
+    {
+        const double g0 = freshMeasure(cfg(0.0f, n.probe), 60.0);
+        const double g6 = freshMeasure(cfg(6.0f, n.probe), 60.0);
+        std::printf("  WDF %s:  boost0=%+7.2f  boost6=%+7.2f  lift=%+6.2f dB\n",
+                    n.name, g0, g6, g6 - g0);
+    }
+}
+
+// DIAG: measure the WDF transfer through the NON-oversampled processSample path
+// (pure WDF tree at the prepared 192 kHz rate, no oversampler, no diag probe) to
+// confirm whether the +5.46 dB 60 Hz artifact is in the WDF tree itself.
+void diag_artifact_direct_nooversampling()
+{
+    std::printf("\n== DIAG: 60Hz lift via processSample (no oversampler) ==\n");
+    const double fs = 48000.0 * 4.0;   // PultecEQP1A prepares WDF at host*4
+
+    auto measure = [&](float boost) {
+        PultecEQP1A eq;
+        eq.prepare(48000.0, 512);
+        eq.setTransformerEnabled(false);
+        eq.setLfBoostDb(0); eq.setLfAttenDb(0);
+        eq.setHfFreqIndex(3); eq.setHfBoostDb(boost); eq.setHfBandwidth(0.9f);
+        eq.setHfAttenFreqIndex(2); eq.setHfAttenDb(0);
+
+        double phase = 0.0, inc = 2.0 * M_PI * 60.0 / fs, sumSq = 0.0, inSq = 0.0;
+        const int warm = 200000, meas = 200000;
+        for (int i = 0; i < warm + meas; ++i)
+        {
+            float s = (float) std::sin(phase); phase += inc;
+            float l = s, r = s;
+            eq.processSample(l, r);
+            if (i >= warm) { sumSq += (double) l * l; inSq += (double) s * s; }
+        }
+        return 20.0 * std::log10(std::sqrt(sumSq / std::max(inSq, 1e-30)));
+    };
+
+    const double g0 = measure(0.0f);
+    const double g6 = measure(6.0f);
+    std::printf("  boost0=%+6.2f dB  boost6=%+6.2f dB  lift=%+5.2f dB\n", g0, g6, g6 - g0);
+    std::printf("  (SPICE oracle says this should be ~0.00 dB)\n");
+}
+
+// DIAG (chowdsp-core isolation): a minimal nested tree analogous to the failing
+// region -- Vin -> series(Rtop, series(parallel(cap-branch, Rvar), Rload)).
+// At LF the cap-branch is open, so vload/vin = Rload/(Rtop+Rvar+Rload) exactly.
+// Sweep Rvar 1 -> 4500 (like RBoostHi2 un-shorting) and compare WDF to analytic.
+// If WDF matches analytic, chowdsp-core is sound and the bug is in our specific
+// large tree; if it diverges, it's a chowdsp nested-adaptor problem.
+void diag_chowdsp_core_isolation()
+{
+    std::printf("\n== DIAG: chowdsp-core minimal nested-tree vs analytic @60Hz ==\n");
+    const double fs = 192000.0, Rtop = 12000.0, Rload = 100.0, Cval = 10e-9, Rc = 300.0;
+
+    auto measure = [&](double rvar) {
+        wdft::ResistorT<double>  RtopE { Rtop };
+        wdft::CapacitorT<double> C { Cval };
+        wdft::ResistorT<double>  RcE { Rc };
+        wdft::WDFSeriesT<double, decltype(C), decltype(RcE)> Cbranch { C, RcE };
+        wdft::ResistorT<double>  Rvar { rvar };
+        wdft::WDFParallelT<double, decltype(Cbranch), decltype(Rvar)> P { Cbranch, Rvar };
+        wdft::ResistorT<double>  RloadE { Rload };
+        wdft::WDFSeriesT<double, decltype(P), decltype(RloadE)> Sinner { P, RloadE };
+        wdft::WDFSeriesT<double, decltype(RtopE), decltype(Sinner)> S { RtopE, Sinner };
+        wdft::IdealVoltageSourceT<double, decltype(S)> Vin { S };
+        C.prepare(fs);
+
+        double phase = 0.0, inc = 2.0 * M_PI * 60.0 / fs, sumSq = 0.0, inSq = 0.0;
+        const int warm = 200000, meas = 200000;
+        for (int i = 0; i < warm + meas; ++i)
+        {
+            double x = std::sin(phase); phase += inc;
+            Vin.setVoltage(x);
+            Vin.incident(S.reflected());
+            S.incident(Vin.reflected());
+            double y = wdft::voltage<double>(RloadE);
+            if (i >= warm) { sumSq += y * y; inSq += x * x; }
+        }
+        return 20.0 * std::log10(std::sqrt(sumSq / std::max(inSq, 1e-30)));
+    };
+
+    auto analytic = [&](double rvar) {
+        return 20.0 * std::log10(Rload / (Rtop + rvar + Rload));   // cap open at LF
+    };
+
+    for (double rvar : { 1.0, 4500.0 })
+        std::printf("  Rvar=%6.0f  WDF=%+7.3f dB  analytic=%+7.3f dB  (err %+.3f)\n",
+                    rvar, measure(rvar), analytic(rvar), measure(rvar) - analytic(rvar));
+    const double wdfLift = measure(4500.0) - measure(1.0);
+    const double anLift  = analytic(4500.0) - analytic(1.0);
+    std::printf("  LIFT 1->4500:  WDF=%+5.2f dB  analytic=%+5.2f dB  %s\n",
+                wdfLift, anLift, std::abs(wdfLift - anLift) < 0.2 ? "[chowdsp OK]" : "[chowdsp DIVERGES]");
+}
+
+// DIAG: drive EQP1AChannel's WDF tree DIRECTLY (no PultecEQP1A wrapper, no
+// oversampler) with manually-set flat+8kHz+BW0.9 component values, to confirm
+// the +5.46 dB artifact is in the tree itself.
+void diag_channel_direct()
+{
+    std::printf("\n== DIAG: EQP1AChannel tree directly @60Hz ==\n");
+    const double fs = 192000.0;
+
+    auto measure = [&](double rbh1, double rbh2) {
+        EQP1AChannel ch;
+        ch.prepare(fs);
+        ch.C1.setCapacitanceValue(9.378e-9);
+        ch.L1.setInductanceValue(0.04220);
+        ch.RQ.setResistanceValue(200.0);
+        ch.RBoostHi1.setResistanceValue(rbh1);
+        ch.RBoostHi2.setResistanceValue(rbh2);
+        ch.RCutHi1.setResistanceValue(1000.0);
+        ch.RCutHi2.setResistanceValue(1.0);
+        ch.CHiCut.setCapacitanceValue(68e-9);
+        ch.LoFreqC2.setCapacitanceValue(785e-9);
+        ch.LoFreqC1.setCapacitanceValue(785e-9 / 30.0);
+        ch.RBoostLo.setResistanceValue(1.0);
+        ch.RCutLo.setResistanceValue(1.0);
+
+        double phase = 0.0, inc = 2.0 * M_PI * 60.0 / fs, sumSq = 0.0, inSq = 0.0;
+        const int warm = 200000, meas = 200000;
+        for (int i = 0; i < warm + meas; ++i)
+        {
+            double x = std::sin(phase); phase += inc;
+            double y = ch.processSample(x);
+            if (i >= warm) { sumSq += y * y; inSq += x * x; }
+        }
+        return 20.0 * std::log10(std::sqrt(sumSq / std::max(inSq, 1e-30)));
+    };
+
+    const double g0 = measure(12000.0, 1.0);
+    const double g6 = measure(7500.0, 4500.0);
+    std::printf("  RCutHi2=1 (correct cut=0):  boost0=%+6.2f  boost6=%+6.2f  lift=%+5.2f dB  (SPICE ~0)\n",
+                g0, g6, g6 - g0);
+
+    // Reproduce the PultecEQP1A bug: RCutHi2 stuck at constructor default 1000.
+    auto measureBug = [&](double rbh1, double rbh2) {
+        EQP1AChannel ch; ch.prepare(fs);
+        ch.C1.setCapacitanceValue(9.378e-9); ch.L1.setInductanceValue(0.04220);
+        ch.RQ.setResistanceValue(200.0);
+        ch.RBoostHi1.setResistanceValue(rbh1); ch.RBoostHi2.setResistanceValue(rbh2);
+        ch.RCutHi1.setResistanceValue(1000.0); ch.RCutHi2.setResistanceValue(1000.0); // BUG: stuck default
+        ch.CHiCut.setCapacitanceValue(68e-9);
+        ch.LoFreqC2.setCapacitanceValue(785e-9); ch.LoFreqC1.setCapacitanceValue(785e-9/30.0);
+        ch.RBoostLo.setResistanceValue(1.0); ch.RCutLo.setResistanceValue(1.0);
+        double phase=0, inc=2*M_PI*60.0/fs, s=0, in=0;
+        for (int i=0;i<400000;++i){ double x=std::sin(phase); phase+=inc; double y=ch.processSample(x);
+            if(i>=200000){s+=y*y; in+=x*x;} }
+        return 20.0*std::log10(std::sqrt(s/std::max(in,1e-30)));
+    };
+    const double b0 = measureBug(12000.0, 1.0), b6 = measureBug(7500.0, 4500.0);
+    std::printf("  RCutHi2=1000 (the bug):     boost0=%+6.2f  boost6=%+6.2f  lift=%+5.2f dB  <-- artifact\n",
+                b0, b6, b6 - b0);
+
+    // Compare adapted port impedances: PultecEQP1A (incremental updates) vs a
+    // fresh channel set directly, both at boost6, to find the divergent element.
+    std::printf("  -- port-impedance (wdf.R) comparison @ boost6 --\n");
+    {
+        PultecEQP1A eq; eq.prepare(48000.0, 512);
+        eq.setTransformerEnabled(false);
+        eq.setLfBoostDb(0); eq.setLfAttenDb(0);
+        eq.setHfFreqIndex(3); eq.setHfBoostDb(6.0f); eq.setHfBandwidth(0.9f);
+        eq.setHfAttenFreqIndex(2); eq.setHfAttenDb(0);
+        eq.dbgDumpChanL("PultecEQP1A b6");
+        PultecEQP1A eq0; eq0.prepare(48000.0, 512);
+        eq0.setTransformerEnabled(false);
+        eq0.setLfBoostDb(0); eq0.setLfAttenDb(0);
+        eq0.setHfFreqIndex(3); eq0.setHfBoostDb(0.0f); eq0.setHfBandwidth(0.9f);
+        eq0.setHfAttenFreqIndex(2); eq0.setHfAttenDb(0);
+        eq0.dbgDumpChanL("PultecEQP1A b0");
+    }
+    {
+        EQP1AChannel ch; ch.prepare(fs);
+        ch.C1.setCapacitanceValue(9.378e-9); ch.L1.setInductanceValue(0.04220);
+        ch.RQ.setResistanceValue(200.0);
+        ch.RBoostHi1.setResistanceValue(7500.0); ch.RBoostHi2.setResistanceValue(4500.0);
+        ch.RCutHi1.setResistanceValue(1000.0); ch.RCutHi2.setResistanceValue(1.0);
+        ch.CHiCut.setCapacitanceValue(68e-9);
+        ch.LoFreqC2.setCapacitanceValue(785e-9); ch.LoFreqC1.setCapacitanceValue(785e-9/30.0);
+        ch.RBoostLo.setResistanceValue(1.0); ch.RCutLo.setResistanceValue(1.0);
+        ch.dbgDumpR("fresh-direct");
+    }
+}
+
 #endif // PULTEC_CORE_AVAILABLE
 
 } // namespace
@@ -1569,6 +1774,10 @@ int main()
     test_xfmr_isolated_response();
     diag_xfmr_artifact_ab();
     diag_artifact_localize();
+    diag_artifact_nodewalk();
+    diag_artifact_direct_nooversampling();
+    diag_chowdsp_core_isolation();
+    diag_channel_direct();
 #endif
 
     std::printf("\n----------------\n");
