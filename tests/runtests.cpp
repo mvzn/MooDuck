@@ -655,9 +655,13 @@ void test_pultec_frequency_response()
         // Wide bleeds further into LF: 4 kHz is closer to peak under wide
         expectTrue(wide_4k - base_4k > 4.0,
             "T5: wide BW — 4 kHz boosted > 4 dB (broad shelf-like character)");
-        // At moderate boost both settings are broad; expect 2 kHz still meaningfully lifted
-        expectTrue(wide_2k - base_2k > 3.0,
-            "T5: wide BW @ moderate gain — 2 kHz boosted > 3 dB (shelfy skirt)");
+        // At moderate boost both settings are broad; expect 2 kHz still meaningfully
+        // lifted, and the wide skirt reaches lower than the narrow one.  (Threshold
+        // recalibrated 2026-05-30 from >3 dB to >2 dB: once the HF pots are correctly
+        // initialised in prepare() — fixing the boost=0 baseline bug — the corrected
+        // model's wide-BW 2 kHz skirt is ~2.3 dB, validated against the ngspice oracle.)
+        expectTrue(wide_2k - base_2k > 2.0 && wide_2k > narrow_2k,
+            "T5: wide BW @ moderate gain — 2 kHz skirt > 2 dB and wider than narrow");
     }
 
     // ---- Test 6: HF boost at max gain (+16 dB) — sharp Q character emerges ----
@@ -1739,6 +1743,32 @@ void diag_channel_direct()
     }
 }
 
+// Regression (2026-05-30): engaging HF boost must NOT lift the low end.  The
+// passive network is flat at 60 Hz across the whole HF-boost range (verified
+// against the ngspice oracle in eq-research/spice/).  A prior bug left RBoostHi2
+// (and RCutHi2) uninitialised at HF-boost = 0, distorting the boost=0 baseline
+// and producing a spurious ~+5.5 dB 60 Hz rise the instant any boost was dialled
+// in; this guards the prepare()-time pot initialisation that fixed it.
+void test_pultec_hf_boost_no_lf_coupling()
+{
+    std::printf("\n== Pultec HF-boost LF-coupling regression ==\n");
+    auto cfg = [](float boost) {
+        return [boost](PultecEQP1A& e) {
+            e.setLfBoostDb(0); e.setLfAttenDb(0);
+            e.setHfFreqIndex(3); e.setHfBoostDb(boost); e.setHfBandwidth(0.9f);
+            e.setHfAttenFreqIndex(2); e.setHfAttenDb(0);
+        };
+    };
+    const double base60 = freshMeasure(cfg(0.0f), 60.0);
+    for (float b : { 3.0f, 6.0f, 12.0f, 16.0f })
+    {
+        const double g60 = freshMeasure(cfg(b), 60.0);
+        std::printf("  HF boost %+5.1f dB: 60 Hz lift = %+5.2f dB\n", b, g60 - base60);
+        expectTrue(std::abs(g60 - base60) < 0.5,
+                   "T: HF boost does not couple to 60 Hz (< 0.5 dB)");
+    }
+}
+
 #endif // PULTEC_CORE_AVAILABLE
 
 } // namespace
@@ -1772,6 +1802,7 @@ int main()
     diag_hfboost_vs_attensel();
     diag_hfboost_vs_bw_and_gain();
     test_xfmr_isolated_response();
+    test_pultec_hf_boost_no_lf_coupling();
     diag_xfmr_artifact_ab();
     diag_artifact_localize();
     diag_artifact_nodewalk();

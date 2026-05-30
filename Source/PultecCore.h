@@ -168,15 +168,15 @@ struct EQP1AChannel
     static constexpr double RQ_MAX       =  2.0e3;   // HF BQ pot max (Ω)
     static constexpr double RQ_OFFSET    =  100.0;   // fixed series offset (Ω)
     static constexpr double RATIO_L1_C1  =  4.5e6;   // L/C ratio for HF LC pair (H/F = Ω²); Z0=√RATIO≈2121Ω
-    // Insertion-loss compensation.  The original 15.4882 figure inherited
-    // from the ABSounds reference left a constant ~-0.65 dB offset across
-    // the band at zero settings (see PULTEC_DEV.md, "Open issue - baseline
-    // frequency response", root cause #2).  Combined with 4x oversampling
-    // (which removes the HF Nyquist-warp droop) and a small downward trim
-    // to centre the residual ~+0.24 dB tank bump at the 8 kHz boost corner,
-    // 16.598 = 15.4882 * 10^(0.6/20) lands the baseline within +/- 0.2 dB
-    // of 0 dB at 20 Hz / 200 Hz / 1 kHz / 8 kHz and +/- 1 dB out to 20 kHz.
-    static constexpr double MAKEUP_GAIN  =  16.598;
+    // Insertion-loss compensation.  Once all the HF pots are correctly
+    // initialised in prepare() (RBoostHi2 / RQ / RCutHi2 — see the note there),
+    // the passive insertion loss is dead-flat across the band (verified against
+    // the ngspice oracle in eq-research/spice/: a constant ~-23.8 dB).  The prior
+    // 16.598 figure had been trimmed +0.6 dB to compensate the *buggy* baseline
+    // (RBoostHi2 stuck at 12 kOhm); with the baseline corrected, 15.47 re-centres
+    // it to 0 dB (within +/- 0.2 dB at 20 Hz / 200 Hz / 1 kHz / 8 kHz, +/- 1 dB to
+    // 20 kHz).  Note this is essentially the original ABSounds 15.4882 value.
+    static constexpr double MAKEUP_GAIN  =  15.47;
 
     // -----------------------------------------------------------------------
     //  One-port WDF elements
@@ -386,25 +386,29 @@ public:
         hfCutL.reset();
         hfCutR.reset();
         updateLfCoefficients();
-        // Sync LF pot resistors with their default parameter values (both = 0 dB →
-        // R = 1 Ω via the ABSounds convention).  The EQP1AChannel constructor
-        // initialises them to RMAX; without this call they'd stay at RMAX and the
-        // MAKEUP_GAIN calibration would be wrong whenever setLfFreqIndex() is called
-        // before setLfBoostDb/setLfAttenDb.
+        // Sync every variable pot resistor with its default (zero-setting) value.
+        // The EQP1AChannel constructor initialises each pot resistor to its RMAX,
+        // which is NOT the 0-dB value for the complementary pots; without these
+        // calls a pot whose setter never runs (or early-returns because the value
+        // already equals its default) stays at RMAX and corrupts the baseline.
         //
-        // KNOWN ISSUE (root-caused 2026-05-30): the HF-boost pot (RBoostHi2) and Q
-        // pot (RQ) are NOT initialised here, so at HF-boost = 0 — where
-        // setHfBoostDb(0) early-returns — RBoostHi2 stays at RBOOSTHI_MAX (12 kΩ)
-        // instead of its correct ~0 Ω.  That distorts the boost=0 baseline and is the
-        // cause of the spurious ~+5.5 dB 60 Hz rise when any HF boost is dialled in
-        // (the real circuit is flat at 60 Hz per the ngspice oracle in
-        // eq-research/spice/).  Simply adding updateHfBoost()/updateHfBQ() here fixes
-        // the coupling but breaks the flat baseline, because MAKEUP_GAIN (16.598) was
-        // calibrated around this buggy default state.  The proper fix is to init the
-        // pots AND re-derive the baseline calibration against the oracle — tracked as
-        // a follow-up; left as-is here to keep the calibrated baseline shippable.
+        // This previously bit the HF section (root-caused 2026-05-30 against the
+        // ngspice oracle in eq-research/spice/): at HF-boost = 0, setHfBoostDb(0)
+        // early-returns, so RBoostHi2 stayed at RBOOSTHI_MAX (12 kΩ) instead of ~0 Ω,
+        // distorting the boost=0 baseline and producing a spurious ~+5.5 dB 60 Hz
+        // rise the instant any boost was dialled in.  RCutHi2 had the same latent
+        // problem (stuck at 1 kΩ instead of ~0).  Initialising all of them makes the
+        // passive baseline dead-flat (per the oracle), which is why MAKEUP_GAIN was
+        // re-tuned to match the corrected insertion loss.
         updateLfBoost();
         updateLfCut();
+        updateHfBoost();
+        updateHfBQ();
+        // RCutHi1/RCutHi2 are not driven by a pot setter (the HF cut shelf is applied
+        // by the hfCut biquad); the WDF cut branch is held at its 0-dB reference, so
+        // sync RCutHi2 to its 0-dB value (~0 Ω) rather than the RMAX default.
+        chanL.RCutHi2.setResistanceValue (1.0);
+        chanR.RCutHi2.setResistanceValue (1.0);
         updateHfBoostCoefficients();
         updateHfCutCoefficients();
     }
