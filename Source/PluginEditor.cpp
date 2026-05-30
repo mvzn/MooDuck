@@ -279,50 +279,66 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
             audioProcessor.apvts, "bandScale" + juce::String(i), bandScaleSliders[i]);
     }
 
-    // ----- Post-ducking EQ group -----
-    setupGroup(eqGroup, "Post-Ducking EQ");
+    // ----- Pultec EQP-1A group -----
+    setupGroup(pultecGroup, "Pultec EQP-1A");
 
-    const juce::String eqLabelsText[] = {
-        "Low Hz", "Low dB", "Mid Hz", "Mid dB", "Mid Q", "Hi Hz", "Hi dB"
+    // Real EQP-1A front-panel terminology: LF Sel / LF Boost / LF Atten / HF Sel /
+    // HF Boost / Bandwidth / Atten Sel / HF Atten. Avoids the prior "HF Atten Hz"
+    // ambiguity (the Atten Sel switch picks the cut shelf corner, not the boost band).
+    const juce::String pultecLabelsText[8] = {
+        "LF Sel", "LF Boost", "LF Atten", "HF Sel", "HF Boost", "Bandwidth", "Atten Sel", "HF Atten"
     };
-    const juce::String eqIds[] = {
-        "eqLowFreq", "eqLowGain", "eqMidFreq", "eqMidGain", "eqMidQ", "eqHighFreq", "eqHighGain"
+    const juce::String pultecIds[8] = {
+        "pultecLfFreq", "pultecLfBoost", "pultecLfAtten",
+        "pultecHfFreq", "pultecHfBoost", "pultecHfBw", "pultecHfAttenFreq", "pultecHfAtten"
     };
-    const juce::String eqSuffix[] = { " Hz", " dB", " Hz", " dB", "", " Hz", " dB" };
-    const int          eqDecimals[] = { 0, 1, 0, 1, 2, 0, 1 };
+    // LF/HF/Atten Sel are stepped Int params (Hz selector indices). Boost/Atten are dB.
+    // Bandwidth is a 0–1 ratio (0=narrow, 1=wide).
+    const juce::String pultecSuffix[8]  = { "", " dB", " dB", "", " dB", "", "", " dB" };
+    const int          pultecDecimals[8] = { 0,  1,     1,    0,  1,     2,  0,  1     };
+    const juce::String pultecTips[8] = {
+        "LF Selector (CPS): 20 / 30 / 40 / 60 / 100.",
+        "LF passive shelf boost (0–16 dB).",
+        "LF cut amount (0–16 dB). Combine with LF Boost for the Pultec ‘low end trick’.",
+        "HF Selector (KCPS): 3 / 4 / 5 / 8 / 10 / 12 / 16.",
+        "HF passive resonant peak boost (0–16 dB).",
+        "Bandwidth of HF peak: 0 = narrow (high-Q), 1 = wide (broad shelf).",
+        "Atten Selector (KCPS): 5 / 10 / 20. Picks the HF cut shelf corner. "
+        "Note: even at HF Atten = 0 dB this selector colours the passive network — "
+        "20 KCPS is flattest, lower positions add gentle HF roll-off.",
+        "HF shelf cut amount (0–14 dB)."
+    };
 
-    // EQ gain knobs (low, mid, high) are bipolar in dB, centred at 0.
-    const bool eqGainIndex[] = { false, true, false, true, false, false, true };
-    const juce::String eqTips[] = {
-        "Low-shelf corner frequency (Hz).",
-        "Low-shelf gain (dB). Centred at 0; amber past extreme.",
-        "Mid bell centre frequency (Hz).",
-        "Mid bell gain (dB). Centred at 0; amber past extreme.",
-        "Mid bell Q — narrower at higher values.",
-        "High-shelf corner frequency (Hz).",
-        "High-shelf gain (dB). Centred at 0; amber past extreme."
-    };
-
-    for (int i = 0; i < 7; ++i)
+    for (int i = 0; i < 8; ++i)
     {
-        mdLookAndFeel.applyRotaryConfiguration(eqSliders[i]);
-        if (eqGainIndex[i])
-            mdLookAndFeel.applyBipolarBehavior(eqSliders[i], 0.0);
-        eqSliders[i].setTextBoxStyle(juce::Slider::TextBoxBelow, false, 70, 20);
-        styleValueBox(eqSliders[i]);
-        eqSliders[i].setTextValueSuffix(eqSuffix[i]);
-        eqSliders[i].setNumDecimalPlacesToDisplay(eqDecimals[i]);
-        eqSliders[i].setTooltip(eqTips[i]);
-        addAndMakeVisible(eqSliders[i]);
+        mdLookAndFeel.applyRotaryConfiguration(pultecSliders[i]);
+        pultecSliders[i].setTextBoxStyle(juce::Slider::TextBoxBelow, false, 70, 20);
+        styleValueBox(pultecSliders[i]);
+        pultecSliders[i].setTextValueSuffix(pultecSuffix[i]);
+        pultecSliders[i].setNumDecimalPlacesToDisplay(pultecDecimals[i]);
+        pultecSliders[i].setTooltip(pultecTips[i]);
+        addAndMakeVisible(pultecSliders[i]);
 
-        eqLabels[i].setText(eqLabelsText[i], juce::dontSendNotification);
-        eqLabels[i].setJustificationType(juce::Justification::centred);
-        eqLabels[i].setColour(juce::Label::textColourId, juce::Colours::white);
-        addAndMakeVisible(eqLabels[i]);
+        pultecLabels[i].setText(pultecLabelsText[i], juce::dontSendNotification);
+        pultecLabels[i].setJustificationType(juce::Justification::centred);
+        pultecLabels[i].setColour(juce::Label::textColourId, juce::Colours::white);
+        addAndMakeVisible(pultecLabels[i]);
 
-        eqAttachments[i] = std::make_unique<SliderAttachment>(
-            audioProcessor.apvts, eqIds[i], eqSliders[i]);
+        pultecAttachments[i] = std::make_unique<SliderAttachment>(
+            audioProcessor.apvts, pultecIds[i], pultecSliders[i]);
     }
+
+    pultecSatButton.setButtonText("Sat");
+    pultecSatButton.setTooltip("12AX7 triode saturation on the Pultec makeup-amp stage (4× oversampled).");
+    addAndMakeVisible(pultecSatButton);
+    pultecSatAttachment = std::make_unique<ButtonAttachment>(
+        audioProcessor.apvts, "pultecSatEnable", pultecSatButton);
+
+    pultecBypassButton.setButtonText("Bypass");
+    pultecBypassButton.setTooltip("Bypass the Pultec EQ entirely (pure passthrough — no oversampling, no WDF).");
+    addAndMakeVisible(pultecBypassButton);
+    pultecBypassAttachment = std::make_unique<ButtonAttachment>(
+        audioProcessor.apvts, "pultecBypass", pultecBypassButton);
 
     // Listen for Hard Duck / Xtreme Lookahead so we can freeze + relabel the knobs
     // they override (ratio and lookahead respectively).
@@ -707,26 +723,35 @@ void MaybeDuckAudioProcessorEditor::resized()
     // We don't claim any vertical space — the EQ section moves up to fill the gap.
     // Children remain invisible so the DSP keeps reading their (neutral) values.
 
-    // --- Post-ducking EQ group: 7 knobs, MAAG-style zig-zag --------------------
-    constexpr int eqRowH    = 96;   // per-knob block height (caption + knob); also the knob size
-    constexpr int eqStagger = 34;   // zig-zag offset: alternate knobs drop by this
-    constexpr int eqGroupH  = kGroupTitleH + eqRowH + eqStagger + 14;
-    auto eqArea = area.removeFromTop(eqGroupH);
-    eqGroup.setBounds(eqArea);
+    // --- Pultec EQP-1A group: 8 knobs in a straight row + Sat toggle ----------
+    // Layout L→R: LF Freq · LF Boost · LF Atten · HF Freq · HF Boost · HF BW · HF Atten Hz · HF Atten · [Sat]
+    constexpr int pultecRowH   = 96;
+    constexpr int pultecGroupH = kGroupTitleH + pultecRowH + 14;
+    auto pultecArea = area.removeFromTop(pultecGroupH);
+    pultecGroup.setBounds(pultecArea);
 
-    auto eqInner = eqArea.reduced(8, 6);
-    eqInner.removeFromTop(kGroupTitleH - 8);
-    auto eqKnobs = eqInner.removeFromTop(eqRowH + eqStagger);   // band including the zig-zag room
-    const int eqColW = eqKnobs.getWidth() / 7;   // 7 columns -> width derived
-    for (int i = 0; i < 7; ++i)
+    auto pultecInner = pultecArea.reduced(8, 6);
+    pultecInner.removeFromTop(kGroupTitleH - 8);
+    auto pultecRow = pultecInner.removeFromTop(pultecRowH);
+
+    // Reserve a 72 px slot at the right for the two toggle buttons (Bypass + Sat),
+    // stacked vertically. Remaining width is split across the 8 knobs.
+    constexpr int togglesSlotW = 72;
+    auto togglesCol = pultecRow.removeFromRight(togglesSlotW).reduced(4);
+    const int pultecColW = pultecRow.getWidth() / 8;
+    for (int i = 0; i < 8; ++i)
     {
-        auto col = eqKnobs.removeFromLeft(eqColW).reduced(4);
-        // Zig-zag: odd columns drop by eqStagger, even columns ride high.
-        col.removeFromTop((i % 2 == 1) ? eqStagger : 0);
-        col = col.removeFromTop(eqRowH);
-        eqLabels[i].setBounds(col.removeFromTop(kKnobLabelH));  // <- kKnobLabelH (caption height)
-        eqSliders[i].setBounds(col);
+        auto col = pultecRow.removeFromLeft(pultecColW).reduced(4);
+        pultecLabels[i].setBounds(col.removeFromTop(kKnobLabelH));
+        pultecSliders[i].setBounds(col);
     }
+    // Stack: Bypass on top, Sat below. 24 px tall each with 6 px gap, centred vertically.
+    const int btnH = 24;
+    const int gap  = 6;
+    auto btnArea = togglesCol.withSizeKeepingCentre(togglesCol.getWidth(), btnH * 2 + gap);
+    pultecBypassButton.setBounds(btnArea.removeFromTop(btnH));
+    btnArea.removeFromTop(gap);
+    pultecSatButton   .setBounds(btnArea.removeFromTop(btnH));
 
     // --- Latency readout: bottom-left corner of the editor, engraved into the
     // chassis (mirrors the wordmark at the bottom-right). Offset right of the

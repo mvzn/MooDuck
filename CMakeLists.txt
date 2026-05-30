@@ -58,6 +58,10 @@ target_compile_definitions(MaybeDuck PRIVATE
     JUCE_STRICT_REFCOUNTEDPOINTER=1
 )
 
+target_include_directories(MaybeDuck PRIVATE
+    Source/vendor
+)
+
 target_link_libraries(MaybeDuck
     PRIVATE
         MaybeDuckBinaryData

@@ -22,7 +22,7 @@ DEFS := \
     -DJUCE_MODULE_AVAILABLE_juce_audio_formats=1 \
     -DJUCE_MODULE_AVAILABLE_juce_dsp=1
 
-INCLUDES := -I. -I$(JUCE_MODULES)
+INCLUDES := -I. -I$(JUCE_MODULES) -I../Source -I../Source/vendor
 
 LDLIBS := -lpthread -ldl -lrt -lcurl
 
