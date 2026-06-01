@@ -280,7 +280,7 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
     }
 
     // ----- Pultec EQP-1A group -----
-    setupGroup(pultecGroup, "Pultec EQP-1A");
+    setupGroup(pultecGroup, "Post-Ducking PulEQ");
 
     // Real EQP-1A front-panel terminology: LF Sel / LF Boost / LF Atten / HF Sel /
     // HF Boost / Bandwidth / Atten Sel / HF Atten. Avoids the prior "HF Atten Hz"

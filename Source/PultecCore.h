@@ -32,7 +32,9 @@
 #include "chowdsp_wdf/chowdsp_wdf.h"
 
 #include <cmath>
+#include <cstring>
 #include <tuple>
+#include <vector>
 
 namespace wdft = chowdsp::wdft;
 
@@ -376,6 +378,19 @@ public:
         oversampler.initProcessing (static_cast<size_t> (maxBlockSize));
         oversampler.reset();
 
+        // Dry-path latency compensation: size a delay ring to the oversampler's
+        // group delay (reported at host rate) so the bypass crossfade is time-
+        // aligned. Reset the mix to match the current bypass target (settled).
+        latencySamples = static_cast<int> (std::lround (oversampler.getLatencyInSamples()));
+        latencySamples = juce::jmax (0, latencySamples);
+        dryDelayL.assign (static_cast<size_t> (latencySamples), 0.0f);
+        dryDelayR.assign (static_cast<size_t> (latencySamples), 0.0f);
+        dryDelayPos = 0;
+        dryScratchL.assign (static_cast<size_t> (maxBlockSize), 0.0f);
+        dryScratchR.assign (static_cast<size_t> (maxBlockSize), 0.0f);
+        bypassMix = bypass ? 1.0f : 0.0f;
+        bypassInc = 1.0f / juce::jmax (1.0f, static_cast<float> (0.010 * sr)); // ~10 ms
+
         chanL.prepare (sampleRate);
         chanR.prepare (sampleRate);
 
@@ -495,7 +510,15 @@ public:
      */
     void processSample (float& left, float& right) noexcept
     {
-        if (bypass) return;   // pure passthrough
+        const float target = bypass ? 1.0f : 0.0f;
+
+        // Fully bypassed and settled: pure passthrough. (Mono path has no
+        // oversampler, hence no latency to compensate.)
+        if (target == 1.0f && bypassMix == target)
+            return;
+
+        const float dryL = left;
+        const float dryR = right;
 
         // WDF EQ (LF + HF boost)
         double outL = chanL.processSample (static_cast<double> (left));
@@ -512,8 +535,13 @@ public:
             outR = xfmrR.process (outR) / xfmrNorm;
         }
 
-        left  = static_cast<float> (outL);
-        right = static_cast<float> (outR);
+        // Crossfade dry/wet so a bypass toggle ramps over ~10 ms instead of
+        // stepping. When settled active (bypassMix == 0) this is a no-op blend.
+        bypassMix = (target > bypassMix) ? juce::jmin (target, bypassMix + bypassInc)
+                                         : juce::jmax (target, bypassMix - bypassInc);
+        const float wet = 1.0f - bypassMix;
+        left  = wet * static_cast<float> (outL) + bypassMix * dryL;
+        right = wet * static_cast<float> (outR) + bypassMix * dryR;
     }
 
     /** Process a stereo block through the 4x-oversampled EQP-1A network.
@@ -523,8 +551,49 @@ public:
      */
     void processBlock (float* left, float* right, int numSamples) noexcept
     {
-        if (bypass) return;   // pure passthrough — no oversampling overhead
+        const float target          = bypass ? 1.0f : 0.0f;
+        const bool  transitioning   = (bypassMix != target);
 
+        // Always push the incoming dry signal through the latency-comp delay
+        // ring so its history stays valid; capture the delayed dry we'll need
+        // for the bypassed / crossfade output. Reads input[n-L] without yet
+        // touching left/right (the wet path still needs the raw input below).
+        if (transitioning || target == 1.0f)
+            captureDelayedDry (left, right, numSamples);
+        else
+            advanceDelayRing  (left, right, numSamples);
+
+        // Fully bypassed and settled: output the latency-matched dry signal.
+        // (Same L-sample delay as the wet path, so toggling causes no time jump.)
+        if (target == 1.0f && ! transitioning)
+        {
+            std::memcpy (left,  dryScratchL.data(), sizeof (float) * static_cast<size_t> (numSamples));
+            std::memcpy (right, dryScratchR.data(), sizeof (float) * static_cast<size_t> (numSamples));
+            return;
+        }
+
+        // Run the wet (oversampled EQ) path in place on left/right.
+        processWetBlock (left, right, numSamples);
+
+        // Fully active and settled: wet output is already in place.
+        if (target == 0.0f && ! transitioning)
+            return;
+
+        // Crossfade: ramp bypassMix toward target, blending delayed dry vs wet.
+        for (int n = 0; n < numSamples; ++n)
+        {
+            bypassMix = (target > bypassMix) ? juce::jmin (target, bypassMix + bypassInc)
+                                             : juce::jmax (target, bypassMix - bypassInc);
+            const float wet = 1.0f - bypassMix;
+            left[n]  = wet * left[n]  + bypassMix * dryScratchL[static_cast<size_t> (n)];
+            right[n] = wet * right[n] + bypassMix * dryScratchR[static_cast<size_t> (n)];
+        }
+    }
+
+private:
+    // Wet EQ path: 4x oversample -> WDF + HF-cut biquad + transformer -> down.
+    void processWetBlock (float* left, float* right, int numSamples) noexcept
+    {
         // Wrap raw pointers in a non-owning AudioBlock
         float* channels[2] = { left, right };
         juce::dsp::AudioBlock<float> block (channels, 2, static_cast<size_t> (numSamples));
@@ -568,6 +637,44 @@ public:
         oversampler.processSamplesDown (block);
     }
 
+    // Push the block's dry samples through the latency-comp ring, writing the
+    // delayed output (input[n-L]) into dryScratch. With L == 0 the dry signal
+    // passes straight through (no oversampler latency to compensate).
+    void captureDelayedDry (const float* left, const float* right, int numSamples) noexcept
+    {
+        if (latencySamples == 0)
+        {
+            std::memcpy (dryScratchL.data(), left,  sizeof (float) * static_cast<size_t> (numSamples));
+            std::memcpy (dryScratchR.data(), right, sizeof (float) * static_cast<size_t> (numSamples));
+            return;
+        }
+
+        for (int n = 0; n < numSamples; ++n)
+        {
+            const size_t p = static_cast<size_t> (dryDelayPos);
+            dryScratchL[static_cast<size_t> (n)] = dryDelayL[p];
+            dryScratchR[static_cast<size_t> (n)] = dryDelayR[p];
+            dryDelayL[p] = left[n];
+            dryDelayR[p] = right[n];
+            dryDelayPos = (dryDelayPos + 1) % latencySamples;
+        }
+    }
+
+    // Keep the delay ring primed when the dry output isn't needed (fully wet),
+    // so a later bypass fade starts with correct history. Cheap; no scratch write.
+    void advanceDelayRing (const float* left, const float* right, int numSamples) noexcept
+    {
+        if (latencySamples == 0) return;
+
+        for (int n = 0; n < numSamples; ++n)
+        {
+            const size_t p = static_cast<size_t> (dryDelayPos);
+            dryDelayL[p] = left[n];
+            dryDelayR[p] = right[n];
+            dryDelayPos = (dryDelayPos + 1) % latencySamples;
+        }
+    }
+
 private:
     // -----------------------------------------------------------------------
     //  State
@@ -594,6 +701,24 @@ private:
     bool   transformerEnabled = true;
     double xfmrNorm           = 1.0;   // in-band normalisation = nominalGain()
     int    diagOutput         = 0;     // 0 normal; 1 V(J), 2 V(R3), 3 Rout, 4 node6, 5 node7
+
+    // --- Bypass crossfade with dry-path latency compensation -----------------
+    // A hard bypass toggle hard-switches between the oversampler-delayed wet
+    // output and the raw dry input — two discontinuities at once (an amplitude
+    // /phase step AND an L-sample time jump from the oversampler group delay),
+    // which lands as a pop/click. Instead we:
+    //   1. delay the dry signal by the oversampler latency L so dry and wet are
+    //      time-aligned (both represent input[n-L]); and
+    //   2. crossfade a dry/wet mix over ~10 ms on every toggle.
+    // bypassMix: 0 = fully wet (active), 1 = fully dry (bypassed). `bypass` is
+    // the target the mix ramps toward. The dry delay ring is fed every block so
+    // its history is always valid the instant a fade begins.
+    float              bypassMix      = 0.0f;   // current mix (0 settled = active)
+    float              bypassInc      = 1.0f;   // per host-sample ramp step
+    int                latencySamples = 0;      // oversampler group delay (host rate)
+    int                dryDelayPos    = 0;      // ring write/read cursor
+    std::vector<float> dryDelayL, dryDelayR;    // dry latency-comp ring (size L)
+    std::vector<float> dryScratchL, dryScratchR; // per-block delayed-dry output
 
     inline double diagProbe (const EQP1AChannel& ch) const noexcept
     {
