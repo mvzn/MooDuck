@@ -147,6 +147,10 @@ private:
     juce::AudioBuffer<float> lookaheadBufL, lookaheadBufR;
     int prevLookaheadSamples = 0;
 
+    // Silence fed to the detector when no external sidechain is driving, so the
+    // duck stage passes the main through at unity instead of self-ducking it.
+    juce::AudioBuffer<float> scSilenceBuf;
+
     // Wideband mode (bypass crossover)
     DynamicsProcessor widebandProcessorL, widebandProcessorR;
 

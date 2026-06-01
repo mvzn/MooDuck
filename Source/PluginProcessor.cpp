@@ -385,6 +385,10 @@ void MaybeDuckAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
     lookaheadBufL.setSize(1, samplesPerBlock);
     lookaheadBufR.setSize(1, samplesPerBlock);
     prevLookaheadSamples = 0;
+
+    // Constant-silence detector source for the "sidechain disabled" passthrough.
+    scSilenceBuf.setSize(1, samplesPerBlock);
+    scSilenceBuf.clear();
     // Ramp time long enough to mask big jumps (e.g. moving from 0 to 16 ms) without
     // audible group-delay smear. 100 ms glides ~0.5 ms per 5 ms — well below the
     // perceptual threshold for time-domain warping.
@@ -559,8 +563,10 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         prevLatencyReported = newLatency;
     }
 
-    // Detector always reads sc_xn (the live SC source — external bus or live main alias).
-    // The processor uses sc_xn unconditionally so lookahead is honored even when no external SC is connected.
+    // Detector always reads sc_xn. When an external SC is active that's the live
+    // SC bus (so lookahead aligns the delayed main to it); when none is driving,
+    // sc_xn is fed silence (see scSilenceBuf above) so the curve produces no gain
+    // reduction and the main passes through at unity rather than self-ducking.
     DynamicsProcessorParameters dynParamsForProc = dynParams;
     dynParamsForProc.enable_sc = true;
     for (int b = 0; b < numBands; ++b)
@@ -589,11 +595,17 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     const float* liveMainL = mainInput.getReadPointer(0);
     const float* liveMainR = isStereo ? mainInput.getReadPointer(1) : liveMainL;
 
-    // SC always reads the LIVE signal so the detector sees future relative to the delayed main
-    const float* scLPtr = useSidechain ? scInput.getReadPointer(0) : liveMainL;
+    // With an external sidechain active the detector reads it LIVE (so it sees
+    // ahead of the lookahead-delayed main). With NO external SC driving, the
+    // detector reads SILENCE so the duck stage is a clean unity passthrough —
+    // disabling the sidechain must NOT self-duck the main toward the GR floor.
+    // (The FFT-conv path already feeds 0 to convScRing when !useSidechain; this
+    // makes the wideband / multiband / spectral paths behave consistently.)
+    const float* scSilencePtr = scSilenceBuf.getReadPointer(0);
+    const float* scLPtr = useSidechain ? scInput.getReadPointer(0) : scSilencePtr;
     const float* scRPtr = useSidechain
                           ? (scInput.getNumChannels() > 1 ? scInput.getReadPointer(1) : scLPtr)
-                          : liveMainR;
+                          : scSilencePtr;
 
     // --- Lookahead delay: always run so toggling lookahead is glitch-free.
     // Ramped delay length + fractional-sample interpolation means parameter changes
