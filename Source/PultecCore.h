@@ -348,6 +348,21 @@ public:
     void setTransformerEnabled (bool on) noexcept { transformerEnabled = on; }
     bool getTransformerEnabled () const noexcept   { return transformerEnabled; }
 
+    // -----------------------------------------------------------------------
+    //  Host latency reporting
+    // -----------------------------------------------------------------------
+    /** Constant processing latency (in HOST-rate samples) introduced by the 4x
+     *  oversampler's group delay. This is the SINGLE source of truth: the same
+     *  value drives the internal dry-path latency-comp delay ring (so the bypass
+     *  crossfade stays time-aligned) and is what PluginProcessor folds into the
+     *  latency reported to the host via setLatencySamples().
+     *
+     *  Valid only after prepare(); 0 before. The value is constant regardless of
+     *  the bypass state — when bypassed, the dry path is delayed by exactly this
+     *  many samples (see processBlock) — so it can be reported once at
+     *  prepareToPlay without any mid-stream setLatencySamples churn. */
+    int getLatencySamples () const noexcept { return latencySamples; }
+
     // Diagnostic: 0 = normal output; 1 = raw V(J); 2 = raw V(R3) (bypasses
     // HF-cut + transformer + makeup).  Used to localise the LF-coupling artifact.
     void setDiagOutput (int mode) noexcept { diagOutput = mode; }

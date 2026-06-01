@@ -189,6 +189,7 @@ private:
 
     int   prevConvSizeIdx     = 1; // 0=512, 1=1024, 2=2048
     int   prevLatencyReported = 0;
+    int   eqTriodeLatency     = 0; // constant Pultec EQ + triode oversampler delay (host-rate samples), set in prepareToPlay
     float convFrameGrDb       = 0.0f; // worst-case dB reduction from last conv frame
 
     void processConvFrame (int fftSize, int sizeIdx,

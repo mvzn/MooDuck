@@ -3,6 +3,7 @@
 #include <cmath>
 #include <algorithm>
 #include <array>
+#include <vector>
 
 /**
  * KorenTriode12AX7
@@ -56,6 +57,22 @@ public:
         computeLinearGain();
         buildAntiderivativeLut();
 
+        // Constant-latency support: size the dry-path delay ring to the
+        // oversampler's group delay (reported at host rate). When the stage is
+        // disabled we run the dry signal through this ring so its latency
+        // EXACTLY matches the enabled path (4.432673 -> lround = 4 samples at
+        // host rate), making the stage's reported latency independent of the
+        // enable toggle. This lets PluginProcessor fold the value into the
+        // latency reported once at prepareToPlay, with no mid-stream
+        // setLatencySamples churn (which many
+        // hosts treat as a buffer-flush -> click) when the sat toggle changes.
+        // This is the SINGLE source of truth for the triode's reported latency.
+        latencySamples = static_cast<int>(std::lround(oversampler.getLatencyInSamples()));
+        latencySamples = std::max(0, latencySamples);
+        for (auto& v : dryDelay)
+            v.assign(static_cast<size_t>(latencySamples), 0.0f);
+        dryDelayPos = 0;
+
         // DC blocker coefficient: alpha = exp(-2 pi fc / fs_host).
         // fc = 5 Hz; fs_host is the (un-oversampled) host rate.
         constexpr double kDcCutoffHz = 5.0;
@@ -89,6 +106,14 @@ public:
     }
 
     // -------------------------------------------------------------------------
+    // Constant processing latency (HOST-rate samples) introduced by the 4x
+    // oversampler group delay. Single source of truth: the same value sizes the
+    // dry-path delay ring used when disabled, so the stage's latency is the same
+    // whether enabled or not. Valid only after prepare(); 0 before.
+    // -------------------------------------------------------------------------
+    int getLatencySamples() const noexcept { return latencySamples; }
+
+    // -------------------------------------------------------------------------
     // Process stereo block in-place.
     // When enabled, upsamples 4x, runs Koren + asymmetric + ADAA per sample,
     // downsamples, applies DC blocker.
@@ -97,7 +122,19 @@ public:
     void processBlock(float* left, float* right, int numSamples)
     {
         if (!enabled)
-            return; // passthrough
+        {
+            // Disabled: pass the dry signal through a latency-matched delay so
+            // the stage's latency is CONSTANT (== enabled-path group delay),
+            // independent of the enable toggle. The ring is fed input[n] and
+            // emits input[n-L] in place. With L == 0 this is a no-op.
+            captureDelayedDry(left, right, numSamples);
+            return;
+        }
+
+        // Keep the dry-delay ring primed with this block's input BEFORE the
+        // oversampler consumes it in place, so that if the stage is later
+        // disabled the ring already holds valid recent history (no zero-burst).
+        advanceDryRing(left, right, numSamples);
 
         // Wrap raw pointers in a non-owning AudioBlock
         float* channels[2] = { left, right };
@@ -147,6 +184,51 @@ public:
     }
 
 private:
+    // -------------------------------------------------------------------------
+    // Dry-path latency compensation (used when disabled).
+    // captureDelayedDry: push input[n], emit input[n-L] in place (disabled path).
+    // advanceDryRing:    push input[n], discard output (keeps history fresh when
+    //                    enabled so a later disable resumes without a zero-burst).
+    // Both share a single ring cursor and step both channels per iteration, so
+    // the two channels stay phase-locked. `right` may alias `left` (mono
+    // fallback); the per-sample read-then-write order keeps that case correct.
+    // -------------------------------------------------------------------------
+    void captureDelayedDry(float* left, float* right, int numSamples) noexcept
+    {
+        if (latencySamples == 0) return;   // no oversampler delay to match
+
+        const bool mono = (right == left);
+        int pos = dryDelayPos;
+        for (int n = 0; n < numSamples; ++n)
+        {
+            const size_t p = static_cast<size_t>(pos);
+            const float inL = left[n];
+            const float inR = mono ? inL : right[n];
+            left[n] = dryDelay[0][p];
+            if (! mono) right[n] = dryDelay[1][p];
+            dryDelay[0][p] = inL;
+            dryDelay[1][p] = inR;
+            pos = (pos + 1) % latencySamples;
+        }
+        dryDelayPos = pos;
+    }
+
+    void advanceDryRing(const float* left, const float* right, int numSamples) noexcept
+    {
+        if (latencySamples == 0) return;
+
+        const bool mono = (right == left);
+        int pos = dryDelayPos;
+        for (int n = 0; n < numSamples; ++n)
+        {
+            const size_t p = static_cast<size_t>(pos);
+            dryDelay[0][p] = left[n];
+            dryDelay[1][p] = mono ? left[n] : right[n];
+            pos = (pos + 1) % latencySamples;
+        }
+        dryDelayPos = pos;
+    }
+
     // -------------------------------------------------------------------------
     // Koren 12AX7 model constants (from published curve fits, Norman Koren 1996)
     // -------------------------------------------------------------------------
@@ -207,6 +289,13 @@ private:
     double dcAlpha = 1.0;
     std::array<float, 2> dcPrevIn  {};
     std::array<float, 2> dcPrevOut {};
+
+    // Dry-path latency-comp ring (used when disabled) — constant 4-sample delay
+    // matching the oversampler group delay. Sized in prepare(). latencySamples is
+    // the single source of truth for the stage's reported host latency.
+    int                latencySamples = 0;
+    int                dryDelayPos    = 0;
+    std::array<std::vector<float>, 2> dryDelay {};
 
     // -------------------------------------------------------------------------
     // Koren plate-current equation (amps).

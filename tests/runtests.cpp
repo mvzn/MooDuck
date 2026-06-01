@@ -1769,6 +1769,102 @@ void test_pultec_hf_boost_no_lf_coupling()
     }
 }
 
+// =========================================================================
+// Host latency compensation (PDC)
+//
+// The plugin reports a CONSTANT processing latency to the host = the 4x
+// oversampler group delay of the Pultec EQ + the triode saturator. Each stage
+// runs a latency-matched dry-path delay when bypassed/disabled, so the reported
+// value never changes with the bypass/enable toggles (no mid-stream
+// setLatencySamples churn). These tests verify:
+//   1. getLatencySamples() == rounded oversampler getLatencyInSamples()
+//      (the single source of truth), and is non-trivial (> 0).
+//   2. With the EQ flat (0 dB everywhere), an input impulse emerges from the
+//      WET path delayed by ~getLatencySamples() (alignment, within rounding).
+//   3. The triode reports the SAME latency whether enabled or disabled, and
+//      when disabled an impulse is delayed by exactly that many samples (the
+//      dry path is a pure integer delay), so toggling sat causes no time jump.
+// =========================================================================
+
+// Returns the index of the largest-|value| sample in v (energy peak location).
+static int peakIndex(const std::vector<float>& v)
+{
+    int   bestI = 0;
+    float bestA = -1.0f;
+    for (int i = 0; i < (int) v.size(); ++i)
+    {
+        const float a = std::abs(v[i]);
+        if (a > bestA) { bestA = a; bestI = i; }
+    }
+    return bestI;
+}
+
+void test_latency_reporting()
+{
+    std::printf("\n== Host latency (PDC) — EQ + triode oversampler delay ==\n");
+
+    constexpr double fs    = 48000.0;
+    constexpr int    block = 512;
+    constexpr int    N     = block; // single block is plenty (>> latency)
+
+    // ---- Pultec EQ -------------------------------------------------------
+    {
+        PultecEQP1A eq;
+        eq.prepare(fs, block);
+        // Flat: every band at 0 dB so the wet path is ~unity-magnitude and the
+        // only bulk time shift is the oversampler group delay.
+        eq.setLfBoostDb(0); eq.setLfAttenDb(0);
+        eq.setHfBoostDb(0); eq.setHfBandwidth(0.3f); eq.setHfAttenDb(0);
+        eq.setBypass(false); // wet path active
+
+        const int reported = eq.getLatencySamples();
+        expectTrue(reported > 0,  "EQ: reported latency > 0 (oversampler delay present)");
+        // Source-of-truth: the reported value is exactly lround of the 4x
+        // polyphase-IIR half-band group delay (4.432673 -> 4 at host rate).
+        expectNear((double) reported, 4.0, 0.0,
+                   "EQ: reported latency == 4 host samples (lround 4.4327)");
+
+        // Impulse-alignment: an impulse at index 0 should peak at ~reported.
+        std::vector<float> L(N, 0.0f), R(N, 0.0f);
+        L[0] = R[0] = 1.0f;
+        eq.processBlock(L.data(), R.data(), N);
+        const int pk = peakIndex(L);
+        std::printf("  EQ wet impulse peak at sample %d (reported %d)\n", pk, reported);
+        // WDF + biquad add some phase, so allow +-2 samples around the report.
+        expectNear((double) pk, (double) reported, 2.0,
+                   "EQ: wet impulse aligned to reported latency (±2)");
+    }
+
+    // ---- Triode saturator -----------------------------------------------
+    {
+        KorenTriode12AX7 satOn, satOff;
+        satOn.prepare(fs, block);
+        satOff.prepare(fs, block);
+
+        const int lOn  = satOn.getLatencySamples();
+        const int lOff = satOff.getLatencySamples();
+        expectTrue(lOn > 0, "Triode: reported latency > 0 (oversampler delay present)");
+        expectTrue(lOn == lOff,
+                   "Triode: latency identical regardless of enable state (constant)");
+        expectNear((double) lOn, 4.0, 0.0,
+                   "Triode: reported latency == 4 host samples (lround 4.4327)");
+
+        // Disabled path is a pure integer delay line: impulse in -> impulse out
+        // at exactly `reported`.
+        satOff.setEnabled(false);
+        std::vector<float> L(N, 0.0f), R(N, 0.0f);
+        L[0] = R[0] = 1.0f;
+        satOff.processBlock(L.data(), R.data(), N);
+        const int pk = peakIndex(L);
+        std::printf("  Triode (disabled) impulse peak at sample %d (reported %d)\n", pk, lOff);
+        expectNear((double) pk, (double) lOff, 0.0,
+                   "Triode: disabled dry-delay aligns impulse exactly to reported latency");
+        // And the delayed sample must equal the input amplitude (pure delay, ~unity).
+        expectNear((double) L[lOff], 1.0, 1e-4,
+                   "Triode: disabled dry-delay is unity-gain (pure delay)");
+    }
+}
+
 #endif // PULTEC_CORE_AVAILABLE
 
 } // namespace
@@ -1803,6 +1899,7 @@ int main()
     diag_hfboost_vs_bw_and_gain();
     test_xfmr_isolated_response();
     test_pultec_hf_boost_no_lf_coupling();
+    test_latency_reporting();
     diag_xfmr_artifact_ab();
     diag_artifact_localize();
     diag_artifact_nodewalk();

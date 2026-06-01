@@ -438,8 +438,15 @@ void MaybeDuckAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
     std::fill(std::begin(spectralMags),   std::end(spectralMags),   0.0f);
     scSpectralHead = 0;
 
-    // Latency: report initial value based on current params
-    const int initLatency = getConvLatencySamples();
+    // Latency: report initial value based on current params.
+    // Constant part = Pultec EQ + triode 4x-oversampler group delay. Both stages
+    // hold a CONSTANT delay regardless of their bypass/enable state (each runs a
+    // latency-matched dry-path delay when off), so this contributes the same
+    // amount in every mode and can be reported once here — no mid-stream
+    // setLatencySamples churn. eqTriodeLatency caches it for the audio thread,
+    // which only re-reports when the (separately variable) FFT-conv hop changes.
+    eqTriodeLatency = pultec.getLatencySamples() + triode.getLatencySamples();
+    const int initLatency = eqTriodeLatency + getConvLatencySamples();
     setLatencySamples(initLatency);
     prevLatencyReported = initLatency;
 
@@ -584,7 +591,11 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     // an audible click. The smoothed delay tap above already absorbs the parameter glide;
     // the small host-comp drift that results from not reporting lookahead changes is
     // inaudible compared to the click that would otherwise occur on every knob movement.
-    const int newLatency = ((effMode == 2 && useConv) ? hopSize : 0);
+    // Total = constant EQ/triode oversampler delay (folded in at prepareToPlay,
+    // never changes mid-stream) + the variable FFT-conv hop. Only the hop part
+    // can change between transports; adding the constant keeps the reported
+    // total correct in every mode combination without extra churn.
+    const int newLatency = eqTriodeLatency + ((effMode == 2 && useConv) ? hopSize : 0);
     if (newLatency != prevLatencyReported)
     {
         setLatencySamples(newLatency);
