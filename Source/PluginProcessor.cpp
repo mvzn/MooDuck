@@ -369,6 +369,10 @@ void MaybeDuckAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
     mainBandBufR.setSize(numBands, samplesPerBlock);
     scBandBufL.setSize(numBands, samplesPerBlock);
     scBandBufR.setSize(numBands, samplesPerBlock);
+    // setSize leaves contents undefined; the crossover fully overwrites these
+    // before they are read, but clear so a re-prepare never carries stale audio.
+    mainBandBufL.clear(); mainBandBufR.clear();
+    scBandBufL.clear();   scBandBufR.clear();
 
     // Lookahead delay line: max 18 ms at current sample rate (slider goes 0-16 ms, +2 ms margin).
     // Sized for the worst case (the largest Xtreme step) so the wide range can be
@@ -438,6 +442,20 @@ void MaybeDuckAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
     const int initLatency = getConvLatencySamples();
     setLatencySamples(initLatency);
     prevLatencyReported = initLatency;
+
+    // Metering / monitoring state — reset so a re-prepare (e.g. sample-rate or
+    // block-size change) starts the meters clean rather than carrying stale dB.
+    convFrameGrDb            = 0.0f;
+    inputLevelSmoothedDb     = -100.0f;
+    sidechainLevelSmoothedDb = -100.0f;
+    gainReductionSmoothedDb  = 0.0f;
+    inputLevelDb.store(-100.0f);
+    sidechainLevelDb.store(-100.0f);
+    gainReductionDb.store(0.0f);
+    gainReductionAmountDb.store(0.0f);
+    cpuUsagePercent.store(0.0f);
+    processTimeMs.store(0.0f);
+    sidechainConnected.store(false);
 
     currentSampleRate.store(sampleRate);
     currentBlockSize.store(samplesPerBlock);
