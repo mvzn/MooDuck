@@ -385,10 +385,6 @@ void MaybeDuckAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
     lookaheadBufL.setSize(1, samplesPerBlock);
     lookaheadBufR.setSize(1, samplesPerBlock);
     prevLookaheadSamples = 0;
-
-    // Constant-silence detector source for the "sidechain disabled" passthrough.
-    scSilenceBuf.setSize(1, samplesPerBlock);
-    scSilenceBuf.clear();
     // Ramp time long enough to mask big jumps (e.g. moving from 0 to 16 ms) without
     // audible group-delay smear. 100 ms glides ~0.5 ms per 5 ms — well below the
     // perceptual threshold for time-domain warping.
@@ -516,6 +512,20 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     const int  activeConvFftSize = kConvSizes[sizeIdx];
     const int  hopSize           = activeConvFftSize / 2;
 
+    // --- Bus pointers + sidechain availability (needed up here to derive the
+    //     effective mode and the reported latency before the conv/latency logic).
+    juce::AudioBuffer<float> mainInput = getBusBuffer(buffer, true, 0);
+    juce::AudioBuffer<float> scInput   = getBusBuffer(buffer, true, 1);
+
+    const bool hasSidechainBus = getBusCount(true) > 1;
+    const bool scConnected     = hasSidechainBus && scInput.getNumChannels() > 0;
+    const bool useSidechain    = dynParams.enable_sc && scConnected;
+
+    // Spectral detection is meaningless without an external sidechain to analyse.
+    // With no SC driving, fall back to wideband so the duck stage runs as a plain
+    // self-detecting compressor on the main signal (+ the Pultec EQ downstream).
+    const int effMode = (! useSidechain && mode == 2) ? 0 : mode;
+
     // Reset conv state if user changed FFT size
     if (sizeIdx != prevConvSizeIdx)
     {
@@ -556,17 +566,16 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     // an audible click. The smoothed delay tap above already absorbs the parameter glide;
     // the small host-comp drift that results from not reporting lookahead changes is
     // inaudible compared to the click that would otherwise occur on every knob movement.
-    const int newLatency = ((mode == 2 && useConv) ? hopSize : 0);
+    const int newLatency = ((effMode == 2 && useConv) ? hopSize : 0);
     if (newLatency != prevLatencyReported)
     {
         setLatencySamples(newLatency);
         prevLatencyReported = newLatency;
     }
 
-    // Detector always reads sc_xn. When an external SC is active that's the live
-    // SC bus (so lookahead aligns the delayed main to it); when none is driving,
-    // sc_xn is fed silence (see scSilenceBuf above) so the curve produces no gain
-    // reduction and the main passes through at unity rather than self-ducking.
+    // Detector always reads sc_xn. With an external SC active that's the live SC
+    // bus (so lookahead aligns the delayed main to it); with none driving it is
+    // the live main (self-detection) so the stage behaves as a regular compressor.
     DynamicsProcessorParameters dynParamsForProc = dynParams;
     dynParamsForProc.enable_sc = true;
     for (int b = 0; b < numBands; ++b)
@@ -581,14 +590,6 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     for (int i = 0; i < StereoMultibandCrossover::numCrossoverPoints; ++i)
         crossover.setCrossoverFrequency(i, static_cast<double>(*pXover[i]));
 
-    // --- Bus pointers
-    juce::AudioBuffer<float> mainInput = getBusBuffer(buffer, true, 0);
-    juce::AudioBuffer<float> scInput   = getBusBuffer(buffer, true, 1);
-
-    const bool hasSidechainBus = getBusCount(true) > 1;
-    const bool scConnected     = hasSidechainBus && scInput.getNumChannels() > 0;
-    const bool useSidechain    = dynParams.enable_sc && scConnected;
-
     const int  numSamples = buffer.getNumSamples();
     const bool isStereo   = mainInput.getNumChannels() > 1;
 
@@ -596,16 +597,12 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     const float* liveMainR = isStereo ? mainInput.getReadPointer(1) : liveMainL;
 
     // With an external sidechain active the detector reads it LIVE (so it sees
-    // ahead of the lookahead-delayed main). With NO external SC driving, the
-    // detector reads SILENCE so the duck stage is a clean unity passthrough —
-    // disabling the sidechain must NOT self-duck the main toward the GR floor.
-    // (The FFT-conv path already feeds 0 to convScRing when !useSidechain; this
-    // makes the wideband / multiband / spectral paths behave consistently.)
-    const float* scSilencePtr = scSilenceBuf.getReadPointer(0);
-    const float* scLPtr = useSidechain ? scInput.getReadPointer(0) : scSilencePtr;
+    // ahead of the lookahead-delayed main). With NO external SC driving, it reads
+    // the live main — self-detection, i.e. a regular compressor on the main.
+    const float* scLPtr = useSidechain ? scInput.getReadPointer(0) : liveMainL;
     const float* scRPtr = useSidechain
                           ? (scInput.getNumChannels() > 1 ? scInput.getReadPointer(1) : scLPtr)
-                          : scSilencePtr;
+                          : liveMainR;
 
     // --- Lookahead delay: always run so toggling lookahead is glitch-free.
     // Ramped delay length + fractional-sample interpolation means parameter changes
@@ -649,7 +646,7 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
 
     float grAmountDb = 0.0f;
 
-    if (mode == 0)
+    if (effMode == 0)
     {
         // === WIDEBAND ===
         // Bypass crossover, single compressor pair. mainL/outL may share storage,
@@ -670,7 +667,7 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
             -static_cast<float>(widebandProcessorL.getGainReductionDb()),
             -static_cast<float>(widebandProcessorR.getGainReductionDb()));
     }
-    else if (mode == 1 || (mode == 2 && !useConv))
+    else if (effMode == 1 || (effMode == 2 && !useConv))
     {
         // === MULTIBAND (mode 1) or SPECTRAL without conv (mode 2 + !useConv) ===
         float* mbL[numBands], *mbR[numBands], *sbL[numBands], *sbR[numBands];
@@ -689,7 +686,7 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         // Spectral mode: per-band SC energy via FFT (zero-latency, look-back window).
         // scLPtr/scRPtr alias liveMain when no external SC, so this always has valid data.
         float perBandScLevel[numBands] = {};
-        if (mode == 2)
+        if (effMode == 2)
         {
             for (int n = 0; n < numSamples; ++n)
             {
@@ -744,7 +741,7 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
 
             for (int n = 0; n < numSamples; ++n)
             {
-                if (mode == 2)
+                if (effMode == 2)
                 {
                     const double scVal = static_cast<double>(perBandScLevel[b]);
                     bandProcessorsL[b].processSidechainInputSample(scVal);

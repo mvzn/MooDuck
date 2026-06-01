@@ -155,7 +155,7 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
     kneeSlider      .setTooltip("Width of the soft transition around the threshold (dB).");
     outputSlider    .setTooltip("Make-up gain applied after the dynamics stage (dB).");
 
-    sidechainButton .setTooltip("Use the external sidechain bus as the trigger. When off, ducking is disabled and the main passes through unaffected.");
+    sidechainButton .setTooltip("Use the external sidechain bus as the trigger. When off, the compressor self-detects the main input (spectral mode falls back to wideband).");
     softKneeButton  .setTooltip("Smooth the curve around the threshold instead of a hard corner.");
     limiterButton   .setTooltip("Hard Duck: brick-wall ducking (" + juce::String(juce::CharPointer_UTF8("\xE2\x88\x9E")) + ":1). Every dB the sidechain exceeds the threshold removes 1 dB from the main signal. Overrides the Ratio knob, which reads " + juce::String(juce::CharPointer_UTF8("\xE2\x88\x9E")) + ":1 while engaged.");
     xtremeLookaheadButton.setTooltip("Xtreme Lookahead: switches the Lookahead knob to a wide creative range (50 ms - 10 s) instead of the normal 0-16 ms. Adds large host latency — for offline/mix use, not tracking.");
