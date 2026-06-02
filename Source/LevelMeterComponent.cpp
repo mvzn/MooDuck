@@ -97,10 +97,17 @@ void LevelMeterComponent::resized()
 }
 
 //==============================================================================
+const MaybeDuckLookAndFeel::Palette& LevelMeterComponent::pal() const
+{
+    if (auto* laf = dynamic_cast<MaybeDuckLookAndFeel*>(&getLookAndFeel()))
+        return laf->palette();
+    return MaybeDuckLookAndFeel::lightPalette;
+}
+
 void LevelMeterComponent::paint(juce::Graphics& g)
 {
     // Background chassis fill behind the whole component.
-    g.setColour(juce::Colour(MaybeDuckLookAndFeel::kChassisShadow).withAlpha(0.35f));
+    g.setColour(pal().chassisShadow.withAlpha(0.35f));
     g.fillRoundedRectangle(getLocalBounds().toFloat(), 6.0f);
 
     drawLevelStrip(g, inStripArea, targetInputDb,     "IN");
@@ -122,7 +129,7 @@ void LevelMeterComponent::drawLevelStrip(juce::Graphics& g,
     auto captionArea = stripArea.removeFromBottom(12);
 
     // Frame.
-    g.setColour(juce::Colour(MaybeDuckLookAndFeel::kChassisShadow));
+    g.setColour(pal().chassisShadow);
     g.fillRoundedRectangle(stripArea.toFloat(), 2.0f);
 
     const auto inner = stripArea.reduced(1);
@@ -166,7 +173,7 @@ void LevelMeterComponent::drawLevelStrip(juce::Graphics& g,
     }
 
     // Caption (IN / SC).
-    g.setColour(juce::Colour(MaybeDuckLookAndFeel::kEngravedText));
+    g.setColour(pal().engravedText);
     g.setFont(juce::Font(9.0f, juce::Font::bold));
     g.drawFittedText(caption, captionArea, juce::Justification::centred, 1);
 }
@@ -185,7 +192,7 @@ void LevelMeterComponent::drawGrStrip(juce::Graphics& g,
     auto captionArea = stripArea.removeFromBottom(12);
 
     // Frame.
-    g.setColour(juce::Colour(MaybeDuckLookAndFeel::kChassisShadow));
+    g.setColour(pal().chassisShadow);
     g.fillRoundedRectangle(stripArea.toFloat(), 2.0f);
 
     const auto inner = stripArea.reduced(1);
@@ -220,7 +227,7 @@ void LevelMeterComponent::drawGrStrip(juce::Graphics& g,
     }
 
     // Caption (GR).
-    g.setColour(juce::Colour(MaybeDuckLookAndFeel::kEngravedText));
+    g.setColour(pal().engravedText);
     g.setFont(juce::Font(9.0f, juce::Font::bold));
     g.drawFittedText(caption, captionArea, juce::Justification::centred, 1);
 }

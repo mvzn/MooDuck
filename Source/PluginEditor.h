@@ -30,8 +30,19 @@ public:
 
     void parameterChanged(const juce::String& paramID, float newValue) override;
 
+    // Triple-click the engraved wordmark to flip the dark/light theme (process-wide).
+    void mouseDown (const juce::MouseEvent& e) override;
+
 private:
     MaybeDuckAudioProcessor& audioProcessor;
+
+    // Pull the persisted dark/light state into the LookAndFeel, re-push the per-
+    // slider value-box colours, and repaint. Called on load, on local toggle, and
+    // when timerCallback() detects another window flipped the theme.
+    void applyTheme();
+    void styleValueBox (juce::Slider& s);  // pushes palette tones into a slider's value-box colour IDs
+    juce::Rectangle<int> wordmarkBounds;   // triple-click hot-spot (set in paint())
+    int lastThemeGen = -1;                 // last ThemeState generation we applied
 
     // Hard Duck freezes the ratio knob and relabels its read-out ∞:1 (the DSP
     // ignores the ratio value while Hard Duck is engaged).

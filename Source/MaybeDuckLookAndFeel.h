@@ -50,8 +50,30 @@ public:
     static constexpr juce::uint32 kButtonSocket = 0xff322E2B; // recessed socket the cap sits in
 
     // --- Band-switch backlight colours (silver = active, blue = solo, red = mute/bypass)
+    // Semantic state colours — kept theme-independent (same in light + dark).
     static constexpr juce::uint32 kBandSolo = 0xff3E8EE6; // SOLO backlight (blue)
     static constexpr juce::uint32 kBandMute = 0xffC84030; // MUTE / BYPASS backlight (red)
+
+    // ---- Runtime light/dark palette ------------------------------------------
+    // The constants above are the canonical LIGHT values (and still feed the level
+    // meter). Dark mode swaps to darkPalette at runtime via setDarkMode()
+    // (triple-click the wordmark, persisted by ThemeState). The LookAndFeel draw
+    // methods read the active `pal`; band/meter state colours stay constant.
+    struct Palette
+    {
+        juce::Colour chassisHighlight, chassisMid, chassisShadow;
+        juce::Colour dividerHighlight, dividerShadow;
+        juce::Colour knobMatteBlack, accentWhite, accentAmber, engravedText;
+        juce::Colour buttonFaceHi, buttonFaceLo, buttonSocket;
+        juce::Colour tickColor;        // knob tick-ring stroke (must read on a dark panel)
+        juce::Colour knobUnderGlow;    // LED-like halo around the knob (dark mode; transparent in light)
+    };
+    static const Palette lightPalette;
+    static const Palette darkPalette;
+
+    const Palette& palette() const noexcept { return pal; }
+    bool isDarkMode()        const noexcept { return dark; }
+    void setDarkMode (bool shouldBeDark);   // swaps palette, re-applies colours, regenerates grain
 
     juce::Typeface::Ptr getRegularTypeface() const { return regularTypeface; }
     juce::Typeface::Ptr getMediumTypeface()  const { return mediumTypeface; }
@@ -142,8 +164,13 @@ private:
     juce::Typeface::Ptr regularTypeface;
     juce::Typeface::Ptr mediumTypeface;
 
-    juce::Image grainImage;    // cached brushed-grain noise overlay, generated once
+    juce::Image grainImage;    // cached brushed-grain noise overlay (regenerated on theme switch)
     juce::Image metalCapImage; // cached spun-aluminium knob-cap disc, generated once
+
+    Palette pal;          // active palette (set in the constructor / setDarkMode)
+    bool    dark = false; // current theme
+    void applyPaletteColours();  // pushes palette tones into the slider value-box colour IDs
+    void regenerateGrain();      // rebuilds grainImage from the active chassis tones
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MaybeDuckLookAndFeel)
 };

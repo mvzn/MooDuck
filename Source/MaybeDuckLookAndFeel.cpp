@@ -1,5 +1,26 @@
 #include "MaybeDuckLookAndFeel.h"
 
+// ============================== THEME PALETTES ==============================
+// Light = the original brushed-nickel look; dark = a higher-contrast charcoal.
+// Field order matches the Palette struct. setDarkMode() selects between them.
+// Band/meter state colours (kBandSolo/kBandMute/kMeterClipRed) stay constant.
+const MaybeDuckLookAndFeel::Palette MaybeDuckLookAndFeel::lightPalette {
+    juce::Colour(0xffC7BFB3), juce::Colour(0xffA8A097), juce::Colour(0xff6E6863),
+    juce::Colour(0xffD0C8BC), juce::Colour(0xff5A5450),
+    juce::Colour(0xff1A1A1A), juce::Colour(0xffFFFFFF), juce::Colour(0xffE8A23E), juce::Colour(0xffEFE7D7),
+    juce::Colour(0xffCEC7BB), juce::Colour(0xff968E84), juce::Colour(0xff322E2B),
+    juce::Colour(0xff5A5450),  // tickColor = divider shadow (dark groove on a light panel)
+    juce::Colour(0x00000000)   // knobUnderGlow: off in light mode (transparent)
+};
+const MaybeDuckLookAndFeel::Palette MaybeDuckLookAndFeel::darkPalette {
+    juce::Colour(0xff4A4A53), juce::Colour(0xff2B2B31), juce::Colour(0xff121216),
+    juce::Colour(0xff6C6C77), juce::Colour(0xff070709),
+    juce::Colour(0xff0E0E10), juce::Colour(0xffFFFFFF), juce::Colour(0xffEBA94A), juce::Colour(0xffE6E1D7),
+    juce::Colour(0xff52525C), juce::Colour(0xff34343C), juce::Colour(0xff0C0C0E),
+    juce::Colour(0xff9E9EA8),  // tickColor = lit graphite (reads as raised on a dark panel)
+    juce::Colour(0xffEAE6D6)   // knobUnderGlow = warm off-white "dimmed-LED" halo
+};
+
 MaybeDuckLookAndFeel::MaybeDuckLookAndFeel()
 {
     regularTypeface = juce::Typeface::createSystemTypefaceFor(
@@ -12,35 +33,10 @@ MaybeDuckLookAndFeel::MaybeDuckLookAndFeel()
 
     setDefaultSansSerifTypeface(regularTypeface);
 
-    // Knob value-readout box: a dark matte plate (matching the knob bodies) with
-    // a thin warm-grey hairline border, so the engraved off-white number stays
-    // legible. These map onto the slider's internal value Label/TextEditor, so
-    // every rotary picks them up without per-slider setColour calls.
-    setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour(kKnobMatteBlack)); // #1A1A1A plate
-    setColour(juce::Slider::textBoxOutlineColourId,    juce::Colour(kEngravedText));   // border = same off-white as the number
-    setColour(juce::Slider::textBoxTextColourId,       juce::Colour(kEngravedText));   // off-white number
-    setColour(juce::Slider::textBoxHighlightColourId,  juce::Colour(kAccentAmber).withAlpha(0.35f)); // edit selection
-
-    // Pre-render a 256x256 tileable brushed-grain noise overlay — drawn once,
-    // composited over the gradient on every chassis paint. Cheaper than
-    // generating noise per-paint, and the texture is small enough to keep
-    // resident.
-    grainImage = juce::Image(juce::Image::ARGB, 256, 256, true);
-    juce::Random rng(0xD11CC11D); // fixed seed → reproducible grain
-    for (int y = 0; y < grainImage.getHeight(); ++y)
-    {
-        for (int x = 0; x < grainImage.getWidth(); ++x)
-        {
-            // Bias toward horizontal streaks: alpha varies with x more than y.
-            // Bumped from 0.18f -> 0.26f so individual streaks read from a metre away
-            // without becoming wallpaper-textured at close range.
-            const float a = juce::jlimit(0.0f, 1.0f,
-                                         rng.nextFloat() * 0.26f - 0.07f);
-            const auto tint = (rng.nextBool() ? juce::Colour(kChassisHighlight)
-                                              : juce::Colour(kChassisShadow));
-            grainImage.setPixelAt(x, y, tint.withAlpha(a));
-        }
-    }
+    // Install the light palette: pushes its tones into the slider value-box colour
+    // IDs and builds the brushed-grain overlay. setDarkMode() swaps to the dark one
+    // at runtime (and re-runs both of those steps).
+    setDarkMode(false);
 
     // Pre-render the spun-aluminium top cap once (drawn into every knob's metal
     // cap). A "brushed-from-centre" finish: a silver radial base, many faint
@@ -95,14 +91,46 @@ MaybeDuckLookAndFeel::MaybeDuckLookAndFeel()
     }
 }
 
+void MaybeDuckLookAndFeel::setDarkMode (bool shouldBeDark)
+{
+    dark = shouldBeDark;
+    pal  = shouldBeDark ? darkPalette : lightPalette;
+    applyPaletteColours();
+    regenerateGrain();
+}
+
+void MaybeDuckLookAndFeel::applyPaletteColours()
+{
+    // Knob value-readout box: matte plate + engraved-tone border/text from the
+    // active palette (re-run on every theme switch).
+    setColour(juce::Slider::textBoxBackgroundColourId, pal.knobMatteBlack);
+    setColour(juce::Slider::textBoxOutlineColourId,    pal.engravedText);
+    setColour(juce::Slider::textBoxTextColourId,       pal.engravedText);
+    setColour(juce::Slider::textBoxHighlightColourId,  pal.accentAmber.withAlpha(0.35f));
+}
+
+void MaybeDuckLookAndFeel::regenerateGrain()
+{
+    // 256x256 tileable brushed-grain overlay, tinted from the active chassis tones.
+    grainImage = juce::Image(juce::Image::ARGB, 256, 256, true);
+    juce::Random rng(0xD11CC11D); // fixed seed → reproducible grain
+    for (int y = 0; y < grainImage.getHeight(); ++y)
+        for (int x = 0; x < grainImage.getWidth(); ++x)
+        {
+            const float a = juce::jlimit(0.0f, 1.0f, rng.nextFloat() * 0.26f - 0.07f);
+            const auto tint = (rng.nextBool() ? pal.chassisHighlight : pal.chassisShadow);
+            grainImage.setPixelAt(x, y, tint.withAlpha(a));
+        }
+}
+
 void MaybeDuckLookAndFeel::drawBrushedChassis (juce::Graphics& g, juce::Rectangle<float> area) const
 {
     // Vertical 3-stop gradient: highlight near top, mid in the middle, shadow at the bottom.
     juce::ColourGradient grad(
-        juce::Colour(kChassisHighlight), area.getX(),      area.getY(),
-        juce::Colour(kChassisShadow),    area.getX(),      area.getBottom(),
+        pal.chassisHighlight, area.getX(),      area.getY(),
+        pal.chassisShadow,    area.getX(),      area.getBottom(),
         false);
-    grad.addColour(0.55, juce::Colour(kChassisMid));
+    grad.addColour(0.55, pal.chassisMid);
     g.setGradientFill(grad);
     g.fillRect(area);
 
@@ -117,7 +145,7 @@ void MaybeDuckLookAndFeel::drawBrushedChassis (juce::Graphics& g, juce::Rectangl
     // Soft inner vignette — slight darkening at chassis edges.
     juce::ColourGradient edge(
         juce::Colours::transparentBlack,           area.getCentreX(), area.getCentreY(),
-        juce::Colour(kChassisShadow).withAlpha(0.25f), area.getX(), area.getY(),
+        pal.chassisShadow.withAlpha(0.25f), area.getX(), area.getY(),
         true);
     g.setGradientFill(edge);
     g.fillRect(area);
@@ -134,9 +162,9 @@ void MaybeDuckLookAndFeel::drawRackInset (juce::Graphics& g, juce::Rectangle<flo
 
     // Recessed module face — a darker, cooler brushed panel than the chassis, so
     // it reads as a separate unit dropped into the box.
-    juce::ColourGradient pg(juce::Colour(kChassisMid).darker(0.22f), area.getX(), area.getY(),
-                            juce::Colour(kChassisShadow).darker(0.04f), area.getX(), area.getBottom(), false);
-    pg.addColour(0.5, juce::Colour(kChassisMid).darker(0.34f));
+    juce::ColourGradient pg(pal.chassisMid.darker(0.22f), area.getX(), area.getY(),
+                            pal.chassisShadow.darker(0.04f), area.getX(), area.getBottom(), false);
+    pg.addColour(0.5, pal.chassisMid.darker(0.34f));
     g.setGradientFill(pg);
     g.fillRoundedRectangle(area, corner);
 
@@ -155,9 +183,9 @@ void MaybeDuckLookAndFeel::drawRackInset (juce::Graphics& g, juce::Rectangle<flo
     g.drawLine(area.getX() + corner, area.getY() + 1.2f, area.getRight() - corner, area.getY() + 1.2f, 1.8f);
     g.setColour(juce::Colours::black.withAlpha(0.28f));
     g.drawLine(area.getX() + 1.2f, area.getY() + corner, area.getX() + 1.2f, area.getBottom() - corner, 1.4f);
-    g.setColour(juce::Colour(kDividerHighlight).withAlpha(0.40f));
+    g.setColour(pal.dividerHighlight.withAlpha(0.40f));
     g.drawLine(area.getX() + corner, area.getBottom() - 1.0f, area.getRight() - corner, area.getBottom() - 1.0f, 1.4f);
-    g.setColour(juce::Colour(kDividerHighlight).withAlpha(0.18f));
+    g.setColour(pal.dividerHighlight.withAlpha(0.18f));
     g.drawLine(area.getRight() - 1.0f, area.getY() + corner, area.getRight() - 1.0f, area.getBottom() - corner, 1.0f);
 
     // Mounting ears: thin brushed rails down each side with rack screws top+bottom.
@@ -169,8 +197,8 @@ void MaybeDuckLookAndFeel::drawRackInset (juce::Graphics& g, juce::Rectangle<flo
             ? juce::Rectangle<float>(area.getX(),            area.getY(), railW, area.getHeight())
             : juce::Rectangle<float>(area.getRight() - railW, area.getY(), railW, area.getHeight());
         rail = rail.reduced(1.0f, 3.0f);
-        juce::ColourGradient rg(juce::Colour(kChassisHighlight).withAlpha(0.55f), rail.getX(),     rail.getY(),
-                                juce::Colour(kChassisShadow).withAlpha(0.55f),    rail.getRight(), rail.getY(), false);
+        juce::ColourGradient rg(pal.chassisHighlight.withAlpha(0.55f), rail.getX(),     rail.getY(),
+                                pal.chassisShadow.withAlpha(0.55f),    rail.getRight(), rail.getY(), false);
         g.setGradientFill(rg);
         g.fillRoundedRectangle(rail, 2.0f);
         g.setColour(juce::Colours::black.withAlpha(0.25f));
@@ -186,7 +214,7 @@ void MaybeDuckLookAndFeel::drawScrew (juce::Graphics& g, juce::Point<float> cent
     juce::Rectangle<float> body(centre.x - radius, centre.y - radius, radius * 2.0f, radius * 2.0f);
 
     // Recessed shadow ring beneath the screw — sells the inset look.
-    g.setColour(juce::Colour(kChassisShadow).withAlpha(0.55f));
+    g.setColour(pal.chassisShadow.withAlpha(0.55f));
     g.fillEllipse(body.expanded(1.5f).translated(0.5f, 1.0f));
 
     // Screw head: radial gradient, brighter toward upper-left (light from above).
@@ -207,9 +235,9 @@ void MaybeDuckLookAndFeel::drawScrew (juce::Graphics& g, juce::Point<float> cent
                          centre.y + std::sin(slotAngleRadians) * halfLen);
     juce::Point<float> b(centre.x - std::cos(slotAngleRadians) * halfLen,
                          centre.y - std::sin(slotAngleRadians) * halfLen);
-    g.setColour(juce::Colour(kDividerShadow));
+    g.setColour(pal.dividerShadow);
     g.drawLine(a.x, a.y, b.x, b.y, 1.4f);
-    g.setColour(juce::Colour(kDividerHighlight).withAlpha(0.35f));
+    g.setColour(pal.dividerHighlight.withAlpha(0.35f));
     g.drawLine(a.x + 0.5f, a.y + 0.5f, b.x + 0.5f, b.y + 0.5f, 0.6f);
 }
 
@@ -220,15 +248,15 @@ void MaybeDuckLookAndFeel::drawEngravedText (juce::Graphics& g, const juce::Stri
     g.setFont(font);
 
     // Highlight (top-left) — fakes a 'lifted' edge.
-    g.setColour(juce::Colour(kDividerHighlight).withAlpha(0.6f));
+    g.setColour(pal.dividerHighlight.withAlpha(0.6f));
     g.drawText(text, area.translated(-0.6f, -0.6f), just, false);
 
     // Shadow (bottom-right) — fakes the 'recess'.
-    g.setColour(juce::Colour(kDividerShadow).withAlpha(0.7f));
+    g.setColour(pal.dividerShadow.withAlpha(0.7f));
     g.drawText(text, area.translated(0.8f, 0.8f), just, false);
 
     // Main engraved tone.
-    g.setColour(juce::Colour(kEngravedText));
+    g.setColour(pal.engravedText);
     g.drawText(text, area, just, false);
 }
 
@@ -249,7 +277,7 @@ juce::Colour MaybeDuckLookAndFeel::litColourFor (const juce::Button& b)
     const auto& p = b.getProperties();
     if (p.contains("litColour"))
         return juce::Colour(static_cast<juce::uint32>(static_cast<juce::int64>(p["litColour"])));
-    return juce::Colour(kAccentWhite);
+    return juce::Colour(kAccentWhite);   // static method — use the constant, not the runtime palette
 }
 
 bool MaybeDuckLookAndFeel::isSoftSwitch (const juce::Button& b)
@@ -298,7 +326,7 @@ void MaybeDuckLookAndFeel::drawPushButtonBody (juce::Graphics& g, juce::Rectangl
     const auto top    = geo.top;
 
     // --- Recessed socket (the dark hole the cap rises out of).
-    g.setColour(juce::Colour(kButtonSocket).withAlpha(softProfile ? 0.85f : 1.0f));
+    g.setColour(pal.buttonSocket.withAlpha(softProfile ? 0.85f : 1.0f));
     g.fillRoundedRectangle(socket, corner + 2.0f);
     g.setColour(juce::Colours::black.withAlpha(0.45f));
     g.drawRoundedRectangle(socket.reduced(0.5f), corner + 2.0f, 1.0f);
@@ -319,12 +347,12 @@ void MaybeDuckLookAndFeel::drawPushButtonBody (juce::Graphics& g, juce::Rectangl
     // --- Cap front wall = the seated base footprint (darker brushed), peeking out
     // at the front (bottom) of the raised top face. Darkest at the front edge.
     {
-        juce::Colour wallTop = juce::Colour(kButtonFaceLo).darker(0.35f);
+        juce::Colour wallTop = pal.buttonFaceLo.darker(0.35f);
         juce::Colour wallBot = juce::Colour(0xff17150F);
         if (! isEnabled)
         {
-            wallTop = wallTop.interpolatedWith(juce::Colour(kChassisShadow), 0.55f);
-            wallBot = wallBot.interpolatedWith(juce::Colour(kChassisShadow), 0.45f);
+            wallTop = wallTop.interpolatedWith(pal.chassisShadow, 0.55f);
+            wallBot = wallBot.interpolatedWith(pal.chassisShadow, 0.45f);
         }
         juce::ColourGradient wall(wallTop, base.getX(), base.getY(),
                                   wallBot, base.getX(), base.getBottom(), false); // vertical: darkest at the front (bottom)
@@ -335,13 +363,13 @@ void MaybeDuckLookAndFeel::drawPushButtonBody (juce::Graphics& g, juce::Rectangl
     }
 
     // --- Top face: brushed metal, lighter than the walls; light from top-left.
-    juce::Colour faceHi = juce::Colour(kButtonFaceHi);
-    juce::Colour faceLo = juce::Colour(kButtonFaceLo);
+    juce::Colour faceHi = pal.buttonFaceHi;
+    juce::Colour faceLo = pal.buttonFaceLo;
     if (pressedLook) { faceHi = faceHi.darker(0.10f); faceLo = faceLo.darker(0.12f); }
     if (! isEnabled)
     {
-        faceHi = faceHi.interpolatedWith(juce::Colour(kChassisShadow), 0.55f);
-        faceLo = faceLo.interpolatedWith(juce::Colour(kChassisShadow), 0.55f);
+        faceHi = faceHi.interpolatedWith(pal.chassisShadow, 0.55f);
+        faceLo = faceLo.interpolatedWith(pal.chassisShadow, 0.55f);
     }
     juce::ColourGradient fg(faceHi, top.getX(), top.getY(),
                             faceLo, top.getRight(), top.getBottom(), false);
@@ -358,7 +386,7 @@ void MaybeDuckLookAndFeel::drawPushButtonBody (juce::Graphics& g, juce::Rectangl
     }
 
     // Top-face bevel: highlight top-left, shadow bottom-right (a machined edge).
-    g.setColour(juce::Colour(kChassisHighlight).brighter(0.4f).withAlpha(isEnabled ? 0.85f : 0.30f));
+    g.setColour(pal.chassisHighlight.brighter(0.4f).withAlpha(isEnabled ? 0.85f : 0.30f));
     g.drawRoundedRectangle(top.translated(-0.5f, -0.5f), corner, 1.0f);
     g.setColour(juce::Colours::black.withAlpha(0.40f));
     g.drawRoundedRectangle(top.translated(0.5f, 0.6f), corner, 1.0f);
@@ -366,7 +394,7 @@ void MaybeDuckLookAndFeel::drawPushButtonBody (juce::Graphics& g, juce::Rectangl
     // Hover: faint brighten on the upper top-face.
     if (isMouseOver && isEnabled && ! isDown)
     {
-        g.setColour(juce::Colour(kAccentWhite).withAlpha(0.08f));
+        g.setColour(pal.accentWhite.withAlpha(0.08f));
         g.fillRoundedRectangle(top.withHeight(top.getHeight() * 0.5f), corner);
     }
 }
@@ -395,9 +423,9 @@ void MaybeDuckLookAndFeel::drawPushButtonLabel (juce::Graphics& g, juce::Rectang
     // Engraved-into-metal legend: dark text with a thin top highlight emboss.
     juce::Colour textColour = juce::Colour(0xff2A2622);
     if (! isEnabled)
-        textColour = textColour.interpolatedWith(juce::Colour(kChassisShadow), 0.45f).withMultipliedAlpha(0.85f);
+        textColour = textColour.interpolatedWith(pal.chassisShadow, 0.45f).withMultipliedAlpha(0.85f);
 
-    g.setColour(juce::Colour(kChassisHighlight).withAlpha(isEnabled ? 0.5f : 0.2f)); // emboss highlight
+    g.setColour(pal.chassisHighlight.withAlpha(isEnabled ? 0.5f : 0.2f)); // emboss highlight
     g.drawText(upper, rect.translated(0.0f, -0.7f).toNearestInt(), juce::Justification::centred, false);
     g.setColour(textColour);
     g.drawText(upper, rect.toNearestInt(), juce::Justification::centred, false);
@@ -491,9 +519,9 @@ void MaybeDuckLookAndFeel::drawGroupComponentOutline (juce::Graphics& g, int wid
 
     if (lineEndX > lineStartX + 4.0f)
     {
-        g.setColour(juce::Colour(kDividerShadow).withAlpha(0.7f));
+        g.setColour(pal.dividerShadow.withAlpha(0.7f));
         g.drawLine(lineStartX, lineY, lineEndX, lineY, 1.0f);
-        g.setColour(juce::Colour(kDividerHighlight).withAlpha(0.5f));
+        g.setColour(pal.dividerHighlight.withAlpha(0.5f));
         g.drawLine(lineStartX, lineY + 1.0f, lineEndX, lineY + 1.0f, 0.7f);
     }
 
@@ -573,7 +601,7 @@ void MaybeDuckLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, in
             g.drawLine(inner.x, inner.y, outer.x, outer.y, thick);
             if (hiAlpha > 0.0f)
             {
-                g.setColour(juce::Colour(kDividerHighlight).withAlpha(hiAlpha));
+                g.setColour(pal.dividerHighlight.withAlpha(hiAlpha));
                 g.drawLine(inner.x + 0.6f, inner.y + 0.6f, outer.x + 0.6f, outer.y + 0.6f, thick * 0.5f);
             }
         };
@@ -585,7 +613,7 @@ void MaybeDuckLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, in
             {
                 const float t = (n > 1) ? static_cast<float>(i) / static_cast<float>(n - 1) : 0.5f;
                 drawTick(t, rMajorIn, 1.3f,
-                         juce::Colour(kDividerShadow).withAlpha(0.9f * dim), 0.4f * dim);
+                         pal.tickColor.withAlpha(0.9f * dim), 0.4f * dim);
             }
         }
         else
@@ -600,10 +628,10 @@ void MaybeDuckLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, in
                 const bool  major   = (i % (kMinorPer + 1)) == 0;
                 const bool  centre0 = isBipolar && (i == kCentreTick);      // the bipolar "0" marker
                 if (centre0)
-                    drawTick(t, rMajorIn, 2.0f, juce::Colour(kEngravedText).withAlpha(dim), 0.0f);
+                    drawTick(t, rMajorIn, 2.0f, pal.engravedText.withAlpha(dim), 0.0f);
                 else
                     drawTick(t, major ? rMajorIn : rMinorIn, major ? 1.5f : 0.8f,
-                             juce::Colour(kDividerShadow).withAlpha((major ? 0.9f : 0.6f) * dim),
+                             pal.tickColor.withAlpha((major ? 0.9f : 0.6f) * dim),
                              (major ? 0.4f : 0.28f) * dim);
             }
         }
@@ -617,14 +645,24 @@ void MaybeDuckLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, in
         g.fillEllipse(shadowRect.expanded(1.0f));
     }
 
+    // --- Knob under-glow (dark mode): a soft warm halo ringing the skirt, like a
+    // dimmed LED behind the knob. Transparent in light mode, so this is a no-op there.
+    if (! pal.knobUnderGlow.isTransparent() && isEnabled)
+    {
+        juce::ColourGradient glow(pal.knobUnderGlow.withAlpha(0.22f), centre.x, centre.y,
+                                  pal.knobUnderGlow.withAlpha(0.0f),  centre.x, centre.y - skirtR * 1.35f, true);
+        g.setGradientFill(glow);
+        g.fillEllipse(juce::Rectangle<float>(skirtR * 2.7f, skirtR * 2.7f).withCentre(centre));
+    }
+
     // --- MATTE black base skirt (flange). Near-flat fill — only the faintest
     // form shading and a dark contact rim. Deliberately no glossy sheen.
     {
         auto skirtRect = juce::Rectangle<float>(skirtR * 2.0f, skirtR * 2.0f).withCentre(centre);
         juce::ColourGradient skirtGrad(
-            juce::Colour(0xff121212).interpolatedWith(juce::Colour(kChassisShadow), skirtMix),        // top
+            juce::Colour(0xff121212).interpolatedWith(pal.chassisShadow, skirtMix),        // top
             centre.x, centre.y - skirtR * 0.4f,
-            juce::Colour(0xff070707).interpolatedWith(juce::Colour(kChassisShadow), skirtMix * 0.9f), // base
+            juce::Colour(0xff070707).interpolatedWith(pal.chassisShadow, skirtMix * 0.9f), // base
             centre.x, centre.y + skirtR,
             true);
         g.setGradientFill(skirtGrad);
@@ -632,7 +670,7 @@ void MaybeDuckLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, in
 
         g.setColour(juce::Colours::black.withAlpha(0.55f));                              // dark contact rim
         g.drawEllipse(skirtRect, 1.0f);
-        g.setColour(juce::Colour(kDividerHighlight).withAlpha(isEnabled ? 0.07f : 0.03f)); // whisper of an edge catch
+        g.setColour(pal.dividerHighlight.withAlpha(isEnabled ? 0.07f : 0.03f)); // whisper of an edge catch
         g.drawEllipse(skirtRect.reduced(0.7f), 0.6f);
     }
 
@@ -657,8 +695,8 @@ void MaybeDuckLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, in
         }
         body.closeSubPath();
 
-        const auto bodyHi = juce::Colour(0xff242220).interpolatedWith(juce::Colour(kChassisShadow), bodyMix);
-        const auto bodyLo = juce::Colour(kKnobMatteBlack).interpolatedWith(juce::Colour(kChassisShadow), bodyMix * 0.9f);
+        const auto bodyHi = juce::Colour(0xff242220).interpolatedWith(pal.chassisShadow, bodyMix);
+        const auto bodyLo = pal.knobMatteBlack.interpolatedWith(pal.chassisShadow, bodyMix * 0.9f);
         juce::ColourGradient bodyGrad(bodyHi,
                                       centre.x - bodyR * 0.4f, centre.y - bodyR * 0.5f,
                                       bodyLo,
@@ -694,7 +732,7 @@ void MaybeDuckLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, in
 
         // Warm matte wash over the metal: this de-shined cap is the default look;
         // an unavailable knob washes it nearly flat (capWash).
-        g.setColour(juce::Colour(kChassisShadow).withAlpha(capWash));
+        g.setColour(pal.chassisShadow.withAlpha(capWash));
         g.fillEllipse(capRect);
 
         // Thin bright bevel + dark seat around the cap edge (bevel dimmed when off).
@@ -747,7 +785,7 @@ void MaybeDuckLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, in
 
         g.setColour(juce::Colours::black.withAlpha(0.5f));            // soft shadow
         g.fillEllipse(juce::Rectangle<float>(dotR * 2.0f, dotR * 2.0f).withCentre(dot.translated(0.4f, 0.7f)));
-        g.setColour(juce::Colour(kAccentWhite));                      // dot
+        g.setColour(pal.accentWhite);                      // dot
         g.fillEllipse(juce::Rectangle<float>(dotR * 2.0f, dotR * 2.0f).withCentre(dot));
     }
 }

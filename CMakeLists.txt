@@ -49,6 +49,7 @@ target_sources(MaybeDuck PRIVATE
     Source/PluginEditor.cpp
     Source/MaybeDuckLookAndFeel.cpp
     Source/LevelMeterComponent.cpp
+    Source/ThemeState.cpp
 )
 
 target_compile_definitions(MaybeDuck PRIVATE

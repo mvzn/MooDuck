@@ -55,5 +55,9 @@ private:
     void drawGrStrip(juce::Graphics&, juce::Rectangle<int> area, float grDb,
                      const juce::String& caption) const;
 
+    // Active theme palette, pulled from the editor's LookAndFeel so the meter
+    // follows dark/light. Falls back to the light palette if the LAF isn't ours.
+    const MaybeDuckLookAndFeel::Palette& pal() const;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(LevelMeterComponent)
 };

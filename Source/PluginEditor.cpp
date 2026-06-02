@@ -8,6 +8,7 @@
 
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "ThemeState.h"
 
 // ============================ HOW TO RE-LAYOUT ==============================
 // These are the global layout knobs. The window opens at kWindowW x kWindowH
@@ -54,16 +55,11 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
     // slider bakes its value-box colours at setTextBoxStyle time — before it is
     // parented to our LookAndFeel — so setting them on the LookAndFeel alone leaves
     // the JUCE default (blue-grey) border in place.
-    auto styleValueBox = [](juce::Slider& s)
-    {
-        s.setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour(MaybeDuckLookAndFeel::kKnobMatteBlack));
-        s.setColour(juce::Slider::textBoxOutlineColourId,    juce::Colour(MaybeDuckLookAndFeel::kEngravedText));
-        s.setColour(juce::Slider::textBoxTextColourId,       juce::Colour(MaybeDuckLookAndFeel::kEngravedText));
-        s.setColour(juce::Slider::textBoxHighlightColourId,  juce::Colour(MaybeDuckLookAndFeel::kAccentAmber).withAlpha(0.35f));
-    };
+    // styleValueBox() is a member (defined below) so applyTheme() can re-run it on
+    // every slider when the palette flips.
 
     // A rotary knob: applies the 270° rotary config + a value read-out box below it.
-    auto setupSlider = [this, &styleValueBox](juce::Slider& s, const juce::String& name)
+    auto setupSlider = [this](juce::Slider& s, const juce::String& name)
     {
         mdLookAndFeel.applyRotaryConfiguration(s);
         s.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 70, 20);
@@ -356,6 +352,10 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
     // Fixed-size UI: the layout is hand-tuned to one window size, so resizing is
     // disabled outright (no resize limits or aspect constrainer needed).
     setResizable(false, false);
+
+    // Sync to the persisted dark/light theme. Must run AFTER every slider is built
+    // (it re-pushes their value-box colours from the active palette).
+    applyTheme();
 }
 
 MaybeDuckAudioProcessorEditor::~MaybeDuckAudioProcessorEditor()
@@ -443,6 +443,46 @@ void MaybeDuckAudioProcessorEditor::setConvSizeFromButton(int idx)
     }
 }
 
+void MaybeDuckAudioProcessorEditor::styleValueBox (juce::Slider& s)
+{
+    // Per-slider because JUCE bakes the value-box colours at setTextBoxStyle time
+    // (before the slider is parented to our LookAndFeel), so the LAF default alone
+    // won't take. Re-pull from the active palette so a theme flip updates them.
+    const auto& p = mdLookAndFeel.palette();
+    s.setColour(juce::Slider::textBoxBackgroundColourId, p.knobMatteBlack);
+    s.setColour(juce::Slider::textBoxOutlineColourId,    p.engravedText);
+    s.setColour(juce::Slider::textBoxTextColourId,       p.engravedText);
+    s.setColour(juce::Slider::textBoxHighlightColourId,  p.accentAmber.withAlpha(0.35f));
+}
+
+void MaybeDuckAudioProcessorEditor::applyTheme()
+{
+    // Push the persisted dark/light state into the LookAndFeel (also re-applies its
+    // colour IDs + regenerates the brushed grain), then re-style every slider's
+    // value box from the new palette and repaint.
+    mdLookAndFeel.setDarkMode(ThemeState::get().isDark());
+
+    for (auto* c : getChildren())
+        if (auto* s = dynamic_cast<juce::Slider*>(c))
+            styleValueBox(*s);
+
+    lastThemeGen = ThemeState::get().generation();
+    repaint();
+}
+
+void MaybeDuckAudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
+{
+    // Triple-click the wordmark to flip dark/light (process-wide, persisted).
+    if (e.getNumberOfClicks() >= 3 && wordmarkBounds.contains(e.getPosition()))
+    {
+        ThemeState::get().toggle();
+        applyTheme();  // this editor flips instantly; siblings catch up on the next timer tick
+        return;
+    }
+
+    juce::AudioProcessorEditor::mouseDown(e);
+}
+
 void MaybeDuckAudioProcessorEditor::cycleBandState(int band)
 {
     // Advance the band's 3-state choice: Normal(0) -> Solo(1) -> Mute(2) -> Normal.
@@ -512,6 +552,10 @@ void MaybeDuckAudioProcessorEditor::paint (juce::Graphics& g)
                                  juce::Justification::centredRight,
                                  versionFont.withHeight(9.5f));
 
+    // Record the wordmark + version footprint as the triple-click hot-spot for the
+    // dark/light theme toggle (padded so corner clicks still land).
+    wordmarkBounds = wordmarkArea.getUnion(versionArea).expanded(2.0f).toNearestInt();
+
     // --- Crossover filter-band engravings ----------------------------------
     // Row 1 (the knob row): BIG engraved filter-response curves in the gaps
     // between the knob circles — LP | BP | BP | BP | HP, one per band, showing
@@ -530,7 +574,7 @@ void MaybeDuckAudioProcessorEditor::paint (juce::Graphics& g)
         static const int          ftype[5] = { 0, 1, 1, 1, 2 };  // LP, BP, BP, BP, HP
 
         // Engraved filter-response glyph (0=LP, 1=BP, 2=HP) filling rect r.
-        auto drawFilterGlyph = [&g](juce::Rectangle<float> r, int type)
+        auto drawFilterGlyph = [&g, this](juce::Rectangle<float> r, int type)
         {
             auto X = [&](float fx) { return r.getX() + fx * r.getWidth();  };
             auto Y = [&](float fy) { return r.getY() + fy * r.getHeight(); };
@@ -551,9 +595,9 @@ void MaybeDuckAudioProcessorEditor::paint (juce::Graphics& g)
             // Recessed/engraved look (carved INTO the panel): a dark groove line is
             // the main stroke, with a thin lit edge just below-right (the lower lip of
             // the groove catching light) — so it reads as inset, not popping out.
-            g.setColour(juce::Colour(MaybeDuckLookAndFeel::kDividerShadow).withAlpha(0.9f));
+            g.setColour(mdLookAndFeel.palette().dividerShadow.withAlpha(0.9f));
             g.strokePath(p, juce::PathStrokeType(1.8f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-            g.setColour(juce::Colour(MaybeDuckLookAndFeel::kDividerHighlight).withAlpha(0.4f));
+            g.setColour(mdLookAndFeel.palette().dividerHighlight.withAlpha(0.4f));
             g.strokePath(p, juce::PathStrokeType(0.9f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded),
                          juce::AffineTransform::translation(0.6f, 0.8f));
         };
@@ -589,9 +633,9 @@ void MaybeDuckAudioProcessorEditor::paint (juce::Graphics& g)
         for (int i = 0; i < 4; ++i)
         {
             const float bx = (float) xoverBandDivX[i];
-            g.setColour(juce::Colour(MaybeDuckLookAndFeel::kDividerShadow).withAlpha(0.8f));
+            g.setColour(mdLookAndFeel.palette().dividerShadow.withAlpha(0.8f));
             g.drawLine(bx, top, bx, bot, 1.0f);
-            g.setColour(juce::Colour(MaybeDuckLookAndFeel::kDividerHighlight).withAlpha(0.35f));
+            g.setColour(mdLookAndFeel.palette().dividerHighlight.withAlpha(0.35f));
             g.drawLine(bx + 0.6f, top, bx + 0.6f, bot, 0.6f);
         }
 
@@ -786,6 +830,10 @@ void MaybeDuckAudioProcessorEditor::resized()
 
 void MaybeDuckAudioProcessorEditor::timerCallback()
 {
+    // Detect a theme flip from another editor instance (or a fresh load) and apply.
+    if (ThemeState::get().generation() != lastThemeGen)
+        applyTheme();
+
     levelMeter.setLevels(audioProcessor.getInputLevelDb(),
                          audioProcessor.getSidechainLevelDb(),
                          audioProcessor.getGainReductionAmountDb());
