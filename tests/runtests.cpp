@@ -10,6 +10,7 @@
 
 #if __has_include("../Source/PultecCore.h")
   #include "../Source/PultecCore.h"
+  #include "../Source/PultecMakeupChain.h"
   #define PULTEC_CORE_AVAILABLE 1
 #endif
 
@@ -1865,6 +1866,74 @@ void test_latency_reporting()
     }
 }
 
+// =========================================================================
+// Shared-OS makeup chain (P1 refactor): PultecMakeupChain runs the EQ then the
+// triode in ONE oversampling domain. Verifies (1) reported latency is the single
+// OS group delay (4, not the old 4+4=8); (2) flat-EQ + sat-on emerges from the
+// wet path aligned to that latency; (3) EQ-bypassed + sat-off is a pure
+// integer-delay passthrough of exactly the reported latency (constant latency,
+// no time jump on toggle).
+// =========================================================================
+void test_makeup_chain_latency()
+{
+    std::printf("\n== Shared-OS makeup chain (EQ + triode, single oversampler) ==\n");
+
+    constexpr double fs    = 48000.0;
+    constexpr int    block = 512;
+    constexpr int    N     = block;
+
+    // (1) Reported latency == single OS group delay (4), NOT the old 4+4 = 8.
+    {
+        PultecEQP1A eq; KorenTriode12AX7 tri;
+        eq.prepare (fs, block); tri.prepare (fs, block);
+        PultecMakeupChain chain (eq, tri);
+        chain.prepare (fs, block);
+        expectNear ((double) chain.getLatencySamples(), 4.0, 0.0,
+                    "Chain: reported latency == 4 (single shared OS, was 8)");
+    }
+
+    // (2) Flat EQ + sat ON: impulse emerges from the wet path near the latency.
+    {
+        PultecEQP1A eq; KorenTriode12AX7 tri;
+        eq.prepare (fs, block); tri.prepare (fs, block);
+        eq.setLfBoostDb (0); eq.setLfAttenDb (0);
+        eq.setHfBoostDb (0); eq.setHfBandwidth (0.3f); eq.setHfAttenDb (0);
+        eq.setBypass (false); tri.setEnabled (true); tri.setDrive (1.0f);
+        PultecMakeupChain chain (eq, tri);
+        chain.prepare (fs, block);
+
+        std::vector<float> L (N, 0.0f), R (N, 0.0f);
+        L[0] = R[0] = 1.0f;
+        chain.processBlock (L.data(), R.data(), N);
+        const int pk  = peakIndex (L);
+        const int rep = chain.getLatencySamples();
+        std::printf ("  Chain (flat EQ + sat) impulse peak at %d (reported %d)\n", pk, rep);
+        expectNear ((double) pk, (double) rep, 2.0,
+                    "Chain: wet impulse aligned to reported latency (±2)");
+    }
+
+    // (3) EQ bypassed + sat OFF (settled dry at prepare): pure integer delay.
+    {
+        PultecEQP1A eq; KorenTriode12AX7 tri;
+        eq.prepare (fs, block); tri.prepare (fs, block);
+        eq.setBypass (true);     // dry
+        tri.setEnabled (false);  // dry
+        PultecMakeupChain chain (eq, tri);
+        chain.prepare (fs, block);  // mixes settle fully-dry -> fast path
+
+        std::vector<float> L (N, 0.0f), R (N, 0.0f);
+        L[0] = R[0] = 1.0f;
+        chain.processBlock (L.data(), R.data(), N);
+        const int pk  = peakIndex (L);
+        const int rep = chain.getLatencySamples();
+        std::printf ("  Chain (bypassed) impulse peak at %d (reported %d)\n", pk, rep);
+        expectNear ((double) pk, (double) rep, 0.0,
+                    "Chain: fully-bypassed dry-delay aligns impulse exactly to reported latency");
+        expectNear ((double) L[(size_t) rep], 1.0, 1e-4,
+                    "Chain: fully-bypassed dry-delay is unity-gain (pure delay)");
+    }
+}
+
 #endif // PULTEC_CORE_AVAILABLE
 
 } // namespace
@@ -1900,6 +1969,7 @@ int main()
     test_xfmr_isolated_response();
     test_pultec_hf_boost_no_lf_coupling();
     test_latency_reporting();
+    test_makeup_chain_latency();
     diag_xfmr_artifact_ab();
     diag_artifact_localize();
     diag_artifact_nodewalk();

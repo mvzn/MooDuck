@@ -400,9 +400,13 @@ void MaybeDuckAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
         lookaheadDelaySmoothed.setCurrentAndTargetValue(static_cast<float>(initSamples));
     }
 
-    // Pultec EQP-1A WDF filter + tube saturation
+    // Pultec EQP-1A WDF filter + tube saturation.
+    // pultec/triode.prepare() set up each stage's internal state (WDF coeffs,
+    // ADAA LUT, etc.); chain.prepare() owns the single shared 4x oversampler the
+    // plugin path actually uses (the stages' own oversamplers stay idle here).
     pultec.prepare(sampleRate, samplesPerBlock);
     triode.prepare(sampleRate, samplesPerBlock);
+    chain.prepare(sampleRate, samplesPerBlock);
 
     // FFT Conv objects — pre-allocate all three sizes (no audio-thread allocation later)
     static constexpr int kOrders[3] = { 9, 10, 11 };
@@ -445,7 +449,7 @@ void MaybeDuckAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
     // amount in every mode and can be reported once here — no mid-stream
     // setLatencySamples churn. eqTriodeLatency caches it for the audio thread,
     // which only re-reports when the (separately variable) FFT-conv hop changes.
-    eqTriodeLatency = pultec.getLatencySamples() + triode.getLatencySamples();
+    eqTriodeLatency = chain.getLatencySamples();
     const int initLatency = eqTriodeLatency + getConvLatencySamples();
     setLatencySamples(initLatency);
     prevLatencyReported = initLatency;
@@ -860,21 +864,12 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         pultec.setHfAttenFreqIndex (pPultecHfAttenFreq ? static_cast<int> (pPultecHfAttenFreq->load()) : 1);
         pultec.setHfAttenDb        (pPultecHfAtten     ? pPultecHfAtten->load()                        : 0.0f);
 
-        if (outR != nullptr)
-        {
-            pultec.processBlock (outL, outR, numSamples);
-        }
-        else
-        {
-            for (int n = 0; n < numSamples; ++n) { float r = outL[n]; pultec.processSample (outL[n], r); }
-        }
-
         const bool satEnabled = pPultecSatEnable && pPultecSatEnable->load() > 0.5f;
         triode.setEnabled (satEnabled);
-        if (outR != nullptr)
-            triode.processBlock (outL, outR, numSamples);
-        else
-            triode.processBlock (outL, outL, numSamples);
+
+        // EQ + tube saturator run in one shared 4x oversampling domain (single
+        // up/down round-trip). Mono fallback passes nullptr for the right channel.
+        chain.processBlock (outL, outR, numSamples);
     }
 
     // Absolute-dB peaks for the meter strips: IN follows the main input,

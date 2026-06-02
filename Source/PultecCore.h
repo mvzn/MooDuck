@@ -605,6 +605,30 @@ public:
         }
     }
 
+    // -----------------------------------------------------------------------
+    //  Pure per-sample EQ at the (already-upsampled) rate, for a shared
+    //  oversampling domain (PultecMakeupChain): WDF tree + HF-cut biquad +
+    //  inter-stage transformer, WITHOUT this stage's own oversampler or bypass
+    //  crossfade (the caller owns those). Mutates l/r in place.
+    // -----------------------------------------------------------------------
+    inline void processOversampledSample (double& l, double& r) noexcept
+    {
+        double outL = chanL.processSample (l);
+        double outR = chanR.processSample (r);
+
+        outL = static_cast<double> (hfCutL.processSample (static_cast<float> (outL)));
+        outR = static_cast<double> (hfCutR.processSample (static_cast<float> (outR)));
+
+        if (transformerEnabled)
+        {
+            outL = xfmrL.process (outL) / xfmrNorm;
+            outR = xfmrR.process (outR) / xfmrNorm;
+        }
+
+        l = outL;
+        r = outR;
+    }
+
 private:
     // Wet EQ path: 4x oversample -> WDF + HF-cut biquad + transformer -> down.
     void processWetBlock (float* left, float* right, int numSamples) noexcept

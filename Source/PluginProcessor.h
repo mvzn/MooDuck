@@ -13,6 +13,7 @@
 #include "CrossoverCore.h"
 #include "KorenTriode.h"   // Pultec EQP-1A tube saturation stage (not yet wired up)
 #include "PultecCore.h"   // Pultec EQP-1A WDF filter network (Phase 2)
+#include "PultecMakeupChain.h"   // EQ + tube saturator in one shared 4x oversampling domain
 
 //==============================================================================
 /**
@@ -139,6 +140,10 @@ private:
 
     PultecEQP1A      pultec;
     KorenTriode12AX7 triode;
+    // Runs `pultec` then `triode` in one shared 4x oversampling domain (single
+    // up/down round-trip). Declared after both so its reference members bind to
+    // already-constructed stages.
+    PultecMakeupChain chain { pultec, triode };
 
     // Lookahead delay line on the main path (sidechain is undelayed → detector sees future)
     juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Lagrange3rd> lookaheadDelayL;

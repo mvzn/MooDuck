@@ -105,6 +105,8 @@ public:
         enabled = shouldBeEnabled;
     }
 
+    bool getEnabled() const noexcept { return enabled; }
+
     // -------------------------------------------------------------------------
     // Constant processing latency (HOST-rate samples) introduced by the 4x
     // oversampler group delay. Single source of truth: the same value sizes the
@@ -181,6 +183,22 @@ public:
             dcPrevIn[ch]  = xPrev;
             dcPrevOut[ch] = yPrev;
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Pure per-sample nonlinearity at the (already-upsampled) rate, for use by a
+    // shared oversampling domain (PultecMakeupChain). Runs the same grid-current
+    // + Koren + ADAA pipeline as processBlock's inner loop, carrying the per-
+    // channel ADAA previous-input state, but WITHOUT this stage's own
+    // oversampler, enable gate, DC blocker, or crossfade — the caller owns those.
+    // -------------------------------------------------------------------------
+    inline double processOversampledSample(int ch, double x) noexcept
+    {
+        const size_t c    = static_cast<size_t>(ch);
+        const double prev = adaaPrevIn[c];
+        const double y    = processSampleAdaa(x, prev);
+        adaaPrevIn[c]     = x;
+        return y;
     }
 
 private:
