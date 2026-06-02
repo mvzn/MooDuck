@@ -19,14 +19,14 @@
 // resized() — see that method to resize or reorder individual sections.
 // ===========================================================================
 namespace {
-    // >>> PLUGIN WINDOW SIZE <<< — change these two to resize the whole UI. The
-    // aspect ratio is locked to kWindowW:kWindowH in the constructor. The sections
-    // below are fixed pixels, so there's a content floor (~660 tall at the current
-    // section heights). To go shorter, trim dynamicsToggleH / xoverRowH / eqRowH.
+    // >>> PLUGIN WINDOW SIZE <<< — the UI is fixed-size (resizing is disabled in the
+    // constructor). The sections below are fixed pixels summing to ~605 tall plus
+    // margins; keep kWindowH comfortably above that so nothing crowds the bottom.
+    // To change the overall size, retune the section heights too.
     constexpr int kWindowW       = 820;
-    constexpr int kWindowH       = 665;   // was 760
+    constexpr int kWindowH       = 672;
     constexpr int kOuterMargin   = 22;
-    constexpr int kGroupGap      = 6;
+    constexpr int kGroupGap      = 8;    // breathing room between sections
     constexpr int kGroupTitleH   = 22;
     constexpr int kKnobLabelH    = 18;   // height of the caption above every knob
 
@@ -252,6 +252,21 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
             audioProcessor.apvts, xoverIds[i], xoverSliders[i]);
     }
 
+    // Band solo/mute switches — soft backlit momentary rectangles in the ruler.
+    // Single click cycles Normal -> Solo -> Mute (see cycleBandState); the timer
+    // syncs each switch's backlight colour + enabled state from its bandState param.
+    const juce::String bandSwitchNames[5] = { "Low", "Lo-Mid", "Mid", "Hi-Mid", "High" };
+    for (int i = 0; i < 5; ++i)
+    {
+        bandSwitches[i].setButtonText(bandSwitchNames[i]);
+        bandSwitches[i].setClickingTogglesState(false);
+        bandSwitches[i].getProperties().set("softSwitch", true);   // low-relief momentary LookAndFeel variant
+        bandSwitches[i].setTooltip("Band " + juce::String(i + 1)
+            + " — click to cycle Normal / Solo (blue) / Mute (red). Console-style on the band output; Multiband only.");
+        bandSwitches[i].onClick = [this, i] { cycleBandState(i); };
+        addAndMakeVisible(bandSwitches[i]);
+    }
+
     // ----- Per-band duck scale group (hidden in UI but DSP attachments remain) -----
     // E3: section is invisible in this build; the APVTS attachments are kept so the
     // DSP keeps reading the band-scale params (which default to 0 dB = neutral).
@@ -338,10 +353,9 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
     startTimerHz(30);
     setSize(kWindowW, kWindowH);
 
-    setResizable(true, true);
-    setResizeLimits(600, 500, 1400, 1100);
-    if (auto* c = getConstrainer())
-        c->setFixedAspectRatio(static_cast<double>(kWindowW) / static_cast<double>(kWindowH));
+    // Fixed-size UI: the layout is hand-tuned to one window size, so resizing is
+    // disabled outright (no resize limits or aspect constrainer needed).
+    setResizable(false, false);
 }
 
 MaybeDuckAudioProcessorEditor::~MaybeDuckAudioProcessorEditor()
@@ -429,6 +443,19 @@ void MaybeDuckAudioProcessorEditor::setConvSizeFromButton(int idx)
     }
 }
 
+void MaybeDuckAudioProcessorEditor::cycleBandState(int band)
+{
+    // Advance the band's 3-state choice: Normal(0) -> Solo(1) -> Mute(2) -> Normal.
+    if (auto* p = audioProcessor.apvts.getParameter("bandState" + juce::String(band)))
+    {
+        const int cur  = static_cast<int>(*audioProcessor.apvts.getRawParameterValue("bandState" + juce::String(band)));
+        const int next = (cur + 1) % 3;
+        p->beginChangeGesture();
+        p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(next)));
+        p->endChangeGesture();
+    }
+}
+
 //==============================================================================
 // paint() draws the fixed BACKGROUND decoration only — the brushed-metal panel,
 // the four corner screws, and the engraved wordmark. The interactive widgets
@@ -456,6 +483,18 @@ void MaybeDuckAudioProcessorEditor::paint (juce::Graphics& g)
     };
     for (int i = 0; i < 4; ++i)
         mdLookAndFeel.drawScrew(g, screwCentres[i], screwR, kScrewAngles[i]);
+
+    // Dynamics section reads as a rack-unit module dropped into the chassis. The
+    // module spans the FULL plugin width (mounting rails at the case sides), with
+    // the controls sitting in its middle — so it takes the whole horizontal body
+    // rather than being inset. Drawn behind the section's controls (paint on top).
+    if (! dynamicsGroup.getBounds().isEmpty())
+    {
+        auto rb = dynamicsGroup.getBounds().toFloat();
+        rb.setX(0.0f);
+        rb.setWidth((float) getWidth());   // full edge-to-edge, rails at the case sides
+        mdLookAndFeel.drawRackInset(g, rb);
+    }
 
     // Wordmark + version at bottom-right, engraved into the chassis.
     const juce::Font wordmarkFont(mdLookAndFeel.getMediumTypeface());
@@ -556,15 +595,9 @@ void MaybeDuckAudioProcessorEditor::paint (juce::Graphics& g)
             g.drawLine(bx + 0.6f, top, bx + 0.6f, bot, 0.6f);
         }
 
-        // Row 2: band names, centred in each segment.
-        juce::Font bandFont(mdLookAndFeel.getRegularTypeface());
-        bandFont.setHeight(9.5f);
-        for (int i = 0; i < 5; ++i)
-        {
-            juce::Rectangle<float> seg(edges[i], top, edges[i + 1] - edges[i], bot - top);
-            mdLookAndFeel.drawEngravedText(g, names[i], seg.reduced(3.0f, 1.0f),
-                                           juce::Justification::centred, bandFont);
-        }
+        // Row 2: band names are now interactive solo/mute switches (bandSwitches[],
+        // positioned in resized(), painted on top) — no engraved text drawn here.
+        juce::ignoreUnused(names, edges);
     }
 }
 
@@ -625,7 +658,7 @@ void MaybeDuckAudioProcessorEditor::resized()
 
     // --- Dynamics group: 8-knob row + toggles row, GR meter on the right ---
     constexpr int dynamicsKnobsH  = 100;  // knob-row height (knobs are width-limited by the 8-col split, so this just sets the row's vertical air)
-    constexpr int dynamicsToggleH = 55;   // toggle-row slot  -> vertical position of the toggle buttons
+    constexpr int dynamicsToggleH = 50;   // toggle-row slot  -> vertical position of the toggle buttons
     constexpr int dynamicsGroupH  = kGroupTitleH + dynamicsKnobsH + dynamicsToggleH;
 
     auto dynamicsArea = area.removeFromTop(dynamicsGroupH);
@@ -656,9 +689,10 @@ void MaybeDuckAudioProcessorEditor::resized()
     layoutKnob(outputSlider,    outputLabel);
 
     auto toggles = dynamicsInner.removeFromTop(dynamicsToggleH);              // <- dynamicsToggleH (row slot)
-    constexpr int toggleBtnH = 40;                                           // <- toggle button height (size)
+    constexpr int toggleBtnH = 34;                                           // <- toggle button height (smaller caps)
     toggles.removeFromTop(juce::jmax(0, dynamicsToggleH - toggleBtnH));      // spare slot height pushes buttons DOWN (needs slot >= toggleBtnH)
     toggles = toggles.removeFromTop(toggleBtnH);                             // lock the row to the button height
+    toggles.removeFromRight(18);                                            // gap so the last toggle doesn't crowd the meter
     {
         juce::FlexBox fb;
         fb.flexDirection  = juce::FlexBox::Direction::row;
@@ -675,9 +709,10 @@ void MaybeDuckAudioProcessorEditor::resized()
     area.removeFromTop(kGroupGap);
 
     // --- Crossover group: 4 knobs + engraved 5-band ruler -------------------
-    constexpr int xoverRowH   = 96;   // knob-row height (trimmed from 108 to make room for the band ruler)
-    constexpr int xoverBandH  = 18;   // engraved band ruler under the knobs (drawn in paint())
-    constexpr int xoverGroupH = kGroupTitleH + xoverRowH + xoverBandH + 8;
+    constexpr int xoverRowH    = 96;  // knob-row height (trimmed from 108 to make room for the band ruler)
+    constexpr int xoverBandH   = 24;  // band-switch row under the knobs (solo/mute switches)
+    constexpr int xoverBandGap = 12;  // gap pushing the band switches down, away from the freq knobs
+    constexpr int xoverGroupH  = kGroupTitleH + xoverRowH + xoverBandGap + xoverBandH + 8;
     auto xoverArea = area.removeFromTop(xoverGroupH);
     crossoverGroup.setBounds(xoverArea);
 
@@ -699,7 +734,21 @@ void MaybeDuckAudioProcessorEditor::resized()
         xoverLabels[i].setBounds(col.removeFromTop(kKnobLabelH));
         xoverSliders[i].setBounds(col);
     }
-    xoverBandStrip = xoverInner.removeFromTop(xoverBandH);  // ruler area, full inner width
+    xoverInner.removeFromTop(xoverBandGap);                 // breathing room below the knobs
+    xoverBandStrip = xoverInner.removeFromTop(xoverBandH);  // band-switch row, full inner width
+
+    // Band solo/mute switches fill the ruler segments (one per band, between the
+    // crossover-boundary knob centres), matching the boundary ticks drawn in paint().
+    {
+        const int edges[6] = { xoverBandStrip.getX(), xoverBandDivX[0], xoverBandDivX[1],
+                               xoverBandDivX[2], xoverBandDivX[3], xoverBandStrip.getRight() };
+        for (int i = 0; i < 5; ++i)
+        {
+            juce::Rectangle<int> seg(edges[i], xoverBandStrip.getY(),
+                                     edges[i + 1] - edges[i], xoverBandStrip.getHeight());
+            bandSwitches[i].setBounds(seg.reduced(3, 1));
+        }
+    }
 
     area.removeFromTop(kGroupGap);
 
@@ -767,6 +816,20 @@ void MaybeDuckAudioProcessorEditor::timerCallback()
     // Crossover, band-scale, and band-routing controls are inert in Wideband
     for (int i = 0; i < 4; ++i) xoverSliders[i].setEnabled(mode != 0);
     for (int i = 0; i < 5; ++i) bandScaleSliders[i].setEnabled(mode != 0);
+
+    // Band solo/mute switches: backlight colour follows the state (silver = normal,
+    // green = solo, red = mute); console-style band output only exists in Multiband.
+    for (int i = 0; i < 5; ++i)
+    {
+        const int st = juce::jlimit(0, 2,
+            static_cast<int>(*audioProcessor.apvts.getRawParameterValue("bandState" + juce::String(i))));
+        const juce::uint32 lit = (st == 1) ? MaybeDuckLookAndFeel::kBandSolo
+                               : (st == 2) ? MaybeDuckLookAndFeel::kBandMute
+                                           : 0xffCBD0D4 /* cool silver = normal/active */;
+        bandSwitches[i].getProperties().set("litColour", static_cast<juce::int64>(lit));
+        bandSwitches[i].setEnabled(mode == 1);   // Multiband only
+        bandSwitches[i].repaint();
+    }
 
     const int latSamples = audioProcessor.getConvLatencySamples();
     const double sr = juce::jmax(1.0, audioProcessor.getCurrentSampleRateHz());

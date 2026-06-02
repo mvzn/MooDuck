@@ -91,6 +91,7 @@ public:
     std::atomic<float>* pLookaheadXtreme  = nullptr;   // the wide-range lookahead value (used when Xtreme is on)
     std::atomic<float>* pXover[StereoMultibandCrossover::numCrossoverPoints] = {};
     std::atomic<float>* pBandScale[StereoMultibandCrossover::numBands] = {};
+    std::atomic<float>* pBandState[StereoMultibandCrossover::numBands] = {}; // 0 Normal / 1 Solo / 2 Mute
     std::atomic<float>* pSidechainMode = nullptr;
     std::atomic<float>* pFftConv       = nullptr;
     std::atomic<float>* pFftConvSize   = nullptr;

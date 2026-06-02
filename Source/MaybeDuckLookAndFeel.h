@@ -42,6 +42,17 @@ public:
 
     static constexpr juce::uint32 kMeterClipRed     = 0xffC84030;
 
+    // --- 1176-style push-button palette (brushed-metal face, recessed socket).
+    // The face is a touch lighter than the chassis so the buttons read as raised
+    // hardware caps; the socket is the dark hole they sit in.
+    static constexpr juce::uint32 kButtonFaceHi = 0xffCEC7BB; // button face, top (lit from above)
+    static constexpr juce::uint32 kButtonFaceLo = 0xff968E84; // button face, bottom
+    static constexpr juce::uint32 kButtonSocket = 0xff322E2B; // recessed socket the cap sits in
+
+    // --- Band-switch backlight colours (silver = active, blue = solo, red = mute/bypass)
+    static constexpr juce::uint32 kBandSolo = 0xff3E8EE6; // SOLO backlight (blue)
+    static constexpr juce::uint32 kBandMute = 0xffC84030; // MUTE / BYPASS backlight (red)
+
     juce::Typeface::Ptr getRegularTypeface() const { return regularTypeface; }
     juce::Typeface::Ptr getMediumTypeface()  const { return mediumTypeface; }
 
@@ -56,6 +67,10 @@ public:
 
     // --- Draw helpers (used by the editor paint() and overridden draw methods)
     void drawBrushedChassis (juce::Graphics&, juce::Rectangle<float> area) const;
+    // Paints a recessed rack-unit module inset into the chassis (darker brushed
+    // face, inset bevel, side mounting rails + rack screws). Draw behind a
+    // section's controls (e.g. the Dynamics group) in the editor's paint().
+    void drawRackInset      (juce::Graphics&, juce::Rectangle<float> area) const;
     void drawScrew          (juce::Graphics&, juce::Point<float> centre, float radius, float slotAngleRadians) const;
     void drawEngravedText   (juce::Graphics&, const juce::String& text, juce::Rectangle<float> area,
                              juce::Justification just, juce::Font font) const;
@@ -98,11 +113,28 @@ public:
                                     juce::GroupComponent&) override;
 
 private:
+    // 1176-style hardware push button. `litColour` is the backlight tint when the
+    // button is lit; `softProfile` = the low-relief momentary band-switch variant
+    // (always backlit in `litColour`) vs the chunky latching cap (lit only when on).
     void drawPushButtonBody  (juce::Graphics&, juce::Rectangle<float> bounds,
-                              bool isOn, bool isMouseOver, bool isDown, bool isEnabled) const;
+                              bool isOn, bool isMouseOver, bool isDown, bool isEnabled,
+                              juce::Colour litColour, bool softProfile) const;
     void drawPushButtonLabel (juce::Graphics&, juce::Rectangle<float> bounds,
                               const juce::String& text,
-                              bool isOn, bool isMouseOver, bool isDown, bool isEnabled) const;
+                              bool isOn, bool isMouseOver, bool isDown, bool isEnabled,
+                              bool softProfile) const;
+
+    // Pull the optional per-button styling a caller may have stashed in the
+    // component properties: "softSwitch" (bool) and "litColour" (ARGB uint32).
+    static juce::Colour litColourFor (const juce::Button&);
+    static bool         isSoftSwitch (const juce::Button&);
+
+    // Geometry of an extruded button cap: the recessed socket, the seated base
+    // footprint (at the socket floor) and the raised top face. Walls are the band
+    // between base and top (front + right, top-left light). Shared by the body and
+    // label draws so the legend always lands on the top face.
+    struct CapGeom { juce::Rectangle<float> socket, base, top; float corner; };
+    CapGeom computeCapGeometry (juce::Rectangle<float> bounds, bool pressedLook, bool softProfile) const;
 
 public:
 

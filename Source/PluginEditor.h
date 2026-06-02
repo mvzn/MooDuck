@@ -79,9 +79,15 @@ private:
     std::unique_ptr<SliderAttachment> xoverAttachments[4];
     // Engraved band ruler under the crossover knobs (geometry set in resized(),
     // drawn in paint()). xoverBandDivX = x of each crossover boundary (knob centre).
-    juce::Rectangle<int> xoverBandStrip;   // row 2: band-name ruler + boundary ticks
+    juce::Rectangle<int> xoverBandStrip;   // row 2: band-switch row + boundary ticks
     juce::Rectangle<int> xoverKnobRow;     // row 1: knob row (big filter curves drawn in its gaps)
     int                  xoverBandDivX[4] {};
+
+    // Per-band solo/mute switches (soft backlit momentary rectangles) sitting in
+    // the ruler segments. Single click cycles Normal->Solo->Mute; backlight colour
+    // = state (silver / green / red). Bound to the bandStateN choice params.
+    juce::TextButton bandSwitches[5];
+    void cycleBandState(int band);
 
     // --- Per-band duck scale group
     juce::GroupComponent bandScaleGroup;

@@ -48,6 +48,9 @@ MaybeDuckAudioProcessor::MaybeDuckAudioProcessor()
     for (int b = 0; b < StereoMultibandCrossover::numBands; ++b)
         pBandScale[b] = apvts.getRawParameterValue("bandScale" + juce::String(b));
 
+    for (int b = 0; b < StereoMultibandCrossover::numBands; ++b)
+        pBandState[b] = apvts.getRawParameterValue("bandState" + juce::String(b));
+
     pSidechainMode = apvts.getRawParameterValue("sidechainMode");
     pFftConv       = apvts.getRawParameterValue("fftConvolution");
     pFftConvSize   = apvts.getRawParameterValue("fftConvSize");
@@ -198,6 +201,18 @@ juce::AudioProcessorValueTreeState::ParameterLayout MaybeDuckAudioProcessor::cre
             bandScaleNames[b],
             juce::NormalisableRange<float>(-12.0f, 12.0f, 0.1f),
             0.0f));
+    }
+
+    // Per-band solo/mute (console-style on the band output, Multiband only).
+    // 0 = Normal, 1 = Solo, 2 = Mute. The editor's band switches cycle these.
+    static const char* bandStateNames[] = { "Band 1 State", "Band 2 State", "Band 3 State", "Band 4 State", "Band 5 State" };
+    for (int b = 0; b < StereoMultibandCrossover::numBands; ++b)
+    {
+        params.push_back(std::make_unique<juce::AudioParameterChoice>(
+            "bandState" + juce::String(b),
+            bandStateNames[b],
+            juce::StringArray { "Normal", "Solo", "Mute" },
+            0));
     }
 
     // 0 = Wideband (bypass crossover), 1 = Multiband, 2 = Spectral
@@ -687,10 +702,27 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
             }
         }
 
+        // Console-style per-band solo/mute (Multiband bands only). bandState:
+        // 0 = Normal, 1 = Solo, 2 = Mute. A band is audible if some band is soloed
+        // -> only soloed bands; otherwise -> all non-muted bands. Inaudible bands
+        // still run their processors (detector state stays warm), but contribute
+        // zero to the summed output, so toggling causes no envelope discontinuity.
+        bool anySolo = false;
+        for (int b = 0; b < numBands; ++b)
+            if (pBandState[b] && static_cast<int>(pBandState[b]->load()) == 1) { anySolo = true; break; }
+        float bandGate[numBands];
+        for (int b = 0; b < numBands; ++b)
+        {
+            const int st = pBandState[b] ? static_cast<int>(pBandState[b]->load()) : 0;
+            const bool audible = anySolo ? (st == 1) : (st != 2);
+            bandGate[b] = audible ? 1.0f : 0.0f;
+        }
+
         for (int b = 0; b < numBands; ++b)
         {
             const float offsetDb   = pBandScale[b] ? pBandScale[b]->load() : 0.0f;
             const bool  needsScale = std::abs(offsetDb) > 0.005f;
+            const float gate       = bandGate[b];
 
             for (int n = 0; n < numSamples; ++n)
             {
@@ -720,13 +752,14 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                     pR *= juce::dsp::FastMathApproximations::exp((newGrDbR - oldGrDbR) * 0.11512925f);
                 }
 
-                outL[n] += pL;
-                if (outR) outR[n] += pR;
+                outL[n] += pL * gate;
+                if (outR) outR[n] += pR * gate;
             }
         }
 
         for (int b = 0; b < numBands; ++b)
         {
+            if (bandGate[b] <= 0.0f) continue;   // muted/un-soloed bands don't drive the GR meter
             grAmountDb = std::max(grAmountDb, -static_cast<float>(bandProcessorsL[b].getGainReductionDb()));
             grAmountDb = std::max(grAmountDb, -static_cast<float>(bandProcessorsR[b].getGainReductionDb()));
         }
