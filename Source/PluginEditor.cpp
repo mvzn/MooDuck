@@ -43,6 +43,10 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
     // with the brushed-metal style instead of JUCE's stock grey widgets.
     setLookAndFeel(&mdLookAndFeel);
 
+    // The cached background fills the whole window opaquely — tell JUCE so it can
+    // skip compositing anything behind the editor.
+    setOpaque(true);
+
     // ---- Shared "setup" helpers -------------------------------------------
     // Every knob, text label, and section header is created through one of these
     // three lambdas, so they're the one place to change defaults that apply to
@@ -467,6 +471,7 @@ void MaybeDuckAudioProcessorEditor::applyTheme()
             styleValueBox(*s);
 
     lastThemeGen = ThemeState::get().generation();
+    renderBackground();   // palette changed -> rebuild the cached panel art
     repaint();
 }
 
@@ -505,6 +510,23 @@ void MaybeDuckAudioProcessorEditor::cycleBandState(int band)
 // drawScrew, drawEngravedText), so tweak their look there; tweak placement here.
 void MaybeDuckAudioProcessorEditor::paint (juce::Graphics& g)
 {
+    // The entire static background is pre-rendered into backgroundCache on resize /
+    // theme change (see renderBackground); painting is just a blit. This keeps the
+    // cheap, frequently-repainting child widgets (meter, buttons, knobs) from
+    // forcing the expensive chassis/grain render to re-run behind them every frame.
+    if (backgroundCache.isValid())
+        g.drawImageAt(backgroundCache, 0, 0);
+}
+
+void MaybeDuckAudioProcessorEditor::renderBackground()
+{
+    const int w = getWidth(), h = getHeight();
+    if (w <= 0 || h <= 0)
+        return;
+
+    backgroundCache = juce::Image(juce::Image::ARGB, w, h, true);
+    juce::Graphics g(backgroundCache);
+
     const auto area = getLocalBounds().toFloat();
 
     mdLookAndFeel.drawBrushedChassis(g, area);
@@ -826,6 +848,9 @@ void MaybeDuckAudioProcessorEditor::resized()
     // corner screw so the two don't overlap.
     auto full = getLocalBounds();
     convLatencyLabel.setBounds(full.getX() + 28, full.getBottom() - 20, 340, 16); // <- bottom-left, vertically centred on the corner screw
+
+    // Layout (hence the static panel art) is now fixed — (re)build the background cache.
+    renderBackground();
 }
 
 void MaybeDuckAudioProcessorEditor::timerCallback()
@@ -866,23 +891,35 @@ void MaybeDuckAudioProcessorEditor::timerCallback()
     for (int i = 0; i < 5; ++i) bandScaleSliders[i].setEnabled(mode != 0);
 
     // Band solo/mute switches: backlight colour follows the state (silver = normal,
-    // green = solo, red = mute); console-style band output only exists in Multiband.
+    // blue = solo, red = mute); console-style band output only exists in Multiband.
+    // Only touch (and repaint) a switch when its state or enablement actually changed
+    // — these used to repaint every tick, forcing the panel to redraw behind them.
+    const bool bandEnabled = (mode == 1);
     for (int i = 0; i < 5; ++i)
     {
         const int st = juce::jlimit(0, 2,
             static_cast<int>(*audioProcessor.apvts.getRawParameterValue("bandState" + juce::String(i))));
+        if (st == prevBandState[i] && bandEnabled == prevBandEnabled)
+            continue;
+
         const juce::uint32 lit = (st == 1) ? MaybeDuckLookAndFeel::kBandSolo
                                : (st == 2) ? MaybeDuckLookAndFeel::kBandMute
                                            : 0xffCBD0D4 /* cool silver = normal/active */;
         bandSwitches[i].getProperties().set("litColour", static_cast<juce::int64>(lit));
-        bandSwitches[i].setEnabled(mode == 1);   // Multiband only
+        bandSwitches[i].setEnabled(bandEnabled);   // Multiband only
         bandSwitches[i].repaint();
+        prevBandState[i] = st;
     }
+    prevBandEnabled = bandEnabled;
 
     const int latSamples = audioProcessor.getConvLatencySamples();
-    const double sr = juce::jmax(1.0, audioProcessor.getCurrentSampleRateHz());
-    const double latMs = 1000.0 * latSamples / sr;
-    convLatencyLabel.setText("Latency: " + juce::String(latSamples) + " smp ("
-                              + juce::String(latMs, 1) + " ms)",
-                              juce::dontSendNotification);
+    if (latSamples != prevLatSamples)   // the text rarely changes; skip the per-tick String build/repaint
+    {
+        prevLatSamples = latSamples;
+        const double sr = juce::jmax(1.0, audioProcessor.getCurrentSampleRateHz());
+        const double latMs = 1000.0 * latSamples / sr;
+        convLatencyLabel.setText("Latency: " + juce::String(latSamples) + " smp ("
+                                  + juce::String(latMs, 1) + " ms)",
+                                  juce::dontSendNotification);
+    }
 }

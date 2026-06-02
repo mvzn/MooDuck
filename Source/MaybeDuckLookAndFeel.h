@@ -40,7 +40,7 @@ public:
     static constexpr juce::uint32 kLedOff           = 0xff5A5450;
     static constexpr juce::uint32 kLedOn            = 0xffFFFFFF;
 
-    static constexpr juce::uint32 kMeterClipRed     = 0xffC84030;
+    static constexpr juce::uint32 kMeterClipRed     = 0xffCC2A2A; // proper red (was orange-leaning C84030)
 
     // --- 1176-style push-button palette (brushed-metal face, recessed socket).
     // The face is a touch lighter than the chassis so the buttons read as raised
@@ -52,7 +52,7 @@ public:
     // --- Band-switch backlight colours (silver = active, blue = solo, red = mute/bypass)
     // Semantic state colours — kept theme-independent (same in light + dark).
     static constexpr juce::uint32 kBandSolo = 0xff3E8EE6; // SOLO backlight (blue)
-    static constexpr juce::uint32 kBandMute = 0xffC84030; // MUTE / BYPASS backlight (red)
+    static constexpr juce::uint32 kBandMute = 0xffCC2A2A; // MUTE / BYPASS backlight (proper red)
 
     // ---- Runtime light/dark palette ------------------------------------------
     // The constants above are the canonical LIGHT values (and still feed the level

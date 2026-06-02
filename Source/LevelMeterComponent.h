@@ -45,6 +45,10 @@ private:
     float targetSidechainDb = -100.0f;
     float targetGrDb        = 0.0f;
 
+    // Last values actually painted — the timer only repaints when one moves enough
+    // to change the display, so an idle meter costs nothing.
+    float lastDrawnInDb = -1000.0f, lastDrawnScDb = -1000.0f, lastDrawnGrDb = -1000.0f;
+
     // Layout rectangles computed in resized().
     juce::Rectangle<int> inStripArea, scStripArea, grStripArea;
 

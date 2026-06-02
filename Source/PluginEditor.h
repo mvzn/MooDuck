@@ -41,8 +41,21 @@ private:
     // when timerCallback() detects another window flipped the theme.
     void applyTheme();
     void styleValueBox (juce::Slider& s);  // pushes palette tones into a slider's value-box colour IDs
-    juce::Rectangle<int> wordmarkBounds;   // triple-click hot-spot (set in paint())
+
+    // The static panel art (chassis, screws, rack, wordmark, engravings) is fixed
+    // per window size + theme, so it's pre-rendered once into backgroundCache and
+    // paint() just blits it — instead of re-running the expensive gradient/grain
+    // render behind every transparent child repaint. Rebuilt in resized()/applyTheme().
+    void renderBackground();
+    juce::Image backgroundCache;
+
+    juce::Rectangle<int> wordmarkBounds;   // triple-click hot-spot (set in renderBackground())
     int lastThemeGen = -1;                 // last ThemeState generation we applied
+
+    // timerCallback change-detection so we only repaint widgets that actually moved.
+    int  prevBandState[5] = { -2, -2, -2, -2, -2 };
+    bool prevBandEnabled  = false;
+    int  prevLatSamples   = -1;
 
     // Hard Duck freezes the ratio knob and relabels its read-out ∞:1 (the DSP
     // ignores the ratio value while Hard Duck is engaged).

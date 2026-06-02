@@ -22,7 +22,7 @@ namespace
     // from the palette in MaybeDuckLookAndFeel.h (kAccentWhite/Amber, kMeterClipRed).
 
     // --- Ballistic time constants (used for the GR strip) ---------------------
-    constexpr double kTimerHz       = 60.0;
+    constexpr double kTimerHz       = 30.0;
     constexpr double kTimeStepSec   = 1.0 / kTimerHz;
     constexpr double kAttackTauSec  = 0.010;   // 10 ms PPM-fast attack
     constexpr double kReleaseTauSec = 1.500;   // 1500 ms release
@@ -69,7 +69,19 @@ void LevelMeterComponent::timerCallback()
     const float coeff = 1.0f - std::exp(- (float) kTimeStepSec / tau);
     displayedGrDb += diff * coeff;
 
-    repaint();
+    // Only repaint when the display would actually change — keeps an idle meter (and
+    // the panel behind this transparent component) from redrawing every tick. 0.2 dB
+    // is well below one segment step, so nothing visible is dropped.
+    constexpr float kEps = 0.2f;
+    if (std::abs(targetInputDb     - lastDrawnInDb) > kEps
+     || std::abs(targetSidechainDb - lastDrawnScDb) > kEps
+     || std::abs(displayedGrDb     - lastDrawnGrDb) > kEps)
+    {
+        lastDrawnInDb = targetInputDb;
+        lastDrawnScDb = targetSidechainDb;
+        lastDrawnGrDb = displayedGrDb;
+        repaint();
+    }
 }
 
 //==============================================================================

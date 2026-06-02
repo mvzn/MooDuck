@@ -420,13 +420,24 @@ void MaybeDuckLookAndFeel::drawPushButtonLabel (juce::Graphics& g, juce::Rectang
 
     const auto upper = text.toUpperCase();
 
-    // Engraved-into-metal legend: dark text with a thin top highlight emboss.
-    juce::Colour textColour = juce::Colour(0xff2A2622);
+    // Legend tone follows the theme: dark text engraved into the LIGHT metal cap,
+    // but the palette WHITE on the darker dark-mode cap (where dark text vanishes).
+    juce::Colour textColour = dark ? pal.accentWhite : juce::Colour(0xff2A2622);
     if (! isEnabled)
         textColour = textColour.interpolatedWith(pal.chassisShadow, 0.45f).withMultipliedAlpha(0.85f);
 
-    g.setColour(pal.chassisHighlight.withAlpha(isEnabled ? 0.5f : 0.2f)); // emboss highlight
-    g.drawText(upper, rect.translated(0.0f, -0.7f).toNearestInt(), juce::Justification::centred, false);
+    // Emboss: light mode lifts a highlight above; dark mode drops a shadow below
+    // (so the white legend reads as raised, not carved).
+    if (dark)
+    {
+        g.setColour(juce::Colours::black.withAlpha(isEnabled ? 0.5f : 0.25f));
+        g.drawText(upper, rect.translated(0.0f, 0.7f).toNearestInt(), juce::Justification::centred, false);
+    }
+    else
+    {
+        g.setColour(pal.chassisHighlight.withAlpha(isEnabled ? 0.5f : 0.2f));
+        g.drawText(upper, rect.translated(0.0f, -0.7f).toNearestInt(), juce::Justification::centred, false);
+    }
     g.setColour(textColour);
     g.drawText(upper, rect.toNearestInt(), juce::Justification::centred, false);
 }
