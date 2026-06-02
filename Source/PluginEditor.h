@@ -119,11 +119,15 @@ private:
     juce::Label  bandScaleLabels[5];
     std::unique_ptr<SliderAttachment> bandScaleAttachments[5];
 
-    // --- Post-ducking EQ group
-    juce::GroupComponent eqGroup;
-    juce::Slider eqSliders[7];      // low freq, low gain, mid freq, mid gain, mid Q, high freq, high gain
-    juce::Label  eqLabels[7];
-    std::unique_ptr<SliderAttachment> eqAttachments[7];
+    // --- Pultec EQP-1A group (replaces the old 3-band post-ducking EQ)
+    juce::GroupComponent pultecGroup;
+    juce::Slider pultecSliders[8];   // LF Freq, LF Boost, LF Atten, HF Freq, HF Boost, HF BW, HF Atten Freq, HF Atten
+    juce::Label  pultecLabels[8];
+    std::unique_ptr<SliderAttachment> pultecAttachments[8];
+    juce::ToggleButton pultecSatButton;
+    std::unique_ptr<ButtonAttachment> pultecSatAttachment;
+    juce::ToggleButton pultecBypassButton;
+    std::unique_ptr<ButtonAttachment> pultecBypassAttachment;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MaybeDuckAudioProcessorEditor)
 };

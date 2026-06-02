@@ -1,0 +1,66 @@
+* EQP-1A passive section -- ground-truth oracle for the 60 Hz HF-Boost artifact
+* ---------------------------------------------------------------------------
+* Topology = the ABSounds/WDF binary tree (EQP1A_netlist.txt), node-for-node.
+* Component values = MaybeDuck Source/PultecCore.h, flat LF + cut, HF Sel 8 kHz,
+* BW 0.9.  The HF-Boost pot is modelled exactly as our WDF does: two resistors
+* RBH1 = (1-w)*12k (series) and RBH2 = w*12k (across the LC tank).
+*
+* Output read = the synthetic readout used by the WDF: -V(J) + V(R3),
+* where V(J)=V(n7) and V(R3)=V(n6b)-V(n7), so out = V(n6b) - 2*V(n7).
+*
+* RESULT (ngspice): 60 Hz is FLAT across the whole boost range
+*   boost off : 60Hz=-23.81 dB  8kHz=-23.81 dB
+*   boost  6  : 60Hz=-23.81 dB  8kHz= -8.x  dB
+*   boost 16  : 60Hz=-23.80 dB  8kHz= -3.26 dB   (+20.5 dB HF boost, 60Hz unchanged)
+* => the circuit has NO 60 Hz HF-Boost coupling.  Our WDF shows +5.46 dB there,
+*    which is therefore a WDF IMPLEMENTATION BUG (LF-specific: WDF matches at
+*    8 kHz, diverges at 60 Hz).  This deck is the per-node oracle for the hunt.
+*
+* Run:  ngspice -b eqp1a_artifact_oracle.cir
+* ---------------------------------------------------------------------------
+V1 n2 0 AC 1
+* HF Boost pot (2-resistor model) -- start with boost OFF
+RBH1 n2 n3 12000
+RBH2 n3 n4 1m
+* HF Boost LC tank + Q (C_adaptor = C1+L1 series, then RQ+RQoffset)
+C1 n3 na 9.38n
+L1 na nb 0.0422
+RQ nb nc 200
+RQoff nc n4 100
+* HF cut leg (sEFG): RCutHi1 then pFG = RCutHi2 || CHiCut   (cut = 0)
+RCH1 n4 n5 1000
+RCH2 n5 n7 1
+CHC  n5 n7 68n
+* LF leg (sHI): H = LoFreqC1 || RCutLo, then Rout = R2 + R3  (cut = 0)
+CLF1 n4 n6 26.2n
+RCL  n4 n6 1
+R2 n6 n6b 1000
+R3 n6b n7 10000
+* J = RBoostLo || LoFreqC2  (LF boost = 0)
+RBL n7 0 1
+CLF2 n7 0 785n
+
+.control
+  * --- boost OFF (RBH1=12k, RBH2~0) ---
+  ac dec 100 10 20000
+  let out = v(n6b) - 2*v(n7)
+  meas ac o60_off find vdb(out) at=60
+  meas ac o8k_off find vdb(out) at=8000
+
+  * --- boost +6 dB (w=0.375): RBH1=7.5k, RBH2=4.5k ---
+  alter RBH1 = 7500
+  alter RBH2 = 4500
+  ac dec 100 10 20000
+  let out = v(n6b) - 2*v(n7)
+  meas ac o60_b6 find vdb(out) at=60
+  meas ac o8k_b6 find vdb(out) at=8000
+
+  * --- boost +16 dB (w=1): RBH1~0, RBH2=12k ---
+  alter RBH1 = 1
+  alter RBH2 = 12000
+  ac dec 100 10 20000
+  let out = v(n6b) - 2*v(n7)
+  meas ac o60_b16 find vdb(out) at=60
+  meas ac o8k_b16 find vdb(out) at=8000
+.endc
+.end

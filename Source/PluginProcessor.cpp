@@ -57,13 +57,16 @@ MaybeDuckAudioProcessor::MaybeDuckAudioProcessor()
 
     pGrOut = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("grOut"));
 
-    pEqLowFreq  = apvts.getRawParameterValue("eqLowFreq");
-    pEqLowGain  = apvts.getRawParameterValue("eqLowGain");
-    pEqMidFreq  = apvts.getRawParameterValue("eqMidFreq");
-    pEqMidGain  = apvts.getRawParameterValue("eqMidGain");
-    pEqMidQ     = apvts.getRawParameterValue("eqMidQ");
-    pEqHighFreq = apvts.getRawParameterValue("eqHighFreq");
-    pEqHighGain = apvts.getRawParameterValue("eqHighGain");
+    pPultecLfFreq      = apvts.getRawParameterValue("pultecLfFreq");
+    pPultecLfBoost     = apvts.getRawParameterValue("pultecLfBoost");
+    pPultecLfAtten     = apvts.getRawParameterValue("pultecLfAtten");
+    pPultecHfFreq      = apvts.getRawParameterValue("pultecHfFreq");
+    pPultecHfBoost     = apvts.getRawParameterValue("pultecHfBoost");
+    pPultecHfBw        = apvts.getRawParameterValue("pultecHfBw");
+    pPultecHfAttenFreq = apvts.getRawParameterValue("pultecHfAttenFreq");
+    pPultecHfAtten     = apvts.getRawParameterValue("pultecHfAtten");
+    pPultecSatEnable   = apvts.getRawParameterValue("pultecSatEnable");
+    pPultecBypass      = apvts.getRawParameterValue("pultecBypass");
 }
 
 MaybeDuckAudioProcessor::~MaybeDuckAudioProcessor()
@@ -226,21 +229,41 @@ juce::AudioProcessorValueTreeState::ParameterLayout MaybeDuckAudioProcessor::cre
     params.push_back(std::make_unique<juce::AudioParameterInt>(
         "fftConvSize", "FFT Conv Size", 0, 2, 1));
 
-    // Post-ducking EQ (low shelf + mid bell + high shelf), applied after band summing
+    // Pultec EQP-1A — passive LC filter + tube saturation stage
+    // LF section: frequency index (0-4 → 20/30/40/60/100 Hz), boost and atten dB
+    params.push_back(std::make_unique<juce::AudioParameterInt>(
+        "pultecLfFreq",  "Pultec LF Freq",  0, 4, 4));   // default 100 Hz
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
-        "eqLowFreq",  "EQ Low Freq",  juce::NormalisableRange<float>(20.0f,   500.0f, 1.0f, 0.5f),   100.0f));
+        "pultecLfBoost", "Pultec LF Boost",
+        juce::NormalisableRange<float>(0.0f, 16.0f, 0.1f), 0.0f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
-        "eqLowGain",  "EQ Low Gain",  juce::NormalisableRange<float>(-12.0f,  12.0f,  0.1f),         0.0f));
+        "pultecLfAtten", "Pultec LF Atten",
+        juce::NormalisableRange<float>(0.0f, 16.0f, 0.1f), 0.0f));
+    // HF boost section: frequency index (0-6 → 3/4/5/8/10/12/16 kHz), boost dB, bandwidth
+    params.push_back(std::make_unique<juce::AudioParameterInt>(
+        "pultecHfFreq",  "Pultec HF Freq",  0, 6, 3));   // default 8 kHz
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
-        "eqMidFreq",  "EQ Mid Freq",  juce::NormalisableRange<float>(100.0f,  10000.0f, 1.0f, 0.3f), 1000.0f));
+        "pultecHfBoost", "Pultec HF Boost",
+        juce::NormalisableRange<float>(0.0f, 16.0f, 0.1f), 0.0f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
-        "eqMidGain",  "EQ Mid Gain",  juce::NormalisableRange<float>(-12.0f,  12.0f,  0.1f),         0.0f));
+        "pultecHfBw",    "Pultec HF Bandwidth",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.3f));  // 0=narrow, 1=wide
+    // HF cut section: atten freq index (0-2 → 5/10/20 kHz), atten dB
+    // Default: 2 (20 kHz). The CHiCut capacitor stays wired in the WDF passive
+    // network even at 0 dB atten, so a low Atten Sel position colours the baseline.
+    // 20 kHz puts the shelf above the audio band → flat init response.
+    params.push_back(std::make_unique<juce::AudioParameterInt>(
+        "pultecHfAttenFreq", "Pultec HF Atten Freq", 0, 2, 2));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
-        "eqMidQ",     "EQ Mid Q",     juce::NormalisableRange<float>(0.2f,    4.0f,   0.01f, 0.5f),  0.707f));
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(
-        "eqHighFreq", "EQ High Freq", juce::NormalisableRange<float>(2000.0f, 20000.0f, 1.0f, 0.3f), 8000.0f));
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(
-        "eqHighGain", "EQ High Gain", juce::NormalisableRange<float>(-12.0f,  12.0f,  0.1f),         0.0f));
+        "pultecHfAtten", "Pultec HF Atten",
+        juce::NormalisableRange<float>(0.0f, 14.0f, 0.1f), 0.0f));
+    // Tube saturation (Koren 12AX7 model, 4× oversampled)
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        "pultecSatEnable", "Pultec Tube Saturation", false));
+    // EQ bypass — when true the Pultec WDF + HF-cut biquad are skipped entirely
+    // (no oversampling overhead, pure passthrough). Saturation toggle is independent.
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        "pultecBypass", "Pultec EQ Bypass", false));
 
     // Output-only parameter: current gain-reduction amount in dB (positive). Written from
     // the audio thread once per block so hosts can record it as automation. Reading or
@@ -361,6 +384,10 @@ void MaybeDuckAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
     mainBandBufR.setSize(numBands, samplesPerBlock);
     scBandBufL.setSize(numBands, samplesPerBlock);
     scBandBufR.setSize(numBands, samplesPerBlock);
+    // setSize leaves contents undefined; the crossover fully overwrites these
+    // before they are read, but clear so a re-prepare never carries stale audio.
+    mainBandBufL.clear(); mainBandBufR.clear();
+    scBandBufL.clear();   scBandBufR.clear();
 
     // Lookahead delay line: max 18 ms at current sample rate (slider goes 0-16 ms, +2 ms margin).
     // Sized for the worst case (the largest Xtreme step) so the wide range can be
@@ -377,18 +404,20 @@ void MaybeDuckAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
     lookaheadBufL.setSize(1, samplesPerBlock);
     lookaheadBufR.setSize(1, samplesPerBlock);
     prevLookaheadSamples = 0;
-
-    // Post-ducking EQ filter prep
-    juce::dsp::ProcessSpec eqSpec { sampleRate, (juce::uint32) samplesPerBlock, 1 };
-    for (auto* f : { &eqLowL, &eqLowR, &eqMidL, &eqMidR, &eqHighL, &eqHighR })
+    // Ramp time long enough to mask big jumps (e.g. moving from 0 to 16 ms) without
+    // audible group-delay smear. 100 ms glides ~0.5 ms per 5 ms — well below the
+    // perceptual threshold for time-domain warping.
+    lookaheadDelaySmoothed.reset(sampleRate, 0.100);
     {
-        f->prepare(eqSpec);
-        f->reset();
+        const float initLookMs = pLookahead ? pLookahead->load() : 0.0f;
+        const int   initSamples = juce::jlimit(0, maxLookahead,
+            static_cast<int>(std::round(static_cast<double>(initLookMs) * 0.001 * sampleRate)));
+        lookaheadDelaySmoothed.setCurrentAndTargetValue(static_cast<float>(initSamples));
     }
-    // Force coefficient recomputation on first block by invalidating the cached values.
-    prevEqLowFreq = prevEqMidFreq = prevEqHighFreq = -1.0f;
-    prevEqLowGain = prevEqMidGain = prevEqHighGain = -999.0f;
-    prevEqMidQ    = -1.0f;
+
+    // Pultec EQP-1A WDF filter + tube saturation
+    pultec.prepare(sampleRate, samplesPerBlock);
+    triode.prepare(sampleRate, samplesPerBlock);
 
     // FFT Conv objects — pre-allocate all three sizes (no audio-thread allocation later)
     static constexpr int kOrders[3] = { 9, 10, 11 };
@@ -424,10 +453,31 @@ void MaybeDuckAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
     std::fill(std::begin(spectralMags),   std::end(spectralMags),   0.0f);
     scSpectralHead = 0;
 
-    // Latency: report initial value based on current params
-    const int initLatency = getConvLatencySamples();
+    // Latency: report initial value based on current params.
+    // Constant part = Pultec EQ + triode 4x-oversampler group delay. Both stages
+    // hold a CONSTANT delay regardless of their bypass/enable state (each runs a
+    // latency-matched dry-path delay when off), so this contributes the same
+    // amount in every mode and can be reported once here — no mid-stream
+    // setLatencySamples churn. eqTriodeLatency caches it for the audio thread,
+    // which only re-reports when the (separately variable) FFT-conv hop changes.
+    eqTriodeLatency = pultec.getLatencySamples() + triode.getLatencySamples();
+    const int initLatency = eqTriodeLatency + getConvLatencySamples();
     setLatencySamples(initLatency);
     prevLatencyReported = initLatency;
+
+    // Metering / monitoring state — reset so a re-prepare (e.g. sample-rate or
+    // block-size change) starts the meters clean rather than carrying stale dB.
+    convFrameGrDb            = 0.0f;
+    inputLevelSmoothedDb     = -100.0f;
+    sidechainLevelSmoothedDb = -100.0f;
+    gainReductionSmoothedDb  = 0.0f;
+    inputLevelDb.store(-100.0f);
+    sidechainLevelDb.store(-100.0f);
+    gainReductionDb.store(0.0f);
+    gainReductionAmountDb.store(0.0f);
+    cpuUsagePercent.store(0.0f);
+    processTimeMs.store(0.0f);
+    sidechainConnected.store(false);
 
     currentSampleRate.store(sampleRate);
     currentBlockSize.store(samplesPerBlock);
@@ -502,6 +552,20 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     const int  activeConvFftSize = kConvSizes[sizeIdx];
     const int  hopSize           = activeConvFftSize / 2;
 
+    // --- Bus pointers + sidechain availability (needed up here to derive the
+    //     effective mode and the reported latency before the conv/latency logic).
+    juce::AudioBuffer<float> mainInput = getBusBuffer(buffer, true, 0);
+    juce::AudioBuffer<float> scInput   = getBusBuffer(buffer, true, 1);
+
+    const bool hasSidechainBus = getBusCount(true) > 1;
+    const bool scConnected     = hasSidechainBus && scInput.getNumChannels() > 0;
+    const bool useSidechain    = dynParams.enable_sc && scConnected;
+
+    // Spectral detection is meaningless without an external sidechain to analyse.
+    // With no SC driving, fall back to wideband so the duck stage runs as a plain
+    // self-detecting compressor on the main signal (+ the Pultec EQ downstream).
+    const int effMode = (! useSidechain && mode == 2) ? 0 : mode;
+
     // Reset conv state if user changed FFT size
     if (sizeIdx != prevConvSizeIdx)
     {
@@ -529,20 +593,33 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     const int lookaheadSamples = juce::jlimit(
         0, lookaheadDelayL.getMaximumDelayInSamples(),
         static_cast<int>(std::round(static_cast<double>(lookaheadMs) * 0.001 * sr)));
-    lookaheadDelayL.setDelay(static_cast<float>(lookaheadSamples));
-    lookaheadDelayR.setDelay(static_cast<float>(lookaheadSamples));
+    // Ramp the actual tap position to the new target — per-sample setDelay inside
+    // the lookahead loop reads from lookaheadDelaySmoothed. Lagrange3rd interpolation
+    // means fractional sample values produce smooth audio, eliminating the snap-click
+    // that occurred with InterpolationTypes::None.
+    lookaheadDelaySmoothed.setTargetValue(static_cast<float>(lookaheadSamples));
     prevLookaheadSamples = lookaheadSamples;
 
-    // Update reported latency when mode/conv/lookahead changes
-    const int newLatency = ((mode == 2 && useConv) ? hopSize : 0) + lookaheadSamples;
+    // Update reported latency only when the FFT-conv hop size changes (mode/size switches
+    // happen between transports). Lookahead changes are NOT reported on the audio thread —
+    // many hosts treat setLatencySamples() mid-playback as a buffer-flush event and produce
+    // an audible click. The smoothed delay tap above already absorbs the parameter glide;
+    // the small host-comp drift that results from not reporting lookahead changes is
+    // inaudible compared to the click that would otherwise occur on every knob movement.
+    // Total = constant EQ/triode oversampler delay (folded in at prepareToPlay,
+    // never changes mid-stream) + the variable FFT-conv hop. Only the hop part
+    // can change between transports; adding the constant keeps the reported
+    // total correct in every mode combination without extra churn.
+    const int newLatency = eqTriodeLatency + ((effMode == 2 && useConv) ? hopSize : 0);
     if (newLatency != prevLatencyReported)
     {
         setLatencySamples(newLatency);
         prevLatencyReported = newLatency;
     }
 
-    // Detector always reads sc_xn (the live SC source — external bus or live main alias).
-    // The processor uses sc_xn unconditionally so lookahead is honored even when no external SC is connected.
+    // Detector always reads sc_xn. With an external SC active that's the live SC
+    // bus (so lookahead aligns the delayed main to it); with none driving it is
+    // the live main (self-detection) so the stage behaves as a regular compressor.
     DynamicsProcessorParameters dynParamsForProc = dynParams;
     dynParamsForProc.enable_sc = true;
     for (int b = 0; b < numBands; ++b)
@@ -557,35 +634,34 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     for (int i = 0; i < StereoMultibandCrossover::numCrossoverPoints; ++i)
         crossover.setCrossoverFrequency(i, static_cast<double>(*pXover[i]));
 
-    // --- Bus pointers
-    juce::AudioBuffer<float> mainInput = getBusBuffer(buffer, true, 0);
-    juce::AudioBuffer<float> scInput   = getBusBuffer(buffer, true, 1);
-
-    const bool hasSidechainBus = getBusCount(true) > 1;
-    const bool scConnected     = hasSidechainBus && scInput.getNumChannels() > 0;
-    const bool useSidechain    = dynParams.enable_sc && scConnected;
-
     const int  numSamples = buffer.getNumSamples();
     const bool isStereo   = mainInput.getNumChannels() > 1;
 
     const float* liveMainL = mainInput.getReadPointer(0);
     const float* liveMainR = isStereo ? mainInput.getReadPointer(1) : liveMainL;
 
-    // SC always reads the LIVE signal so the detector sees future relative to the delayed main
+    // With an external sidechain active the detector reads it LIVE (so it sees
+    // ahead of the lookahead-delayed main). With NO external SC driving, it reads
+    // the live main — self-detection, i.e. a regular compressor on the main.
     const float* scLPtr = useSidechain ? scInput.getReadPointer(0) : liveMainL;
     const float* scRPtr = useSidechain
                           ? (scInput.getNumChannels() > 1 ? scInput.getReadPointer(1) : scLPtr)
                           : liveMainR;
 
-    // --- Lookahead delay: always run so toggling lookahead is glitch-free
+    // --- Lookahead delay: always run so toggling lookahead is glitch-free.
+    // Ramped delay length + fractional-sample interpolation means parameter changes
+    // produce a smooth glide rather than a snap-click.
     float* dL = lookaheadBufL.getWritePointer(0);
     float* dR = lookaheadBufR.getWritePointer(0);
     for (int n = 0; n < numSamples; ++n)
     {
+        const float d = lookaheadDelaySmoothed.getNextValue();
+        lookaheadDelayL.setDelay(d);
         lookaheadDelayL.pushSample(0, liveMainL[n]);
         dL[n] = lookaheadDelayL.popSample(0);
         if (isStereo)
         {
+            lookaheadDelayR.setDelay(d);
             lookaheadDelayR.pushSample(0, liveMainR[n]);
             dR[n] = lookaheadDelayR.popSample(0);
         }
@@ -614,7 +690,7 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
 
     float grAmountDb = 0.0f;
 
-    if (mode == 0)
+    if (effMode == 0)
     {
         // === WIDEBAND ===
         // Bypass crossover, single compressor pair. mainL/outL may share storage,
@@ -635,7 +711,7 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
             -static_cast<float>(widebandProcessorL.getGainReductionDb()),
             -static_cast<float>(widebandProcessorR.getGainReductionDb()));
     }
-    else if (mode == 1 || (mode == 2 && !useConv))
+    else if (effMode == 1 || (effMode == 2 && !useConv))
     {
         // === MULTIBAND (mode 1) or SPECTRAL without conv (mode 2 + !useConv) ===
         float* mbL[numBands], *mbR[numBands], *sbL[numBands], *sbR[numBands];
@@ -654,7 +730,7 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         // Spectral mode: per-band SC energy via FFT (zero-latency, look-back window).
         // scLPtr/scRPtr alias liveMain when no external SC, so this always has valid data.
         float perBandScLevel[numBands] = {};
-        if (mode == 2)
+        if (effMode == 2)
         {
             for (int n = 0; n < numSamples; ++n)
             {
@@ -726,7 +802,7 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
 
             for (int n = 0; n < numSamples; ++n)
             {
-                if (mode == 2)
+                if (effMode == 2)
                 {
                     const double scVal = static_cast<double>(perBandScLevel[b]);
                     bandProcessorsL[b].processSidechainInputSample(scVal);
@@ -804,52 +880,34 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         grAmountDb = convFrameGrDb;
     }
 
-    // --- Post-ducking EQ (low shelf + mid bell + high shelf)
+    // --- Pultec EQP-1A (WDF passive filter + Koren 12AX7 tube saturation)
     {
-        const float lowFreq  = pEqLowFreq  ? pEqLowFreq->load()  : 100.0f;
-        const float lowGain  = pEqLowGain  ? pEqLowGain->load()  : 0.0f;
-        const float midFreq  = pEqMidFreq  ? pEqMidFreq->load()  : 1000.0f;
-        const float midGain  = pEqMidGain  ? pEqMidGain->load()  : 0.0f;
-        const float midQ     = pEqMidQ     ? pEqMidQ->load()     : 0.707f;
-        const float highFreq = pEqHighFreq ? pEqHighFreq->load() : 8000.0f;
-        const float highGain = pEqHighGain ? pEqHighGain->load() : 0.0f;
+        const bool eqBypass = pPultecBypass && pPultecBypass->load() > 0.5f;
+        pultec.setBypass (eqBypass);
+        pultec.setLfFreqIndex      (pPultecLfFreq      ? static_cast<int> (pPultecLfFreq->load())      : 4);
+        pultec.setLfBoostDb        (pPultecLfBoost     ? pPultecLfBoost->load()                        : 0.0f);
+        pultec.setLfAttenDb        (pPultecLfAtten     ? pPultecLfAtten->load()                        : 0.0f);
+        pultec.setHfFreqIndex      (pPultecHfFreq      ? static_cast<int> (pPultecHfFreq->load())      : 3);
+        pultec.setHfBoostDb        (pPultecHfBoost     ? pPultecHfBoost->load()                        : 0.0f);
+        pultec.setHfBandwidth      (pPultecHfBw        ? pPultecHfBw->load()                           : 0.3f);
+        pultec.setHfAttenFreqIndex (pPultecHfAttenFreq ? static_cast<int> (pPultecHfAttenFreq->load()) : 1);
+        pultec.setHfAttenDb        (pPultecHfAtten     ? pPultecHfAtten->load()                        : 0.0f);
 
-        if (! juce::exactlyEqual(lowFreq, prevEqLowFreq) || ! juce::exactlyEqual(lowGain, prevEqLowGain))
+        if (outR != nullptr)
         {
-            auto c = juce::dsp::IIR::Coefficients<float>::makeLowShelf(
-                sr, lowFreq, 0.707f, juce::Decibels::decibelsToGain(lowGain));
-            *eqLowL.coefficients = *c;
-            *eqLowR.coefficients = *c;
-            prevEqLowFreq = lowFreq; prevEqLowGain = lowGain;
+            pultec.processBlock (outL, outR, numSamples);
         }
-        if (! juce::exactlyEqual(midFreq, prevEqMidFreq) || ! juce::exactlyEqual(midGain, prevEqMidGain) || ! juce::exactlyEqual(midQ, prevEqMidQ))
+        else
         {
-            auto c = juce::dsp::IIR::Coefficients<float>::makePeakFilter(
-                sr, midFreq, midQ, juce::Decibels::decibelsToGain(midGain));
-            *eqMidL.coefficients = *c;
-            *eqMidR.coefficients = *c;
-            prevEqMidFreq = midFreq; prevEqMidGain = midGain; prevEqMidQ = midQ;
-        }
-        if (! juce::exactlyEqual(highFreq, prevEqHighFreq) || ! juce::exactlyEqual(highGain, prevEqHighGain))
-        {
-            auto c = juce::dsp::IIR::Coefficients<float>::makeHighShelf(
-                sr, highFreq, 0.707f, juce::Decibels::decibelsToGain(highGain));
-            *eqHighL.coefficients = *c;
-            *eqHighR.coefficients = *c;
-            prevEqHighFreq = highFreq; prevEqHighGain = highGain;
+            for (int n = 0; n < numSamples; ++n) { float r = outL[n]; pultec.processSample (outL[n], r); }
         }
 
-        // Skip the IIR pass when all bands are at 0 dB (flat) — saves cycles in the common case
-        const bool eqActive = std::abs(lowGain) > 0.01f || std::abs(midGain) > 0.01f || std::abs(highGain) > 0.01f;
-        if (eqActive)
-        {
-            for (int n = 0; n < numSamples; ++n)
-            {
-                outL[n] = eqHighL.processSample(eqMidL.processSample(eqLowL.processSample(outL[n])));
-                if (outR)
-                    outR[n] = eqHighR.processSample(eqMidR.processSample(eqLowR.processSample(outR[n])));
-            }
-        }
+        const bool satEnabled = pPultecSatEnable && pPultecSatEnable->load() > 0.5f;
+        triode.setEnabled (satEnabled);
+        if (outR != nullptr)
+            triode.processBlock (outL, outR, numSamples);
+        else
+            triode.processBlock (outL, outL, numSamples);
     }
 
     // Absolute-dB peaks for the meter strips: IN follows the main input,

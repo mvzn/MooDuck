@@ -123,7 +123,7 @@ public:
         const double Q   = params.Q;
         const auto   alg = params.filterAlgorithm;
 
-        const double wd = juce::MathConstants<double>::pi * fc;
+        const double wd = juce::MathConstants<double>::twoPi * fc;
         const double T  = 1.0 / sampleRate;
         const double wa = (2.0 / T) * std::tan(wd * T / 2.0);
         const double g  = wa * T / 2.0;

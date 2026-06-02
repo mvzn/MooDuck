@@ -11,6 +11,8 @@
 #include <JuceHeader.h>
 #include "DynamicsCore.h"
 #include "CrossoverCore.h"
+#include "KorenTriode.h"   // Pultec EQP-1A tube saturation stage (not yet wired up)
+#include "PultecCore.h"   // Pultec EQP-1A WDF filter network (Phase 2)
 
 //==============================================================================
 /**
@@ -100,14 +102,17 @@ public:
     // automation recording. Not used to drive any DSP.
     juce::AudioParameterFloat* pGrOut = nullptr;
 
-    // Post-ducking EQ
-    std::atomic<float>* pEqLowFreq  = nullptr;
-    std::atomic<float>* pEqLowGain  = nullptr;
-    std::atomic<float>* pEqMidFreq  = nullptr;
-    std::atomic<float>* pEqMidGain  = nullptr;
-    std::atomic<float>* pEqMidQ     = nullptr;
-    std::atomic<float>* pEqHighFreq = nullptr;
-    std::atomic<float>* pEqHighGain = nullptr;
+    // Pultec EQP-1A
+    std::atomic<float>* pPultecLfFreq      = nullptr;  // 0-4 → 20/30/40/60/100 Hz
+    std::atomic<float>* pPultecLfBoost     = nullptr;  // 0-16 dB
+    std::atomic<float>* pPultecLfAtten     = nullptr;  // 0-16 dB
+    std::atomic<float>* pPultecHfFreq      = nullptr;  // 0-6 → 3/4/5/8/10/12/16 kHz
+    std::atomic<float>* pPultecHfBoost     = nullptr;  // 0-16 dB
+    std::atomic<float>* pPultecHfBw        = nullptr;  // 0-1 bandwidth (0=narrow, 1=wide)
+    std::atomic<float>* pPultecHfAttenFreq = nullptr;  // 0-2 → 5/10/20 kHz
+    std::atomic<float>* pPultecHfAtten     = nullptr;  // 0-14 dB
+    std::atomic<float>* pPultecSatEnable   = nullptr;  // bool: tube saturation on/off
+    std::atomic<float>* pPultecBypass      = nullptr;  // bool: EQ passthrough (skips WDF + HF-cut)
 
     // monitoring
     float getCpuUsagePercent() const noexcept      { return cpuUsagePercent.load(); }
@@ -133,17 +138,13 @@ private:
     juce::AudioBuffer<float> mainBandBufL, mainBandBufR;
     juce::AudioBuffer<float> scBandBufL,   scBandBufR;
 
-    // Post-ducking EQ — low shelf + mid bell + high shelf, per-channel filter state
-    juce::dsp::IIR::Filter<float> eqLowL,  eqLowR;
-    juce::dsp::IIR::Filter<float> eqMidL,  eqMidR;
-    juce::dsp::IIR::Filter<float> eqHighL, eqHighR;
-    float prevEqLowFreq  = 0.0f, prevEqLowGain  = 0.0f;
-    float prevEqMidFreq  = 0.0f, prevEqMidGain  = 0.0f, prevEqMidQ = 0.0f;
-    float prevEqHighFreq = 0.0f, prevEqHighGain = 0.0f;
+    PultecEQP1A      pultec;
+    KorenTriode12AX7 triode;
 
     // Lookahead delay line on the main path (sidechain is undelayed → detector sees future)
-    juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::None> lookaheadDelayL;
-    juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::None> lookaheadDelayR;
+    juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Lagrange3rd> lookaheadDelayL;
+    juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Lagrange3rd> lookaheadDelayR;
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> lookaheadDelaySmoothed;
     juce::AudioBuffer<float> lookaheadBufL, lookaheadBufR;
     int prevLookaheadSamples = 0;
 
@@ -189,6 +190,7 @@ private:
 
     int   prevConvSizeIdx     = 1; // 0=512, 1=1024, 2=2048
     int   prevLatencyReported = 0;
+    int   eqTriodeLatency     = 0; // constant Pultec EQ + triode oversampler delay (host-rate samples), set in prepareToPlay
     float convFrameGrDb       = 0.0f; // worst-case dB reduction from last conv frame
 
     void processConvFrame (int fftSize, int sizeIdx,
