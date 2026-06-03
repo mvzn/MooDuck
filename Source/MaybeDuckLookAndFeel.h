@@ -90,9 +90,15 @@ public:
     // --- Draw helpers (used by the editor paint() and overridden draw methods)
     void drawBrushedChassis (juce::Graphics&, juce::Rectangle<float> area) const;
     // Paints a recessed rack-unit module inset into the chassis (darker brushed
-    // face, inset bevel, side mounting rails + rack screws). Draw behind a
-    // section's controls (e.g. the Dynamics group) in the editor's paint().
-    void drawRackInset      (juce::Graphics&, juce::Rectangle<float> area) const;
+    // face, inset bevel, side mounting rails + rack screws). `localChassis` is the
+    // chassis tone at the rack's position — the panel is derived by darkening it a
+    // fixed amount, so the module reads as recessed whether it sits high (light
+    // chassis) or low (dark chassis). Draw behind a section's controls in paint().
+    void drawRackInset      (juce::Graphics&, juce::Rectangle<float> area, juce::Colour localChassis) const;
+
+    // The chassis brushed-gradient tone at a normalised vertical position (0 = top
+    // highlight, 1 = bottom shadow), matching drawBrushedChassis().
+    juce::Colour chassisToneAt (float yNorm) const;
     void drawScrew          (juce::Graphics&, juce::Point<float> centre, float radius, float slotAngleRadians) const;
     void drawEngravedText   (juce::Graphics&, const juce::String& text, juce::Rectangle<float> area,
                              juce::Justification just, juce::Font font) const;

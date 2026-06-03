@@ -610,7 +610,11 @@ void MaybeDuckAudioProcessorEditor::renderBackground()
         auto rb = groupBounds.toFloat();
         rb.setX(0.0f);
         rb.setWidth((float) getWidth());   // full edge-to-edge, rails at the case sides
-        mdLookAndFeel.drawRackInset(g, rb);
+        // Pass the chassis tone at this rack's vertical centre so the panel is
+        // darkened RELATIVE to its surroundings -> consistently recessed whether the
+        // rack sits high (light chassis) or low (dark chassis).
+        const float yNorm = rb.getCentreY() / (float) juce::jmax(1, getHeight());
+        mdLookAndFeel.drawRackInset(g, rb, mdLookAndFeel.chassisToneAt(yNorm));
     };
     fullWidthRack(rackBoundsDyn);
 

@@ -151,7 +151,17 @@ void MaybeDuckLookAndFeel::drawBrushedChassis (juce::Graphics& g, juce::Rectangl
     g.fillRect(area);
 }
 
-void MaybeDuckLookAndFeel::drawRackInset (juce::Graphics& g, juce::Rectangle<float> area) const
+juce::Colour MaybeDuckLookAndFeel::chassisToneAt (float yNorm) const
+{
+    // Mirrors drawBrushedChassis: highlight at top -> chassisMid at 0.55 -> shadow.
+    yNorm = juce::jlimit(0.0f, 1.0f, yNorm);
+    if (yNorm <= 0.55f)
+        return pal.chassisHighlight.interpolatedWith(pal.chassisMid, yNorm / 0.55f);
+    return pal.chassisMid.interpolatedWith(pal.chassisShadow, (yNorm - 0.55f) / 0.45f);
+}
+
+void MaybeDuckLookAndFeel::drawRackInset (juce::Graphics& g, juce::Rectangle<float> area,
+                                         juce::Colour localChassis) const
 {
     if (area.isEmpty()) return;
     const float corner = 5.0f;
@@ -160,25 +170,27 @@ void MaybeDuckLookAndFeel::drawRackInset (juce::Graphics& g, juce::Rectangle<flo
     g.setColour(juce::Colours::black.withAlpha(0.33f));
     g.fillRoundedRectangle(area.expanded(1.5f), corner + 2.0f);
 
-    // Recessed module face — a darker, cooler brushed panel than the chassis, so
-    // it reads as a separate unit dropped into the box. The gradient is anchored
-    // over a FIXED span from the top (not the rack's own bottom) so two racks of
-    // slightly different heights read with the IDENTICAL shade at the same offset.
-    constexpr float kRackGradSpan = 180.0f;
-    juce::ColourGradient pg(pal.chassisMid.darker(0.22f), area.getX(), area.getY(),
-                            pal.chassisShadow.darker(0.04f), area.getX(), area.getY() + kRackGradSpan, false);
-    pg.addColour(0.5, pal.chassisMid.darker(0.34f));
+    // Recessed module face. CRITICAL: the panel is derived from the chassis tone AT
+    // THIS RACK'S POSITION (localChassis), darkened a FIXED amount — so it always
+    // reads ~the same amount darker than its surroundings, whether the rack sits
+    // high (light chassis) or low (dark chassis). A fixed absolute panel colour
+    // would look recessed up top but like a raised light patch down low.
+    const auto faceTop = localChassis.darker(0.42f);
+    const auto faceMid = localChassis.darker(0.55f);
+    const auto faceBot = localChassis.darker(0.72f);
+    juce::ColourGradient pg(faceTop, area.getX(), area.getY(),
+                            faceBot, area.getX(), area.getBottom(), false);
+    pg.addColour(0.5, faceMid);
     g.setGradientFill(pg);
     g.fillRoundedRectangle(area, corner);
 
-    // Brushed grain inside the module (clipped to the panel). Anchor the tile to the
-    // panel's own top-left so every rack samples the SAME part of the noise tile and
-    // therefore reads with identical texture/brightness regardless of screen position.
+    // Brushed grain inside the module, anchored to the panel's own top-left so every
+    // rack samples the identical part of the noise tile (consistent texture).
     {
         juce::Graphics::ScopedSaveState save(g);
         juce::Path clip; clip.addRoundedRectangle(area, corner);
         g.reduceClipRegion(clip);
-        g.setTiledImageFill(grainImage, (int) area.getX(), (int) area.getY(), 0.38f);
+        g.setTiledImageFill(grainImage, (int) area.getX(), (int) area.getY(), 0.34f);
         g.fillRoundedRectangle(area, corner);
     }
 
