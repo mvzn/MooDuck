@@ -149,6 +149,17 @@ private:
     juce::AudioBuffer<float> lookaheadBufL, lookaheadBufR;
     int prevLookaheadSamples = 0;
 
+    // Lookahead change handling: SMALL changes glide the delay tap smoothly; LARGE
+    // jumps (e.g. the Xtreme range, up to 10 s) would sweep the tap across seconds of
+    // buffer (warble/time-warp), so they crossfade the output instead — fade out,
+    // snap the tap silently, fade back in. Rapid changes keep the output muted until
+    // they settle, then snap + fade in once.
+    float lookaheadFadeGain   = 1.0f;  // output gain of the lookahead stage during a crossfade
+    int   lookaheadFadeState  = 0;     // 0 = idle, 1 = fading out, 2 = fading in
+    float lookaheadFadeInc    = 1.0f;  // per-sample fade step (~12 ms)
+    int   lookaheadPendingDelay = 0;   // tap target to snap to at the fade bottom (samples)
+    int   lookaheadBigJumpThresh = 0;  // samples; changes above this crossfade instead of glide
+
     // Wideband mode (bypass crossover)
     DynamicsProcessor widebandProcessorL, widebandProcessorR;
 

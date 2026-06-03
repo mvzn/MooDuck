@@ -413,7 +413,15 @@ void MaybeDuckAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
         const int   initSamples = juce::jlimit(0, maxLookahead,
             static_cast<int>(std::round(static_cast<double>(initLookMs) * 0.001 * sampleRate)));
         lookaheadDelaySmoothed.setCurrentAndTargetValue(static_cast<float>(initSamples));
+        lookaheadPendingDelay = initSamples;
     }
+    // Crossfade params for large lookahead jumps: ~12 ms fade each way; any change
+    // bigger than ~60 ms (i.e. anything in the Xtreme range) crossfades instead of
+    // gliding, so the delay tap never sweeps audibly across seconds of buffer.
+    lookaheadFadeGain      = 1.0f;
+    lookaheadFadeState     = 0;
+    lookaheadFadeInc       = 1.0f / juce::jmax(1.0f, static_cast<float>(0.012 * sampleRate));
+    lookaheadBigJumpThresh = static_cast<int>(std::round(0.060 * sampleRate));
 
     // Pultec EQP-1A WDF filter + tube saturation
     pultec.prepare(sampleRate, samplesPerBlock);
@@ -594,11 +602,26 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     const int lookaheadSamples = juce::jlimit(
         0, lookaheadDelayL.getMaximumDelayInSamples(),
         static_cast<int>(std::round(static_cast<double>(lookaheadMs) * 0.001 * sr)));
-    // Ramp the actual tap position to the new target — per-sample setDelay inside
-    // the lookahead loop reads from lookaheadDelaySmoothed. Lagrange3rd interpolation
-    // means fractional sample values produce smooth audio, eliminating the snap-click
-    // that occurred with InterpolationTypes::None.
-    lookaheadDelaySmoothed.setTargetValue(static_cast<float>(lookaheadSamples));
+    // SMALL changes glide the tap (smooth, fractional-sample interpolated). LARGE
+    // jumps (Xtreme range) would sweep the tap across seconds of buffer -> warble, so
+    // they crossfade instead: the per-sample loop below fades the output out, snaps
+    // the tap silently at the bottom, then fades back in. Rapid clicks just keep the
+    // output muted (re-triggering the dip) until they settle, then snap + fade in.
+    {
+        const float curAim   = lookaheadDelaySmoothed.getTargetValue();
+        const bool  bigJump  = std::abs(static_cast<float>(lookaheadSamples) - curAim)
+                                   > static_cast<float>(lookaheadBigJumpThresh);
+        if (bigJump)
+        {
+            lookaheadPendingDelay = lookaheadSamples;
+            if (lookaheadFadeState != 1)   // (re)start the fade-out toward the new target
+                lookaheadFadeState = 1;
+        }
+        else if (lookaheadFadeState == 0)
+        {
+            lookaheadDelaySmoothed.setTargetValue(static_cast<float>(lookaheadSamples)); // small -> glide
+        }
+    }
     prevLookaheadSamples = lookaheadSamples;
 
     // Update reported latency only when the FFT-conv hop size changes (mode/size switches
@@ -656,15 +679,33 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     float* dR = lookaheadBufR.getWritePointer(0);
     for (int n = 0; n < numSamples; ++n)
     {
+        // Lookahead crossfade state machine (large-jump handling — see above).
+        if (lookaheadFadeState == 1)            // fading out
+        {
+            lookaheadFadeGain -= lookaheadFadeInc;
+            if (lookaheadFadeGain <= 0.0f)
+            {
+                lookaheadFadeGain = 0.0f;
+                // Snap the tap silently to the latest target, then fade back in.
+                lookaheadDelaySmoothed.setCurrentAndTargetValue(static_cast<float>(lookaheadPendingDelay));
+                lookaheadFadeState = 2;
+            }
+        }
+        else if (lookaheadFadeState == 2)       // fading in
+        {
+            lookaheadFadeGain += lookaheadFadeInc;
+            if (lookaheadFadeGain >= 1.0f) { lookaheadFadeGain = 1.0f; lookaheadFadeState = 0; }
+        }
+
         const float d = lookaheadDelaySmoothed.getNextValue();
         lookaheadDelayL.setDelay(d);
         lookaheadDelayL.pushSample(0, liveMainL[n]);
-        dL[n] = lookaheadDelayL.popSample(0);
+        dL[n] = lookaheadDelayL.popSample(0) * lookaheadFadeGain;
         if (isStereo)
         {
             lookaheadDelayR.setDelay(d);
             lookaheadDelayR.pushSample(0, liveMainR[n]);
-            dR[n] = lookaheadDelayR.popSample(0);
+            dR[n] = lookaheadDelayR.popSample(0) * lookaheadFadeGain;
         }
     }
     const float* mainL = dL;
