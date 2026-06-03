@@ -25,7 +25,7 @@ namespace {
     // margins; keep kWindowH comfortably above that so nothing crowds the bottom.
     // To change the overall size, retune the section heights too.
     constexpr int kWindowW       = 820;
-    constexpr int kWindowH       = 672;
+    constexpr int kWindowH       = 686;   // room for the zig-zag Pultec rack
     constexpr int kOuterMargin   = 22;
     constexpr int kGroupGap      = 8;    // breathing room between sections
     constexpr int kGroupTitleH   = 22;
@@ -175,7 +175,7 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
     xtremeLookaheadAttachment = std::make_unique<ButtonAttachment>(audioProcessor.apvts, "xtremeLookahead", xtremeLookaheadButton);
 
     // ----- Sidechain Mode group -----
-    setupGroup(modeGroup, "Sidechain Mode");
+    setupGroup(modeGroup, "Modes");
 
     const juce::String modeNames[3] = { "Wideband", "Multiband", "Spectral" };
     const juce::String modeTips [3] = {
@@ -222,7 +222,7 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
     addAndMakeVisible(convLatencyLabel);
 
     // ----- Crossover group -----
-    setupGroup(crossoverGroup, "Crossover Frequencies");
+    setupGroup(crossoverGroup, "Crossover");
 
     const juce::String xoverNames[] = { "Low", "Low-Mid", "High-Mid", "High" };
     const juce::String xoverIds[]   = { "xover0", "xover1", "xover2", "xover3" };
@@ -261,6 +261,7 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
         bandSwitches[i].setButtonText(bandSwitchNames[i]);
         bandSwitches[i].setClickingTogglesState(false);
         bandSwitches[i].getProperties().set("softSwitch", true);   // low-relief momentary LookAndFeel variant
+        bandSwitches[i].getProperties().set("alwaysLit", true);    // backlight always on; colour = state
         bandSwitches[i].setTooltip("Band " + juce::String(i + 1)
             + " — click to cycle Normal / Solo (blue) / Mute (red). Console-style on the band output; Multiband only.");
         bandSwitches[i].onClick = [this, i] { cycleBandState(i); };
@@ -295,7 +296,7 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
     }
 
     // ----- Pultec EQP-1A group -----
-    setupGroup(pultecGroup, "Post-Ducking PulEQ");
+    setupGroup(pultecGroup, "Post PulEQ");
 
     // Real EQP-1A front-panel terminology: LF Sel / LF Boost / LF Atten / HF Sel /
     // HF Boost / Bandwidth / Atten Sel / HF Atten. Avoids the prior "HF Atten Hz"
@@ -343,14 +344,20 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
             audioProcessor.apvts, pultecIds[i], pultecSliders[i]);
     }
 
+    // Bypass + Sat use the soft-switch style (like the crossover band switches),
+    // lit only when engaged. Sat glows blood-orange (tube-drive); Bypass glows red.
     pultecSatButton.setButtonText("Sat");
     pultecSatButton.setTooltip("12AX7 triode saturation on the Pultec makeup-amp stage (4× oversampled).");
+    pultecSatButton.getProperties().set("softSwitch", true);
+    pultecSatButton.getProperties().set("litColour", static_cast<juce::int64>(0xffCB3E12)); // blood orange
     addAndMakeVisible(pultecSatButton);
     pultecSatAttachment = std::make_unique<ButtonAttachment>(
         audioProcessor.apvts, "pultecSatEnable", pultecSatButton);
 
     pultecBypassButton.setButtonText("Bypass");
     pultecBypassButton.setTooltip("Bypass the Pultec EQ entirely (pure passthrough — no oversampling, no WDF).");
+    pultecBypassButton.getProperties().set("softSwitch", true);
+    pultecBypassButton.getProperties().set("litColour", static_cast<juce::int64>(MaybeDuckLookAndFeel::kBandMute)); // red when bypassed
     addAndMakeVisible(pultecBypassButton);
     pultecBypassAttachment = std::make_unique<ButtonAttachment>(
         audioProcessor.apvts, "pultecBypass", pultecBypassButton);
@@ -487,7 +494,7 @@ void MaybeDuckAudioProcessorEditor::applyTheme()
             styleValueBox(*s);
 
     lastThemeGen = ThemeState::get().generation();
-    renderBackground();   // palette changed -> rebuild the cached panel art
+    backgroundDirty = true;   // palette changed -> rebuild the cached panel art on next paint
     repaint();
 }
 
@@ -526,12 +533,43 @@ void MaybeDuckAudioProcessorEditor::cycleBandState(int band)
 // drawScrew, drawEngravedText), so tweak their look there; tweak placement here.
 void MaybeDuckAudioProcessorEditor::paint (juce::Graphics& g)
 {
-    // The entire static background is pre-rendered into backgroundCache on resize /
-    // theme change (see renderBackground); painting is just a blit. This keeps the
-    // cheap, frequently-repainting child widgets (meter, buttons, knobs) from
-    // forcing the expensive chassis/grain render to re-run behind them every frame.
+    // The static background is cached and painting is just a blit (so the cheap,
+    // frequently-repainting child widgets don't force the expensive chassis/grain
+    // render behind them every frame). The cache is (re)built lazily HERE, the first
+    // time it's needed after resize/theme change — paint() always runs with a valid
+    // layout, so the section/rack bounds are guaranteed set (unlike the constructor,
+    // where a fixed-size plugin may not have had resized() called yet).
+    if (backgroundDirty || ! backgroundCache.isValid()
+        || backgroundCache.getWidth() != getWidth() || backgroundCache.getHeight() != getHeight())
+    {
+        renderBackground();
+        backgroundDirty = false;
+    }
     if (backgroundCache.isValid())
         g.drawImageAt(backgroundCache, 0, 0);
+
+    // Engraved TEXT is drawn live (not baked into the cached image) so it stays
+    // crisp on hi-DPI — a logical-res cache scaled up blurs text. These are cheap
+    // (a few short strings) and get clipped to the dirty region on partial repaints.
+    const auto area = getLocalBounds().toFloat();
+
+    juce::Rectangle<float> wordmarkArea(area.getRight() - 150.0f, area.getBottom() - 33.0f, 110.0f, 16.0f);
+    juce::Rectangle<float> versionArea (area.getRight() - 150.0f, area.getBottom() - 17.0f, 110.0f, 12.0f);
+    mdLookAndFeel.drawEngravedText(g, "MAYBEDUCK", wordmarkArea, juce::Justification::centredRight,
+                                   juce::Font(mdLookAndFeel.getMediumTypeface()).withHeight(14.0f));
+    mdLookAndFeel.drawEngravedText(g, "v1.0", versionArea, juce::Justification::centredRight,
+                                   juce::Font(mdLookAndFeel.getRegularTypeface()).withHeight(9.5f));
+    wordmarkBounds = wordmarkArea.getUnion(versionArea).expanded(2.0f).toNearestInt();
+
+    juce::Font hdr(mdLookAndFeel.getMediumTypeface());
+    hdr.setHeight(11.0f);
+    hdr.setExtraKerningFactor(0.12f);
+    if (! pultecLowHdr.isEmpty())
+        mdLookAndFeel.drawEngravedText(g, "LOW FREQUENCY", pultecLowHdr.toFloat(),
+                                       juce::Justification::centred, hdr);
+    if (! pultecHighHdr.isEmpty())
+        mdLookAndFeel.drawEngravedText(g, "HIGH FREQUENCY", pultecHighHdr.toFloat(),
+                                       juce::Justification::centred, hdr);
 }
 
 void MaybeDuckAudioProcessorEditor::renderBackground()
@@ -566,33 +604,20 @@ void MaybeDuckAudioProcessorEditor::renderBackground()
     // module spans the FULL plugin width (mounting rails at the case sides), with
     // the controls sitting in its middle — so it takes the whole horizontal body
     // rather than being inset. Drawn behind the section's controls (paint on top).
-    if (! dynamicsGroup.getBounds().isEmpty())
+    auto fullWidthRack = [this, &g](juce::Rectangle<int> groupBounds)
     {
-        auto rb = dynamicsGroup.getBounds().toFloat();
+        if (groupBounds.isEmpty()) return;
+        auto rb = groupBounds.toFloat();
         rb.setX(0.0f);
         rb.setWidth((float) getWidth());   // full edge-to-edge, rails at the case sides
         mdLookAndFeel.drawRackInset(g, rb);
-    }
+    };
+    fullWidthRack(rackBoundsDyn);
 
-    // Wordmark + version at bottom-right, engraved into the chassis.
-    const juce::Font wordmarkFont(mdLookAndFeel.getMediumTypeface());
-    const juce::Font versionFont (mdLookAndFeel.getRegularTypeface());
-
-    juce::Rectangle<float> wordmarkArea(area.getRight() - 150.0f,
-                                        area.getBottom() - 33.0f, 110.0f, 16.0f);
-    juce::Rectangle<float> versionArea (area.getRight() - 150.0f,
-                                        area.getBottom() - 17.0f, 110.0f, 12.0f);
-
-    mdLookAndFeel.drawEngravedText(g, "MAYBEDUCK", wordmarkArea,
-                                 juce::Justification::centredRight,
-                                 wordmarkFont.withHeight(14.0f));
-    mdLookAndFeel.drawEngravedText(g, "v1.0",       versionArea,
-                                 juce::Justification::centredRight,
-                                 versionFont.withHeight(9.5f));
-
-    // Record the wordmark + version footprint as the triple-click hot-spot for the
-    // dark/light theme toggle (padded so corner clicks still land).
-    wordmarkBounds = wordmarkArea.getUnion(versionArea).expanded(2.0f).toNearestInt();
+    // Pultec EQ is its own rack-unit module too. The "LOW/HIGH FREQUENCY" sub-headers
+    // and the wordmark are TEXT, so they're drawn live in paint() (caching text in the
+    // logical-res background image blurs it on hi-DPI) — not here.
+    fullWidthRack(rackBoundsEq);
 
     // --- Crossover filter-band engravings ----------------------------------
     // Row 1 (the knob row): BIG engraved filter-response curves in the gaps
@@ -745,6 +770,7 @@ void MaybeDuckAudioProcessorEditor::resized()
 
     auto dynamicsArea = area.removeFromTop(dynamicsGroupH);
     dynamicsGroup.setBounds(dynamicsArea);
+    rackBoundsDyn = dynamicsArea;
 
     auto dynamicsInner = dynamicsArea.reduced(8, 6);
     dynamicsInner.removeFromTop(kGroupTitleH - 8);   // leave space for group title
@@ -838,29 +864,60 @@ void MaybeDuckAudioProcessorEditor::resized()
     // We don't claim any vertical space — the EQ section moves up to fill the gap.
     // Children remain invisible so the DSP keeps reading their (neutral) values.
 
-    // --- Pultec EQP-1A group: 8 knobs in a straight row + Sat toggle ----------
-    // Layout L→R: LF Freq · LF Boost · LF Atten · HF Freq · HF Boost · HF BW · HF Atten Hz · HF Atten · [Sat]
-    constexpr int pultecRowH   = 96;
-    constexpr int pultecGroupH = kGroupTitleH + pultecRowH + 14;
+    // --- Pultec EQP-1A rack: authentic faceplate split into a LOW FREQUENCY group
+    // (LF Sel · Boost · Atten) and a HIGH FREQUENCY group (HF Sel · Boost · Bandwidth
+    // · Atten Sel · Atten), with the Bypass/Sat toggles stacked at the right.
+    constexpr int pultecHdrH    = 14;  // engraved "LOW/HIGH FREQUENCY" sub-header row
+    constexpr int pultecKnobH   = 96;  // per-knob block height (caption + knob)
+    constexpr int pultecStagger = 30;  // selectors (bottom row) drop below boost/atten (top row)
+    constexpr int pultecGroupH  = kGroupTitleH + pultecHdrH + pultecKnobH + pultecStagger + 14;
     auto pultecArea = area.removeFromTop(pultecGroupH);
     pultecGroup.setBounds(pultecArea);
+    rackBoundsEq = pultecArea;
 
     auto pultecInner = pultecArea.reduced(8, 6);
     pultecInner.removeFromTop(kGroupTitleH - 8);
-    auto pultecRow = pultecInner.removeFromTop(pultecRowH);
 
-    // Reserve a 72 px slot at the right for the two toggle buttons (Bypass + Sat),
-    // stacked vertically. Remaining width is split across the 8 knobs.
+    // Toggles (Bypass + Sat) stacked at the right, spanning both rows.
     constexpr int togglesSlotW = 72;
-    auto togglesCol = pultecRow.removeFromRight(togglesSlotW).reduced(4);
-    const int pultecColW = pultecRow.getWidth() / 8;
-    for (int i = 0; i < 8; ++i)
+    auto togglesCol = pultecInner.removeFromRight(togglesSlotW).reduced(4, 0);
+
+    auto pultecHdrRow   = pultecInner.removeFromTop(pultecHdrH);
+    auto pultecKnobArea = pultecInner;   // height = pultecKnobH + pultecStagger
+
+    // Authentic EQP-1A faceplate split into two tiers:
+    //   TOP    (boost/atten): LF Boost · LF Atten | HF Boost · HF Atten · Atten Sel
+    //   BOTTOM (selectors)  : LF Sel (under the LF pair) · Bandwidth (centre) · HF Sel
+    // 5 equal columns across the width; bottom knobs sit half-a-column inset beneath
+    // their group, and Atten Sel sits to the right of HF Atten.
+    const float u    = pultecKnobArea.getWidth() / 5.0f;
+    const int   x0   = pultecKnobArea.getX();
+    const int   yTop = pultecKnobArea.getY();
+    const int   yBot = yTop + pultecStagger;
+
+    auto placeKnob = [&](int idx, float centreU, int y)
     {
-        auto col = pultecRow.removeFromLeft(pultecColW).reduced(4);
-        pultecLabels[i].setBounds(col.removeFromTop(kKnobLabelH));
-        pultecSliders[i].setBounds(col);
-    }
-    // Stack: Bypass on top, Sat below. 24 px tall each with 6 px gap, centred vertically.
+        juce::Rectangle<int> col(juce::roundToInt(x0 + centreU * u - u * 0.5f), y,
+                                 juce::roundToInt(u), pultecKnobH);
+        col = col.reduced(4);
+        pultecLabels[idx].setBounds(col.removeFromTop(kKnobLabelH));
+        pultecSliders[idx].setBounds(col);
+    };
+    // pultecIds order: 0 LF Sel, 1 LF Boost, 2 LF Atten, 3 HF Sel, 4 HF Boost,
+    //                  5 Bandwidth, 6 Atten Sel, 7 HF Atten
+    placeKnob(1, 0.5f, yTop);  // LF Boost   (top)
+    placeKnob(2, 1.5f, yTop);  // LF Atten   (top)
+    placeKnob(4, 2.5f, yTop);  // HF Boost   (top)
+    placeKnob(7, 3.5f, yTop);  // HF Atten   (top)
+    placeKnob(6, 4.5f, yTop);  // Atten Sel  (top, right of HF Atten)
+    placeKnob(0, 1.0f, yBot);  // LF Sel     (bottom, under LF pair)
+    placeKnob(5, 2.0f, yBot);  // Bandwidth  (bottom, centre)
+    placeKnob(3, 3.0f, yBot);  // HF Sel     (bottom, under HF pair)
+
+    pultecLowHdr  = pultecHdrRow.withX(x0).withWidth(juce::roundToInt(2.0f * u));
+    pultecHighHdr = pultecHdrRow.withX(x0 + juce::roundToInt(2.0f * u)).withWidth(juce::roundToInt(3.0f * u));
+
+    // Bypass on top, Sat below — 24 px tall each, 6 px gap, centred vertically.
     const int btnH = 24;
     const int gap  = 6;
     auto btnArea = togglesCol.withSizeKeepingCentre(togglesCol.getWidth(), btnH * 2 + gap);
@@ -874,8 +931,9 @@ void MaybeDuckAudioProcessorEditor::resized()
     auto full = getLocalBounds();
     convLatencyLabel.setBounds(full.getX() + 28, full.getBottom() - 20, 340, 16); // <- bottom-left, vertically centred on the corner screw
 
-    // Layout (hence the static panel art) is now fixed — (re)build the background cache.
-    renderBackground();
+    // Layout changed — mark the cached panel art for a lazy rebuild on the next paint
+    // (where the bounds are guaranteed valid).
+    backgroundDirty = true;
 }
 
 void MaybeDuckAudioProcessorEditor::timerCallback()
@@ -936,6 +994,23 @@ void MaybeDuckAudioProcessorEditor::timerCallback()
         prevBandState[i] = st;
     }
     prevBandEnabled = bandEnabled;
+
+    // Sat button glows green, brightening with the audio passing through the
+    // saturation stage (dim green idle -> bright green when driven hard).
+    {
+        const bool satOn = *audioProcessor.apvts.getRawParameterValue("pultecSatEnable") > 0.5f;
+        const float outDb = audioProcessor.getOutputLevelDb();
+        const float t  = juce::jlimit(0.0f, 1.0f, (outDb + 40.0f) / 40.0f);  // -40 dB..0 dB -> 0..1
+        const float bri = juce::jmap(t, 0.55f, 1.0f);    // dim -> bright with level
+        const juce::uint32 col = satOn ? juce::Colour::fromHSV(0.33f, 0.80f, bri, 1.0f).getARGB()
+                                       : 0xff3FB36B;       // idle green base
+        if (col != prevSatColour)
+        {
+            pultecSatButton.getProperties().set("litColour", static_cast<juce::int64>(col));
+            pultecSatButton.repaint();
+            prevSatColour = col;
+        }
+    }
 
     const int latSamples = audioProcessor.getConvLatencySamples();
     if (latSamples != prevLatSamples)   // the text rarely changes; skip the per-tick String build/repaint

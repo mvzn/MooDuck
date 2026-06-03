@@ -470,6 +470,7 @@ void MaybeDuckAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
     convFrameGrDb            = 0.0f;
     inputLevelSmoothedDb     = -100.0f;
     sidechainLevelSmoothedDb = -100.0f;
+    outputLevelSmoothedDb    = -100.0f;
     gainReductionSmoothedDb  = 0.0f;
     inputLevelDb.store(-100.0f);
     sidechainLevelDb.store(-100.0f);
@@ -908,6 +909,19 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
             triode.processBlock (outL, outR, numSamples);
         else
             triode.processBlock (outL, outL, numSamples);
+    }
+
+    // Post-EQ/saturation output peak — drives the Sat button's audio-reactive glow.
+    {
+        float outPeak = 0.0f;
+        for (int n = 0; n < numSamples; ++n)
+        {
+            outPeak = juce::jmax(outPeak, std::abs(outL[n]));
+            if (outR) outPeak = juce::jmax(outPeak, std::abs(outR[n]));
+        }
+        const float outDb = outPeak > 0.000001f ? juce::Decibels::gainToDecibels(outPeak) : -100.0f;
+        outputLevelSmoothedDb = juce::jmax(outDb, outputLevelSmoothedDb - 0.8f);
+        outputLevelDb.store(outputLevelSmoothedDb);
     }
 
     // Absolute-dB peaks for the meter strips: IN follows the main input,

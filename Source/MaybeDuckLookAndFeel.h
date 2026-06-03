@@ -140,7 +140,7 @@ private:
     // (always backlit in `litColour`) vs the chunky latching cap (lit only when on).
     void drawPushButtonBody  (juce::Graphics&, juce::Rectangle<float> bounds,
                               bool isOn, bool isMouseOver, bool isDown, bool isEnabled,
-                              juce::Colour litColour, bool softProfile) const;
+                              juce::Colour litColour, bool softProfile, bool alwaysLit) const;
     void drawPushButtonLabel (juce::Graphics&, juce::Rectangle<float> bounds,
                               const juce::String& text,
                               bool isOn, bool isMouseOver, bool isDown, bool isEnabled,

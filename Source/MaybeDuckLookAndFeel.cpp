@@ -161,19 +161,24 @@ void MaybeDuckLookAndFeel::drawRackInset (juce::Graphics& g, juce::Rectangle<flo
     g.fillRoundedRectangle(area.expanded(1.5f), corner + 2.0f);
 
     // Recessed module face — a darker, cooler brushed panel than the chassis, so
-    // it reads as a separate unit dropped into the box.
+    // it reads as a separate unit dropped into the box. The gradient is anchored
+    // over a FIXED span from the top (not the rack's own bottom) so two racks of
+    // slightly different heights read with the IDENTICAL shade at the same offset.
+    constexpr float kRackGradSpan = 180.0f;
     juce::ColourGradient pg(pal.chassisMid.darker(0.22f), area.getX(), area.getY(),
-                            pal.chassisShadow.darker(0.04f), area.getX(), area.getBottom(), false);
+                            pal.chassisShadow.darker(0.04f), area.getX(), area.getY() + kRackGradSpan, false);
     pg.addColour(0.5, pal.chassisMid.darker(0.34f));
     g.setGradientFill(pg);
     g.fillRoundedRectangle(area, corner);
 
-    // Brushed grain inside the module (clipped to the panel).
+    // Brushed grain inside the module (clipped to the panel). Anchor the tile to the
+    // panel's own top-left so every rack samples the SAME part of the noise tile and
+    // therefore reads with identical texture/brightness regardless of screen position.
     {
         juce::Graphics::ScopedSaveState save(g);
         juce::Path clip; clip.addRoundedRectangle(area, corner);
         g.reduceClipRegion(clip);
-        g.setTiledImageFill(grainImage, 0, 0, 0.38f);
+        g.setTiledImageFill(grainImage, (int) area.getX(), (int) area.getY(), 0.38f);
         g.fillRoundedRectangle(area, corner);
     }
 
@@ -309,7 +314,7 @@ MaybeDuckLookAndFeel::computeCapGeometry (juce::Rectangle<float> bounds, bool pr
 
 void MaybeDuckLookAndFeel::drawPushButtonBody (juce::Graphics& g, juce::Rectangle<float> bounds,
                                                bool isOn, bool isMouseOver, bool isDown, bool isEnabled,
-                                               juce::Colour litColour, bool softProfile) const
+                                               juce::Colour litColour, bool softProfile, bool alwaysLit) const
 {
     // A real, extruded brushed-metal cap standing proud of a recessed socket.
     // The front (bottom) wall is visible (top-left light). The cap is raised when
@@ -317,7 +322,9 @@ void MaybeDuckLookAndFeel::drawPushButtonBody (juce::Graphics& g, juce::Rectangl
     // DISABLED; momentary soft switches only dip while held. The state colour
     // glows in the socket gap ALL AROUND the cap, not on the face.
     const bool pressedLook = (! softProfile && isOn) || isDown || (! softProfile && ! isEnabled);
-    const bool lit         = isEnabled && (softProfile ? true : isOn);
+    // Soft switches that are "always lit" (the band switches) glow whenever enabled;
+    // soft toggles (Pultec Bypass/Sat) and hard caps glow only when engaged.
+    const bool lit         = isEnabled && (alwaysLit || isOn);
 
     const auto geo    = computeCapGeometry(bounds, pressedLook, softProfile);
     const float corner = geo.corner;
@@ -448,7 +455,8 @@ void MaybeDuckLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButt
     const auto bounds = b.getLocalBounds().toFloat();
     const bool isOn = b.getToggleState();
     const bool soft = isSoftSwitch(b);
-    drawPushButtonBody (g, bounds, isOn, isOver, isDown, b.isEnabled(), litColourFor(b), soft);
+    const bool alwaysLit = b.getProperties().contains("alwaysLit");
+    drawPushButtonBody (g, bounds, isOn, isOver, isDown, b.isEnabled(), litColourFor(b), soft, alwaysLit);
     drawPushButtonLabel(g, bounds, b.getButtonText(), isOn, isOver, isDown, b.isEnabled(), soft);
 }
 
@@ -458,7 +466,7 @@ void MaybeDuckLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button
 {
     drawPushButtonBody(g, b.getLocalBounds().toFloat(),
                        b.getToggleState(), isOver, isDown, b.isEnabled(),
-                       litColourFor(b), isSoftSwitch(b));
+                       litColourFor(b), isSoftSwitch(b), b.getProperties().contains("alwaysLit"));
 }
 
 void MaybeDuckLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& b,

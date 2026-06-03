@@ -48,6 +48,7 @@ private:
     // render behind every transparent child repaint. Rebuilt in resized()/applyTheme().
     void renderBackground();
     juce::Image backgroundCache;
+    bool backgroundDirty = true;   // rebuild the cache lazily in paint() (bounds guaranteed valid there)
 
     juce::Rectangle<int> wordmarkBounds;   // triple-click hot-spot (set in renderBackground())
     int lastThemeGen = -1;                 // last ThemeState generation we applied
@@ -56,6 +57,7 @@ private:
     int  prevBandState[5] = { -2, -2, -2, -2, -2 };
     bool prevBandEnabled  = false;
     int  prevLatSamples   = -1;
+    juce::uint32 prevSatColour = 0;   // last Sat-button glow colour (audio-reactive)
 
     // Hard Duck freezes the ratio knob and relabels its read-out ∞:1 (the DSP
     // ignores the ratio value while Hard Duck is engaged).
@@ -128,6 +130,14 @@ private:
     std::unique_ptr<ButtonAttachment> pultecSatAttachment;
     juce::ToggleButton pultecBypassButton;
     std::unique_ptr<ButtonAttachment> pultecBypassAttachment;
+    // Engraved "LOW FREQUENCY" / "HIGH FREQUENCY" sub-section headers over the two
+    // Pultec knob groups (authentic EQP-1A faceplate split). Set in resized(),
+    // drawn into the cached background in renderBackground().
+    juce::Rectangle<int> pultecLowHdr, pultecHighHdr;
+    // Section rects for the recessed rack-unit modules (set in resized(), drawn into
+    // the cached background). Stored explicitly so they don't depend on child
+    // GroupComponent bounds being valid at render time.
+    juce::Rectangle<int> rackBoundsDyn, rackBoundsEq;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MaybeDuckAudioProcessorEditor)
 };
