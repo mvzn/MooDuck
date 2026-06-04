@@ -1514,6 +1514,66 @@ void test_sat_transformer_lf_bloom()
                "T-sat: transformer iron blooms LF (LF THD>HF, LF more compressed)");
 }
 
+// P6 regression: Drive / Mix / Output-trim controls on PultecMakeupChain. With
+// the EQ bypassed (sat path isolated) we check that full-wet Mix saturates while
+// full-dry Mix is clean, and that the output trim scales the wet level.
+void test_sat_controls_mix_trim()
+{
+    std::printf("\n== Saturation — P6 controls (Mix dry/wet, Output trim) ==\n");
+    const double fs = 48000.0;
+    const int    kBlock = 256;
+    const double f0 = 1000.0;
+    const double inAmp = 0.6;
+
+    auto run = [&](float mix01, double trimGain, double& thd, double& h1)
+    {
+        PultecEQP1A      eq;
+        KorenTriode12AX7 tr;
+        PultecMakeupChain ch { eq, tr };
+        eq.prepare(fs, kBlock);
+        tr.prepare(fs, kBlock);
+        ch.prepare(fs, kBlock);
+        eq.setBypass(true);          // isolate the saturation path
+        tr.setEnabled(true);
+        tr.setDrive(2.0f);
+        ch.setSatMix(mix01);
+        ch.setSatTrimGain(trimGain);
+
+        const int warm = (int)(fs * 0.2), N = (int)(fs * 0.1);
+        std::vector<float> L((size_t)kBlock), R((size_t)kBlock), out; out.reserve((size_t)N);
+        long n = 0; int produced = 0;
+        while (produced < warm + N)
+        {
+            for (int i = 0; i < kBlock; ++i, ++n)
+                L[(size_t)i] = R[(size_t)i] = (float)(inAmp * std::sin(2.0*M_PI*f0*(double)n/fs));
+            ch.processBlock(L.data(), R.data(), kBlock);
+            for (int i = 0; i < kBlock && produced < warm + N; ++i, ++produced)
+                if (produced >= warm) out.push_back(L[(size_t)i]);
+        }
+        double m[6] = {0,0,0,0,0,0};
+        const int M = (int) out.size();
+        for (int h = 1; h <= 5; ++h)
+        {
+            double re=0, im=0; const double w = 2.0*M_PI*(h*f0)/fs;
+            for (int k = 0; k < M; ++k) { re += out[(size_t)k]*std::cos(w*k); im += out[(size_t)k]*std::sin(w*k); }
+            m[h] = (2.0/M)*std::sqrt(re*re+im*im);
+        }
+        h1 = std::max(m[1], 1e-12);
+        double t = 0; for (int h = 2; h <= 5; ++h) t += m[h]*m[h];
+        thd = std::sqrt(t)/h1*100.0;
+    };
+
+    double thdWet, h1Wet, thdDry, h1Dry, thdTrim, h1Trim;
+    run(1.0f, 1.0, thdWet,  h1Wet);    // full wet, unity trim
+    run(0.0f, 1.0, thdDry,  h1Dry);    // full dry  -> clean
+    run(1.0f, 0.5, thdTrim, h1Trim);   // full wet, -6 dB trim
+    const double trimRatio = h1Trim / std::max(h1Wet, 1e-12);
+    std::printf("  [INFO] wet THD=%.2f%% (H1=%.4f)  dry THD=%.2f%% (H1=%.4f)  trim0.5 H1ratio=%.3f\n",
+                thdWet, h1Wet, thdDry, h1Dry, trimRatio);
+    expectTrue(thdWet > thdDry + 5.0, "T-sat: Mix=full-wet saturates, Mix=full-dry is clean");
+    expectTrue(std::abs(trimRatio - 0.5) < 0.05, "T-sat: output trim scales the wet level");
+}
+
 void diag_sat_harmonic_spectrum()
 {
     std::printf("\n== DIAG: Sat harmonic spectrum (H2..H5) across drive & input level ==\n");
@@ -2144,6 +2204,7 @@ int main()
     test_sat_dynamic_bias_breathing();
     test_sat_grid_blocking();
     test_sat_transformer_lf_bloom();
+    test_sat_controls_mix_trim();
     diag_sat_harmonic_spectrum();
 
     test_pultec_frequency_response();

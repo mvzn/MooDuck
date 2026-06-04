@@ -113,6 +113,9 @@ public:
     std::atomic<float>* pPultecHfAttenFreq = nullptr;  // 0-2 → 5/10/20 kHz
     std::atomic<float>* pPultecHfAtten     = nullptr;  // 0-14 dB
     std::atomic<float>* pPultecSatEnable   = nullptr;  // bool: tube saturation on/off
+    std::atomic<float>* pPultecSatDrive    = nullptr;  // 0.5-4.0: 12AX7 grid drive (1=authentic)
+    std::atomic<float>* pPultecSatMix      = nullptr;  // 0-100%: parallel dry/wet
+    std::atomic<float>* pPultecSatTrim     = nullptr;  // -12..+12 dB: wet-path output trim
     std::atomic<float>* pPultecBypass      = nullptr;  // bool: EQ passthrough (skips WDF + HF-cut)
 
     // monitoring

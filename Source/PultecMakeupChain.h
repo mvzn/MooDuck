@@ -62,7 +62,7 @@ public:
 
         // Crossfade mixes settle to the stages' current targets (1 = dry).
         eqMix  = eq.getBypass()      ? 1.0f : 0.0f;
-        satMix = triode.getEnabled() ? 0.0f : 1.0f;
+        satMix = triode.getEnabled() ? (1.0f - satMixAmount) : 1.0f;
 
         // ~10 ms ramp, advanced once per UPSAMPLED sample (4x host rate) so the
         // wall-clock fade matches the per-stage 10 ms fades it replaces.
@@ -83,6 +83,15 @@ public:
      *  oversampler group delay. Valid after prepare(); reported once to the host. */
     int getLatencySamples() const noexcept { return latencySamples; }
 
+    /** P6 — parallel dry/wet for the saturation: 1 = full tube (wet), 0 = clean
+     *  post-EQ (dry). Blended in the oversampled domain against the time-aligned
+     *  dry. Independent of the sat enable toggle (disabled => always full dry). */
+    void setSatMix (float wet01) noexcept { satMixAmount = juce::jlimit (0.0f, 1.0f, wet01); }
+
+    /** P6 — output trim applied to the wet/tube path (linear gain) for A/B
+     *  loudness matching. */
+    void setSatTrimGain (double g) noexcept { satTrimGain = g; }
+
     /** Process a stereo block in place. Pass right == nullptr for the mono
      *  fallback (left is processed; the second OS channel uses internal scratch). */
     void processBlock (float* left, float* right, int numSamples)
@@ -92,8 +101,9 @@ public:
         if (mono)
             std::memcpy (r, left, sizeof (float) * static_cast<size_t> (numSamples));
 
-        const float eqTarget  = eq.getBypass()      ? 1.0f : 0.0f;  // 1 = dry
-        const float satTarget = triode.getEnabled() ? 0.0f : 1.0f;  // 1 = dry
+        const float eqTarget  = eq.getBypass() ? 1.0f : 0.0f;       // 1 = dry
+        // Sat dry amount: disabled => full dry; enabled => 1 - mix (mix=1 -> full wet).
+        const float satTarget = triode.getEnabled() ? (1.0f - satMixAmount) : 1.0f;
 
         const bool eqSettledDry  = (eqMix  == eqTarget  && eqTarget  == 1.0f);
         const bool satSettledDry = (satMix == satTarget && satTarget == 1.0f);
@@ -129,9 +139,9 @@ public:
             const double oeL = (1.0 - eqMix) * eL + eqMix * xL;
             const double oeR = (1.0 - eqMix) * eR + eqMix * xR;
 
-            // Tube saturator (+ disable crossfade)
-            const double sL = triode.processOversampledSample (0, oeL);
-            const double sR = triode.processOversampledSample (1, oeR);
+            // Tube saturator (+ output trim on the wet path) (+ mix/disable crossfade)
+            const double sL = triode.processOversampledSample (0, oeL) * satTrimGain;
+            const double sR = triode.processOversampledSample (1, oeR) * satTrimGain;
             satMix = approach (satMix, satTarget);
             uL[i] = static_cast<float> ((1.0 - satMix) * sL + satMix * oeL);
             uR[i] = static_cast<float> ((1.0 - satMix) * sR + satMix * oeR);
@@ -224,6 +234,10 @@ private:
     float eqMix  = 0.0f;
     float satMix = 0.0f;
     float mixInc = 1.0f;
+
+    // P6 controls: parallel dry/wet amount (1 = full wet) + wet-path output trim.
+    float  satMixAmount = 1.0f;
+    double satTrimGain  = 1.0;
 
     // Output DC blocker (host rate).
     double dcAlpha = 1.0;

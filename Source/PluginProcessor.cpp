@@ -66,6 +66,9 @@ MaybeDuckAudioProcessor::MaybeDuckAudioProcessor()
     pPultecHfAttenFreq = apvts.getRawParameterValue("pultecHfAttenFreq");
     pPultecHfAtten     = apvts.getRawParameterValue("pultecHfAtten");
     pPultecSatEnable   = apvts.getRawParameterValue("pultecSatEnable");
+    pPultecSatDrive    = apvts.getRawParameterValue("pultecSatDrive");
+    pPultecSatMix      = apvts.getRawParameterValue("pultecSatMix");
+    pPultecSatTrim     = apvts.getRawParameterValue("pultecSatTrim");
     pPultecBypass      = apvts.getRawParameterValue("pultecBypass");
 }
 
@@ -257,9 +260,23 @@ juce::AudioProcessorValueTreeState::ParameterLayout MaybeDuckAudioProcessor::cre
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         "pultecHfAtten", "Pultec HF Atten",
         juce::NormalisableRange<float>(0.0f, 14.0f, 0.1f), 0.0f));
-    // Tube saturation (Koren 12AX7 model, 4× oversampled)
+    // Tube saturation (two-tube EQP-1A makeup amp, 4× oversampled)
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         "pultecSatEnable", "Pultec Tube Saturation", false));
+    // Drive: scales the 12AX7 grid excursion. 1.0 = authentic EQP-1A operating
+    // point; >1 pushes harder (distortion rises faster than linearly via the NFB).
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "pultecSatDrive", "Pultec Sat Drive",
+        juce::NormalisableRange<float>(0.5f, 4.0f, 0.01f), 1.0f));
+    // Mix: parallel dry/wet for the saturation (100% = full tube, 0% = clean
+    // post-EQ). Blended in the oversampled domain against the time-aligned dry.
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "pultecSatMix", "Pultec Sat Mix",
+        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 100.0f));
+    // Output trim: loudness-match A/B (applied to the wet/tube path, dB).
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "pultecSatTrim", "Pultec Sat Trim",
+        juce::NormalisableRange<float>(-12.0f, 12.0f, 0.1f), 0.0f));
     // EQ bypass — when true the Pultec WDF + HF-cut biquad are skipped entirely
     // (no oversampling overhead, pure passthrough). Saturation toggle is independent.
     params.push_back(std::make_unique<juce::AudioParameterBool>(
@@ -1035,6 +1052,13 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
 
         const bool satEnabled = pPultecSatEnable && pPultecSatEnable->load() > 0.5f;
         triode.setEnabled (satEnabled);
+
+        // P6 controls: Drive (12AX7 grid excursion), Mix (parallel dry/wet),
+        // Output trim (loudness-match the wet path).
+        triode.setDrive (pPultecSatDrive ? pPultecSatDrive->load() : 1.0f);
+        chain.setSatMix  (pPultecSatMix  ? pPultecSatMix->load() * 0.01f : 1.0f);   // %->0..1
+        chain.setSatTrimGain (juce::Decibels::decibelsToGain (
+                                  pPultecSatTrim ? pPultecSatTrim->load() : 0.0f));
 
         // EQ + tube saturator run in one shared 4x oversampling domain (single
         // up/down round-trip). Mono fallback passes nullptr for the right channel.
