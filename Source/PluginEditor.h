@@ -30,8 +30,34 @@ public:
 
     void parameterChanged(const juce::String& paramID, float newValue) override;
 
+    // Triple-click the engraved wordmark to flip the dark/light theme (process-wide).
+    void mouseDown (const juce::MouseEvent& e) override;
+
 private:
     MaybeDuckAudioProcessor& audioProcessor;
+
+    // Pull the persisted dark/light state into the LookAndFeel, re-push the per-
+    // slider value-box colours, and repaint. Called on load, on local toggle, and
+    // when timerCallback() detects another window flipped the theme.
+    void applyTheme();
+    void styleValueBox (juce::Slider& s);  // pushes palette tones into a slider's value-box colour IDs
+
+    // The static panel art (chassis, screws, rack, wordmark, engravings) is fixed
+    // per window size + theme, so it's pre-rendered once into backgroundCache and
+    // paint() just blits it — instead of re-running the expensive gradient/grain
+    // render behind every transparent child repaint. Rebuilt in resized()/applyTheme().
+    void renderBackground();
+    juce::Image backgroundCache;
+    bool backgroundDirty = true;   // rebuild the cache lazily in paint() (bounds guaranteed valid there)
+
+    juce::Rectangle<int> wordmarkBounds;   // triple-click hot-spot (set in renderBackground())
+    int lastThemeGen = -1;                 // last ThemeState generation we applied
+
+    // timerCallback change-detection so we only repaint widgets that actually moved.
+    int  prevBandState[5] = { -2, -2, -2, -2, -2 };
+    bool prevBandEnabled  = false;
+    int  prevLatSamples   = -1;
+    juce::uint32 prevSatColour = 0;   // last Sat-button glow colour (audio-reactive)
 
     // Hard Duck freezes the ratio knob and relabels its read-out ∞:1 (the DSP
     // ignores the ratio value while Hard Duck is engaged).
@@ -79,9 +105,15 @@ private:
     std::unique_ptr<SliderAttachment> xoverAttachments[4];
     // Engraved band ruler under the crossover knobs (geometry set in resized(),
     // drawn in paint()). xoverBandDivX = x of each crossover boundary (knob centre).
-    juce::Rectangle<int> xoverBandStrip;   // row 2: band-name ruler + boundary ticks
+    juce::Rectangle<int> xoverBandStrip;   // row 2: band-switch row + boundary ticks
     juce::Rectangle<int> xoverKnobRow;     // row 1: knob row (big filter curves drawn in its gaps)
     int                  xoverBandDivX[4] {};
+
+    // Per-band solo/mute switches (soft backlit momentary rectangles) sitting in
+    // the ruler segments. Single click cycles Normal->Solo->Mute; backlight colour
+    // = state (silver / green / red). Bound to the bandStateN choice params.
+    juce::TextButton bandSwitches[5];
+    void cycleBandState(int band);
 
     // --- Per-band duck scale group
     juce::GroupComponent bandScaleGroup;
@@ -98,6 +130,14 @@ private:
     std::unique_ptr<ButtonAttachment> pultecSatAttachment;
     juce::ToggleButton pultecBypassButton;
     std::unique_ptr<ButtonAttachment> pultecBypassAttachment;
+    // Engraved "LOW FREQUENCY" / "HIGH FREQUENCY" sub-section headers over the two
+    // Pultec knob groups (authentic EQP-1A faceplate split). Set in resized(),
+    // drawn into the cached background in renderBackground().
+    juce::Rectangle<int> pultecLowHdr, pultecHighHdr;
+    // Section rects for the recessed rack-unit modules (set in resized(), drawn into
+    // the cached background). Stored explicitly so they don't depend on child
+    // GroupComponent bounds being valid at render time.
+    juce::Rectangle<int> rackBoundsDyn, rackBoundsEq;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MaybeDuckAudioProcessorEditor)
 };

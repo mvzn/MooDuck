@@ -25,6 +25,7 @@ NEXT_STEPS.local.md
 DONE_STEPS.local.md
 PERFORMANCE_OPTIMIZATION.local.md
 UI_PLAN.local.md
+saturation-v12-spec.md
 PULTEC_DEV.md
 eq-research/saturation-v12-spec.md
 PRD.md
@@ -43,3 +44,6 @@ CLAUDE.md
 .vscode/
 !.vscode/
 !.vscode/**
+
+# Runtime theme/settings file (PropertiesFile CWD fallback during VST3 helper scan)
+MaybeDuck.settings

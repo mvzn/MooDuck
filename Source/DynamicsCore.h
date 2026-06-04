@@ -85,8 +85,13 @@ public:
 		if (!m_detect_params.detect_dB)
 			return current_env;
 
-		// --- setup for log( )
-		if (current_env <= 0)
+		// --- setup for log( ): floor well above the float-underflow point. The envelope
+		// decays geometrically toward 0 as a double; once it drops below ~1.2e-38 the
+		// static_cast<float> below underflows to 0, log2f(0) = -inf, and the downstream
+		// gain_reduction_dB = yn_dB - detect_dB becomes (-inf)-(-inf) = NaN, which sticks
+		// the gain near zero for many seconds. 1e-12 (-240 dB) is far below audibility and
+		// safely inside float's normal range, so treat anything smaller as silence.
+		if (current_env <= 1.0e-12)
 		{
 			return -96.0;
 		}

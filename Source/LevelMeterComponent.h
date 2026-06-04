@@ -45,6 +45,10 @@ private:
     float targetSidechainDb = -100.0f;
     float targetGrDb        = 0.0f;
 
+    // Last values actually painted — the timer only repaints when one moves enough
+    // to change the display, so an idle meter costs nothing.
+    float lastDrawnInDb = -1000.0f, lastDrawnScDb = -1000.0f, lastDrawnGrDb = -1000.0f;
+
     // Layout rectangles computed in resized().
     juce::Rectangle<int> inStripArea, scStripArea, grStripArea;
 
@@ -54,6 +58,10 @@ private:
     // GR strip is solid amber and fills from the top down — separate drawer.
     void drawGrStrip(juce::Graphics&, juce::Rectangle<int> area, float grDb,
                      const juce::String& caption) const;
+
+    // Active theme palette, pulled from the editor's LookAndFeel so the meter
+    // follows dark/light. Falls back to the light palette if the LAF isn't ours.
+    const MaybeDuckLookAndFeel::Palette& pal() const;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(LevelMeterComponent)
 };

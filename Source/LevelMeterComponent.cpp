@@ -22,7 +22,7 @@ namespace
     // from the palette in MaybeDuckLookAndFeel.h (kAccentWhite/Amber, kMeterClipRed).
 
     // --- Ballistic time constants (used for the GR strip) ---------------------
-    constexpr double kTimerHz       = 60.0;
+    constexpr double kTimerHz       = 30.0;
     constexpr double kTimeStepSec   = 1.0 / kTimerHz;
     constexpr double kAttackTauSec  = 0.010;   // 10 ms PPM-fast attack
     constexpr double kReleaseTauSec = 1.500;   // 1500 ms release
@@ -69,7 +69,19 @@ void LevelMeterComponent::timerCallback()
     const float coeff = 1.0f - std::exp(- (float) kTimeStepSec / tau);
     displayedGrDb += diff * coeff;
 
-    repaint();
+    // Only repaint when the display would actually change — keeps an idle meter (and
+    // the panel behind this transparent component) from redrawing every tick. 0.2 dB
+    // is well below one segment step, so nothing visible is dropped.
+    constexpr float kEps = 0.2f;
+    if (std::abs(targetInputDb     - lastDrawnInDb) > kEps
+     || std::abs(targetSidechainDb - lastDrawnScDb) > kEps
+     || std::abs(displayedGrDb     - lastDrawnGrDb) > kEps)
+    {
+        lastDrawnInDb = targetInputDb;
+        lastDrawnScDb = targetSidechainDb;
+        lastDrawnGrDb = displayedGrDb;
+        repaint();
+    }
 }
 
 //==============================================================================
@@ -97,10 +109,17 @@ void LevelMeterComponent::resized()
 }
 
 //==============================================================================
+const MaybeDuckLookAndFeel::Palette& LevelMeterComponent::pal() const
+{
+    if (auto* laf = dynamic_cast<MaybeDuckLookAndFeel*>(&getLookAndFeel()))
+        return laf->palette();
+    return MaybeDuckLookAndFeel::lightPalette;
+}
+
 void LevelMeterComponent::paint(juce::Graphics& g)
 {
     // Background chassis fill behind the whole component.
-    g.setColour(juce::Colour(MaybeDuckLookAndFeel::kChassisShadow).withAlpha(0.35f));
+    g.setColour(pal().chassisShadow.withAlpha(0.35f));
     g.fillRoundedRectangle(getLocalBounds().toFloat(), 6.0f);
 
     drawLevelStrip(g, inStripArea, targetInputDb,     "IN");
@@ -122,7 +141,7 @@ void LevelMeterComponent::drawLevelStrip(juce::Graphics& g,
     auto captionArea = stripArea.removeFromBottom(12);
 
     // Frame.
-    g.setColour(juce::Colour(MaybeDuckLookAndFeel::kChassisShadow));
+    g.setColour(pal().chassisShadow);
     g.fillRoundedRectangle(stripArea.toFloat(), 2.0f);
 
     const auto inner = stripArea.reduced(1);
@@ -166,7 +185,7 @@ void LevelMeterComponent::drawLevelStrip(juce::Graphics& g,
     }
 
     // Caption (IN / SC).
-    g.setColour(juce::Colour(MaybeDuckLookAndFeel::kEngravedText));
+    g.setColour(pal().engravedText);
     g.setFont(juce::Font(9.0f, juce::Font::bold));
     g.drawFittedText(caption, captionArea, juce::Justification::centred, 1);
 }
@@ -185,7 +204,7 @@ void LevelMeterComponent::drawGrStrip(juce::Graphics& g,
     auto captionArea = stripArea.removeFromBottom(12);
 
     // Frame.
-    g.setColour(juce::Colour(MaybeDuckLookAndFeel::kChassisShadow));
+    g.setColour(pal().chassisShadow);
     g.fillRoundedRectangle(stripArea.toFloat(), 2.0f);
 
     const auto inner = stripArea.reduced(1);
@@ -220,7 +239,7 @@ void LevelMeterComponent::drawGrStrip(juce::Graphics& g,
     }
 
     // Caption (GR).
-    g.setColour(juce::Colour(MaybeDuckLookAndFeel::kEngravedText));
+    g.setColour(pal().engravedText);
     g.setFont(juce::Font(9.0f, juce::Font::bold));
     g.drawFittedText(caption, captionArea, juce::Justification::centred, 1);
 }

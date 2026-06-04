@@ -94,6 +94,7 @@ public:
     std::atomic<float>* pLookaheadXtreme  = nullptr;   // the wide-range lookahead value (used when Xtreme is on)
     std::atomic<float>* pXover[StereoMultibandCrossover::numCrossoverPoints] = {};
     std::atomic<float>* pBandScale[StereoMultibandCrossover::numBands] = {};
+    std::atomic<float>* pBandState[StereoMultibandCrossover::numBands] = {}; // 0 Normal / 1 Solo / 2 Mute
     std::atomic<float>* pSidechainMode = nullptr;
     std::atomic<float>* pFftConv       = nullptr;
     std::atomic<float>* pFftConvSize   = nullptr;
@@ -121,6 +122,7 @@ public:
     float getGainReductionAmountDb() const noexcept{ return gainReductionAmountDb.load(); } // positive for meter
     float getInputLevelDb() const noexcept         { return inputLevelDb.load(); }
     float getSidechainLevelDb() const noexcept     { return sidechainLevelDb.load(); }
+    float getOutputLevelDb() const noexcept        { return outputLevelDb.load(); }
     double getCurrentSampleRateHz() const noexcept { return currentSampleRate.load(); }
     int getCurrentBlockSize() const noexcept       { return currentBlockSize.load(); }
     bool isSidechainConnected() const noexcept     { return sidechainConnected.load(); }
@@ -151,6 +153,30 @@ private:
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> lookaheadDelaySmoothed;
     juce::AudioBuffer<float> lookaheadBufL, lookaheadBufR;
     int prevLookaheadSamples = 0;
+
+    // Lookahead change handling: SMALL changes glide the delay tap smoothly; LARGE
+    // jumps (e.g. the Xtreme range, up to 10 s) would sweep the tap across seconds of
+    // buffer (warble/time-warp), so they crossfade the output instead — fade out,
+    // snap the tap silently, fade back in. Rapid changes keep the output muted until
+    // they settle, then snap + fade in once.
+    float lookaheadFadeGain   = 1.0f;  // output gain of the lookahead stage during a crossfade
+    int   lookaheadFadeState  = 0;     // 0 = idle, 1 = fading out, 2 = fading in
+    float lookaheadFadeInc    = 1.0f;  // per-sample fade step (~12 ms)
+    int   lookaheadPendingDelay = 0;   // tap target to snap to at the fade bottom (samples)
+    int   lookaheadBigJumpThresh = 0;  // samples; changes above this crossfade instead of glide
+
+    // Mode-change click suppression. Switching Wideband/Multiband/Spectral or toggling
+    // FFT-Conv swaps the whole processing path (different gain/phase/latency) -> a click.
+    // We defer the actual path switch until the output has faded to zero, then fade the
+    // new path back in. modeFadeActive* = the path currently being processed (lags the
+    // parameter target until the fade bottom). -1 = uninitialised (adopt target, no fade).
+    int   modeFadeActiveEffMode = -1;
+    bool  modeFadeActiveUseConv = false;
+    float modeFadeGain          = 1.0f; // output gain during a mode crossfade
+    int   modeFadeState         = 0;    // 0 = idle, 1 = fading out, 2 = fading in
+    float modeFadeInc           = 1.0f; // per-sample fade step (~5 ms)
+    int   modeFadeHoldSamples   = 0;    // stay muted this many samples before fading in
+                                        // (covers the FFT-conv priming latency on entry)
 
     // Wideband mode (bypass crossover)
     DynamicsProcessor widebandProcessorL, widebandProcessorR;
@@ -215,12 +241,14 @@ private:
     std::atomic<float> gainReductionAmountDb { 0.0f };
     std::atomic<float> inputLevelDb { -100.0f };
     std::atomic<float> sidechainLevelDb { -100.0f };
+    std::atomic<float> outputLevelDb { -100.0f };   // post-EQ/saturation output peak (drives Sat glow)
     std::atomic<double> currentSampleRate { 44100.0 };
     std::atomic<int> currentBlockSize { 0 };
     std::atomic<bool> sidechainConnected { false };
 
     float inputLevelSmoothedDb = -100.0f;
     float sidechainLevelSmoothedDb = -100.0f;
+    float outputLevelSmoothedDb = -100.0f;
     float gainReductionSmoothedDb = 0.0f;
     //==============================================================================
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MaybeDuckAudioProcessor)

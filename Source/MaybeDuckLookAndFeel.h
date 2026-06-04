@@ -40,7 +40,40 @@ public:
     static constexpr juce::uint32 kLedOff           = 0xff5A5450;
     static constexpr juce::uint32 kLedOn            = 0xffFFFFFF;
 
-    static constexpr juce::uint32 kMeterClipRed     = 0xffC84030;
+    static constexpr juce::uint32 kMeterClipRed     = 0xffCC2A2A; // proper red (was orange-leaning C84030)
+
+    // --- 1176-style push-button palette (brushed-metal face, recessed socket).
+    // The face is a touch lighter than the chassis so the buttons read as raised
+    // hardware caps; the socket is the dark hole they sit in.
+    static constexpr juce::uint32 kButtonFaceHi = 0xffCEC7BB; // button face, top (lit from above)
+    static constexpr juce::uint32 kButtonFaceLo = 0xff968E84; // button face, bottom
+    static constexpr juce::uint32 kButtonSocket = 0xff322E2B; // recessed socket the cap sits in
+
+    // --- Band-switch backlight colours (silver = active, blue = solo, red = mute/bypass)
+    // Semantic state colours — kept theme-independent (same in light + dark).
+    static constexpr juce::uint32 kBandSolo = 0xff3E8EE6; // SOLO backlight (blue)
+    static constexpr juce::uint32 kBandMute = 0xffCC2A2A; // MUTE / BYPASS backlight (proper red)
+
+    // ---- Runtime light/dark palette ------------------------------------------
+    // The constants above are the canonical LIGHT values (and still feed the level
+    // meter). Dark mode swaps to darkPalette at runtime via setDarkMode()
+    // (triple-click the wordmark, persisted by ThemeState). The LookAndFeel draw
+    // methods read the active `pal`; band/meter state colours stay constant.
+    struct Palette
+    {
+        juce::Colour chassisHighlight, chassisMid, chassisShadow;
+        juce::Colour dividerHighlight, dividerShadow;
+        juce::Colour knobMatteBlack, accentWhite, accentAmber, engravedText;
+        juce::Colour buttonFaceHi, buttonFaceLo, buttonSocket;
+        juce::Colour tickColor;        // knob tick-ring stroke (must read on a dark panel)
+        juce::Colour knobUnderGlow;    // LED-like halo around the knob (dark mode; transparent in light)
+    };
+    static const Palette lightPalette;
+    static const Palette darkPalette;
+
+    const Palette& palette() const noexcept { return pal; }
+    bool isDarkMode()        const noexcept { return dark; }
+    void setDarkMode (bool shouldBeDark);   // swaps palette, re-applies colours, regenerates grain
 
     juce::Typeface::Ptr getRegularTypeface() const { return regularTypeface; }
     juce::Typeface::Ptr getMediumTypeface()  const { return mediumTypeface; }
@@ -56,6 +89,16 @@ public:
 
     // --- Draw helpers (used by the editor paint() and overridden draw methods)
     void drawBrushedChassis (juce::Graphics&, juce::Rectangle<float> area) const;
+    // Paints a recessed rack-unit module inset into the chassis (darker brushed
+    // face, inset bevel, side mounting rails + rack screws). `localChassis` is the
+    // chassis tone at the rack's position — the panel is derived by darkening it a
+    // fixed amount, so the module reads as recessed whether it sits high (light
+    // chassis) or low (dark chassis). Draw behind a section's controls in paint().
+    void drawRackInset      (juce::Graphics&, juce::Rectangle<float> area, juce::Colour localChassis) const;
+
+    // The chassis brushed-gradient tone at a normalised vertical position (0 = top
+    // highlight, 1 = bottom shadow), matching drawBrushedChassis().
+    juce::Colour chassisToneAt (float yNorm) const;
     void drawScrew          (juce::Graphics&, juce::Point<float> centre, float radius, float slotAngleRadians) const;
     void drawEngravedText   (juce::Graphics&, const juce::String& text, juce::Rectangle<float> area,
                              juce::Justification just, juce::Font font) const;
@@ -98,11 +141,28 @@ public:
                                     juce::GroupComponent&) override;
 
 private:
+    // 1176-style hardware push button. `litColour` is the backlight tint when the
+    // button is lit; `softProfile` = the low-relief momentary band-switch variant
+    // (always backlit in `litColour`) vs the chunky latching cap (lit only when on).
     void drawPushButtonBody  (juce::Graphics&, juce::Rectangle<float> bounds,
-                              bool isOn, bool isMouseOver, bool isDown, bool isEnabled) const;
+                              bool isOn, bool isMouseOver, bool isDown, bool isEnabled,
+                              juce::Colour litColour, bool softProfile, bool alwaysLit) const;
     void drawPushButtonLabel (juce::Graphics&, juce::Rectangle<float> bounds,
                               const juce::String& text,
-                              bool isOn, bool isMouseOver, bool isDown, bool isEnabled) const;
+                              bool isOn, bool isMouseOver, bool isDown, bool isEnabled,
+                              bool softProfile) const;
+
+    // Pull the optional per-button styling a caller may have stashed in the
+    // component properties: "softSwitch" (bool) and "litColour" (ARGB uint32).
+    static juce::Colour litColourFor (const juce::Button&);
+    static bool         isSoftSwitch (const juce::Button&);
+
+    // Geometry of an extruded button cap: the recessed socket, the seated base
+    // footprint (at the socket floor) and the raised top face. Walls are the band
+    // between base and top (front + right, top-left light). Shared by the body and
+    // label draws so the legend always lands on the top face.
+    struct CapGeom { juce::Rectangle<float> socket, base, top; float corner; };
+    CapGeom computeCapGeometry (juce::Rectangle<float> bounds, bool pressedLook, bool softProfile) const;
 
 public:
 
@@ -110,8 +170,13 @@ private:
     juce::Typeface::Ptr regularTypeface;
     juce::Typeface::Ptr mediumTypeface;
 
-    juce::Image grainImage;    // cached brushed-grain noise overlay, generated once
+    juce::Image grainImage;    // cached brushed-grain noise overlay (regenerated on theme switch)
     juce::Image metalCapImage; // cached spun-aluminium knob-cap disc, generated once
+
+    Palette pal;          // active palette (set in the constructor / setDarkMode)
+    bool    dark = false; // current theme
+    void applyPaletteColours();  // pushes palette tones into the slider value-box colour IDs
+    void regenerateGrain();      // rebuilds grainImage from the active chassis tones
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MaybeDuckLookAndFeel)
 };
