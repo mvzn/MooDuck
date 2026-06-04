@@ -140,6 +140,57 @@ static void measureBreathing()
                     20.0*std::log10(std::max(peaks[k],1e-9)/ref));
 }
 
+// P4 blocking probe: hit with a loud burst (charges the grid-current cap), then
+// a quiet tone — measure the quiet tail's 2nd-harmonic (asymmetry from the
+// lingering negative bias) recovering over ~0.25 s.
+static void measureBlocking()
+{
+    const double fs = 48000.0;
+    const int    blk = 64;
+    const double f0 = 1000.0;
+    KorenTriode12AX7 amp;
+    amp.prepare(fs, blk);
+    amp.setDrive(1.5f);
+    amp.setEnabled(true);
+
+    const int burst = (int)(fs * 0.20);   // 200 ms loud
+    const int tail  = (int)(fs * 0.60);   // 600 ms quiet
+    std::vector<float> L(blk), R(blk), out;
+    out.reserve(burst + tail);
+    long n = 0; int produced = 0;
+    const int total = burst + tail;
+    while (produced < total)
+    {
+        for (int i = 0; i < blk; ++i, ++n)
+        {
+            const double amp_ = (produced + i < burst) ? 0.97 : 0.12;
+            L[i] = R[i] = (float)(amp_ * std::sin(2.0*M_PI*f0*(double)n/fs));
+        }
+        amp.processBlock(L.data(), R.data(), blk);
+        for (int i = 0; i < blk && produced < total; ++i, ++produced)
+            out.push_back(L[i]);
+    }
+    // H2/H1 of 40 ms windows in the quiet tail at increasing distance from the burst.
+    auto h2ratio = [&](int startMs)
+    {
+        const int s = burst + (int)(fs * startMs / 1000.0);
+        const int N = (int)(fs * 0.040);
+        double reH1=0,imH1=0,reH2=0,imH2=0;
+        for (int k = 0; k < N; ++k)
+        {
+            const double w1 = 2.0*M_PI*f0*k/fs, w2 = 2.0*2.0*M_PI*f0*k/fs;
+            const double v = out[(size_t)(s+k)];
+            reH1+=v*std::cos(w1); imH1+=v*std::sin(w1);
+            reH2+=v*std::cos(w2); imH2+=v*std::sin(w2);
+        }
+        const double h1=std::sqrt(reH1*reH1+imH1*imH1), h2=std::sqrt(reH2*reH2+imH2*imH2);
+        return 20.0*std::log10(std::max(h2/std::max(h1,1e-12),1e-9));
+    };
+    std::printf("--- P4 grid-current blocking: quiet-tail H2 after a loud burst (recovers over ~0.25 s) ---\n");
+    for (int ms : { 5, 60, 125, 250, 500 })
+        std::printf("  tail +%3d ms : H2/H1 = %+6.2f dB\n", ms, h2ratio(ms));
+}
+
 int main()
 {
     std::printf("=== P2 makeup-amp harmonic probe (oracle target: even-dominant, H2 >> H3) ===\n");
@@ -151,5 +202,7 @@ int main()
         measure(1.0f, a);
     std::printf("\n");
     measureBreathing();
+    std::printf("\n");
+    measureBlocking();
     return 0;
 }

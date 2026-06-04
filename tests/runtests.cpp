@@ -1407,6 +1407,62 @@ void test_sat_dynamic_bias_breathing()
                "T-sat: dynamic cathode bias droops gently over time (breathing)");
 }
 
+// P4 regression: coupling-cap grid-current blocking. A loud burst drives grid
+// conduction that charges the .25uF coupling cap (tau = Rleak*Ccoup = 0.25 s),
+// leaving a lingering negative bias that makes a following QUIET tone momentarily
+// more asymmetric (elevated H2), recovering over ~0.25 s. We hit with a loud
+// burst then a quiet tone and require the quiet-tail H2 just after the burst to
+// sit clearly above the settled-tail H2 (the touch-sensitive blocking recovery).
+void test_sat_grid_blocking()
+{
+    std::printf("\n== Saturation — grid-current blocking (touch-sensitive recovery ~0.25 s) ==\n");
+    const double fs = 48000.0;
+    const int    kBlock = 64;
+    const double f0 = 1000.0;
+
+    KorenTriode12AX7 sat;
+    sat.prepare(fs, kBlock);
+    sat.setDrive(1.5f);
+    sat.setEnabled(true);
+
+    const int burst = (int)(fs * 0.20);
+    const int tail  = (int)(fs * 0.60);
+    std::vector<float> out; out.reserve((size_t)(burst + tail));
+    std::vector<float> L((size_t)kBlock), R((size_t)kBlock);
+    long n = 0; int produced = 0; const int total = burst + tail;
+    while (produced < total)
+    {
+        for (int i = 0; i < kBlock; ++i, ++n)
+        {
+            const double amp = (produced + i < burst) ? 0.97 : 0.12;
+            L[(size_t)i] = R[(size_t)i] = (float)(amp * std::sin(2.0*M_PI*f0*(double)n/fs));
+        }
+        sat.processBlock(L.data(), R.data(), kBlock);
+        for (int i = 0; i < kBlock && produced < total; ++i, ++produced)
+            out.push_back(L[(size_t)i]);
+    }
+    auto h2db = [&](int startMs)
+    {
+        const int s = burst + (int)(fs * startMs / 1000.0);
+        const int N = (int)(fs * 0.040);
+        double r1=0,i1=0,r2=0,i2=0;
+        for (int k = 0; k < N; ++k)
+        {
+            const double w1=2.0*M_PI*f0*k/fs, w2=2.0*w1;
+            const double v = out[(size_t)(s+k)];
+            r1+=v*std::cos(w1); i1+=v*std::sin(w1);
+            r2+=v*std::cos(w2); i2+=v*std::sin(w2);
+        }
+        const double h1=std::sqrt(r1*r1+i1*i1), h2=std::sqrt(r2*r2+i2*i2);
+        return 20.0*std::log10(std::max(h2/std::max(h1,1e-12),1e-9));
+    };
+    const double early = h2db(5), late = h2db(500);
+    std::printf("  [INFO] quiet-tail H2: +5 ms = %+.2f dB,  +500 ms = %+.2f dB  (recovery=%.2f dB)\n",
+                early, late, early - late);
+    expectTrue(early - late > 0.5,
+               "T-sat: blocking elevates post-transient H2, recovering over ~0.25 s");
+}
+
 void diag_sat_harmonic_spectrum()
 {
     std::printf("\n== DIAG: Sat harmonic spectrum (H2..H5) across drive & input level ==\n");
@@ -2035,6 +2091,7 @@ int main()
     test_sat_asymmetric_harmonics();
     test_sat_even_dominant_under_drive();
     test_sat_dynamic_bias_breathing();
+    test_sat_grid_blocking();
     diag_sat_harmonic_spectrum();
 
     test_pultec_frequency_response();

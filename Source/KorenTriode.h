@@ -76,6 +76,10 @@ public:
         const double osRate     = std::max(sampleRate, 1.0) * 4.0;
         cathodeCoeff = 1.0 - std::exp(-1.0 / (tauCathode * osRate));
 
+        // P4 grid-current blocking: slow-release one-pole (tau = Rleak*Ccoup).
+        const double tauBlock = kBlockRleak * kBlockCcoup;
+        blockReleaseCoeff = 1.0 - std::exp(-1.0 / (tauBlock * osRate));
+
         // Constant-latency support: size the dry-path delay ring to the
         // oversampler's group delay (reported at host rate). When the stage is
         // disabled we run the dry signal through this ring so its latency
@@ -97,6 +101,7 @@ public:
         for (auto& s : s2PrevIn)    s = 0.0;
         for (auto& s : nfbPrevOut)  s = 0.0;
         for (auto& s : cathodeEnv)  s = 0.0;
+        for (auto& s : blockEnv)    s = 0.0;
         for (auto& s : dcPrevIn)   s = 0.0f;
         for (auto& s : dcPrevOut)  s = 0.0f;
     }
@@ -205,10 +210,21 @@ public:
         const double g       = 1.0 / (1.0 + kCathodeBiasDepth * cathodeEnv[c]);
         const double aBiased = g * a;
 
+        // P4 — coupling-cap grid-current blocking. Grid conducts only above the
+        // (cold-bias) onset; that "current" charges the cap FAST and discharges
+        // SLOW (tau = Rleak*Ccoup), leaving a lingering negative grid bias after a
+        // hard transient that recovers over ~0.25 s — touch-sensitive blocking.
+        const double conduction = std::max(0.0, std::abs(aBiased) - kBlockOnset);
+        double be = blockEnv[c];
+        be = (conduction > be) ? conduction                                  // fast charge on a peak
+                               : be + (conduction - be) * blockReleaseCoeff; // slow discharge
+        blockEnv[c] = be;
+        const double aBlocked = aBiased - kBlockDepth * be;   // accumulated negative grid bias
+
         // Stage 2 — 12AU7 push-pull (odd-symmetric), ADAA-wrapped.
-        const double b = adaaStep(aBiased, s2PrevIn[c], fLut2,
+        const double b = adaaStep(aBlocked, s2PrevIn[c], fLut2,
                                   [this](double u) noexcept { return stage2F(u); });
-        s2PrevIn[c] = aBiased;
+        s2PrevIn[c] = aBlocked;
 
         // Feedback taps the stage-2 output (pre-makeup); makeup restores unity.
         nfbPrevOut[c] = b;
@@ -305,6 +321,23 @@ private:
     static constexpr double kCathodeCk        = 50.0e-6;     // -> tau = 0.235 s
     static constexpr double kCathodeBiasDepth = 0.18;
 
+    // ---- P4: coupling-cap grid-current blocking ("blocking distortion") ----
+    // Positive grid swings on the 12AU7 draw grid current that charges the .25 uF
+    // stage1->stage2 coupling cap through the 1 M grid leak; the cap then discharges
+    // slowly (tau = Rleak*Ccoup = 0.25 s), so a hard transient leaves a lingering
+    // negative grid bias that recovers over ~0.25 s — touch-sensitive, transient
+    // asymmetric grit. Because the 12AU7 is biased cold (-8 V, schematic), grid
+    // conduction only onsets near full drive, so this is correctly a hard-peak
+    // effect, not always-on. Modelled as a grid-conduction-gated state with FAST
+    // attack (cap charges quickly on a peak) and SLOW release (tau), applied as a
+    // negative bias offset to the stage-2 input (the authentic cap node). The DC
+    // mean it adds is removed downstream by the output transformer / DC blocker,
+    // as in the real circuit; the audible part is the transient asymmetry/recovery.
+    static constexpr double kBlockRleak  = 1.0e6;
+    static constexpr double kBlockCcoup  = 0.25e-6;          // -> tau = 0.25 s
+    static constexpr double kBlockOnset  = 0.75;             // grid-conduction threshold (norm.)
+    static constexpr double kBlockDepth  = 0.30;             // bias-shift scale
+
     static constexpr double DIFF_EPS = 0.001;         // finite-diff step for slope norm
 
     // ADAA LUT range (input-sample units, drive folded in)
@@ -334,6 +367,11 @@ private:
     // coefficient (tau = Rk*Ck, evaluated at the OVERSAMPLED rate).
     double cathodeCoeff = 0.0;
     std::array<double, 2> cathodeEnv {};
+
+    // P4 grid-current blocking: per-channel cap-charge state + slow-release
+    // coefficient (tau = Rleak*Ccoup at the OVERSAMPLED rate; fast attack).
+    double blockReleaseCoeff = 0.0;
+    std::array<double, 2> blockEnv {};
 
     // ADAA LUTs + per-channel previous-input state, per stage.
     std::array<double, LUT_SIZE> fLut1 {};
