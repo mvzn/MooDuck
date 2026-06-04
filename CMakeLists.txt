@@ -5,6 +5,21 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "")
 
+# Windows CI fix: JUCE's juceaide bootstrap re-invokes CMake in a fresh build tree
+# that does NOT inherit our -DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded, so it
+# compiles with /Zi + a shared vc140.pdb. Under parallel Ninja AND sccache (our
+# compiler launcher, which only supports /Z7-style embedded debug info, never the
+# separate-PDB /Zi) the parallel cl.exe race on that PDB -> "fatal error C1041".
+# /FS alone can't help because under sccache the PDB shouldn't exist at all.
+# Fix: force C7/embedded debug info into the bootstrap via _CL_, whose options cl
+# appends AFTER the command line, so /Z7 overrides the bootstrap's /Zi -> no PDB,
+# no race, and the objects stay sccache-cacheable. Set before FetchContent so it
+# is live during the bootstrap's configure-time execute_process (inherits env).
+# MSVC-only; the main build already uses Embedded, so this is a no-op there.
+if(MSVC)
+    set(ENV{_CL_} "/Z7")
+endif()
+
 include(FetchContent)
 FetchContent_Declare(
     JUCE
