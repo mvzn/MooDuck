@@ -134,6 +134,9 @@ private:
     juce::Slider pultecSatSliders[3];
     juce::Label  pultecSatLabels[3];
     std::unique_ptr<SliderAttachment> pultecSatSliderAttachments[3];
+    // Smoothed level driving the Sat button's tube glow (asymmetric one-pole over
+    // the per-block output peak) — keeps the colour from flickering tick-to-tick.
+    float satGlowLevelDb = -100.0f;
     // Engraved "LOW FREQUENCY" / "HIGH FREQUENCY" sub-section headers over the two
     // Pultec knob groups (authentic EQP-1A faceplate split). Set in resized(),
     // drawn into the cached background in renderBackground().

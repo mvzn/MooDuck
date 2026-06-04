@@ -1006,7 +1006,14 @@ void MaybeDuckAudioProcessorEditor::timerCallback()
     // post-EQ/saturation output gets hotter the lit colour brightens and shifts
     // green -> amber -> red. (The glow only shows while Sat is engaged.)
     {
-        const float lvl = audioProcessor.getOutputLevelDb();   // post-sat output peak (dBFS)
+        // Smooth the per-block output peak with an asymmetric one-pole — quick to
+        // brighten, gentle to fade (tube-like), so the colour doesn't flicker at the
+        // 30 Hz tick rate. Coefficients are per-tick (~33 ms): attack ~3 ticks,
+        // release ~12 ticks.
+        const float lvlRaw = audioProcessor.getOutputLevelDb();      // post-sat output peak (dBFS)
+        const float coeff  = (lvlRaw > satGlowLevelDb) ? 0.35f : 0.08f;
+        satGlowLevelDb += (lvlRaw - satGlowLevelDb) * coeff;
+        const float lvl = satGlowLevelDb;
         const float t   = juce::jlimit(0.0f, 1.0f, juce::jmap(lvl, -40.0f, -1.0f, 0.0f, 1.0f));
         const float hue = juce::jmap(t, 0.0f, 1.0f, 0.33f, 0.0f);   // 0.33 green -> 0.0 red
         const float bri = 0.40f + 0.60f * t;                       // dim -> bright
