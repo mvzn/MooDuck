@@ -1042,18 +1042,18 @@ void MaybeDuckAudioProcessorEditor::timerCallback()
     }
     // Latency label stays visible — relevant for lookahead even when FFT is off.
 
-    // Crossover, band-scale, and band-routing controls are inert in Wideband
-    for (int i = 0; i < 4; ++i) xoverSliders[i].setEnabled(mode != 0);
-    for (int i = 0; i < 5; ++i) bandScaleSliders[i].setEnabled(mode != 0);
+    // The crossover bands are used by the processor's band branch: Multiband (mode 1)
+    // or Spectral with FFT-Conv OFF (mode 2 && !fftConv). Spectral FFT-Conv is per-bin
+    // and uses NO crossover bands, so the crossover, band-scale AND band-routing
+    // controls are all inert there (as in Wideband) — grey them out to match.
+    const bool bandEnabled = (mode == 1) || (mode == 2 && !fftConvOn);
+    for (int i = 0; i < 4; ++i) xoverSliders[i].setEnabled(bandEnabled);
+    for (int i = 0; i < 5; ++i) bandScaleSliders[i].setEnabled(bandEnabled);
 
     // Band solo/mute switches: backlight colour follows the state (silver = normal,
     // blue = solo, red = mute); console-style band output only exists in Multiband.
     // Only touch (and repaint) a switch when its state or enablement actually changed
     // — these used to repaint every tick, forcing the panel to redraw behind them.
-    // Per-band solo/mute gates the summed band output, which runs in both Multiband and
-    // Spectral (FFT-Conv off) — they share the same band branch in the processor. FFT-Conv
-    // has no bands (per-bin), so the switches are inert there.
-    const bool bandEnabled = (mode == 1) || (mode == 2 && !fftConvOn);
     for (int i = 0; i < 5; ++i)
     {
         const int st = juce::jlimit(0, 2,
