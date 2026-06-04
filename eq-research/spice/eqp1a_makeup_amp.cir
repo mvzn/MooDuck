@@ -1,0 +1,154 @@
+* EQP-1A MAKEUP AMPLIFIER -- ground-truth oracle for the tube saturator (P0)
+* ===========================================================================
+* SCHEMATIC-ACCURATE build from Pulse Techniques EQP-1A, DWG E-72,658-2
+* (full schematic scan supplied 2026-06-04). Supersedes the earlier "defaults"
+* draft -- topology + values now traced from the drawing, not guessed.
+*
+* Signal path:
+*   INPUT 600R -> TRIAD HS-56 -> passive EQ -> TRIAD HS-29 (1:2) ->
+*   12AX7/ECC-83 PARAPHASE (gain triode + paraphase inverter) ->
+*   push-pull 12AU7/ECC-82 -> PEERLESS S-217-D -> 600R, with global NFB.
+*
+* Purpose: extract the P0 tuning targets for the v1.2 hybrid DSP model:
+*   THD vs drive, H2/H3/H4 vs level, DC bias, NFB loop gain.
+*   (OT-iron LF knee lives in a separate nonlinear-core deck.)
+*
+* SELF-VALIDATION: the scan prints DC node voltages (typical, 11 MEG meter, no
+* signal). The .op below should reproduce them; matches confirm the topology read.
+* Scan targets:  12AX7 plates +140 / cathode +1.3 ; 12AU7 cathode ~+31 ;
+*                B+ chain +355/+345/+325/+290(OT CT)/+250(12AX7 loads).
+*
+* STILL-INTERPRETED (fuzzy regions of the scan, refine if a cleaner copy appears):
+*   [I1] Paraphase divider: 470K taps the AC at the first 12AU7 grid node to drive
+*        the second 12AX7 grid (floating-paraphase reading).
+*   [I2] NFB injection: 2200 from OT secondary -> 47K-to-gnd bus -> 360 into each
+*        12AU7 cathode (series/current feedback). Sign checked by loop-gain run.
+*   [I3] Front 820R shared cathode modelled UNbypassed (no bypass cap drawn).
+* ===========================================================================
+
+.options method=gear reltol=1e-3 abstol=1e-9 vntol=1e-6 gmin=1e-11 itl1=500 itl4=500
+
+* ---- Supplies (rails read from scan) ----
+Vp250 vp250 0 DC 250
+Vp290 vp290 0 DC 290
+
+* ---- Input drive (post-EQ, post-HS-29 level at the first 12AX7 grid) ----
+Vin g1a 0 DC 0 AC 1 SIN(0 0.05 1000)
+Rgleak g1a 0 1Meg
+
+* ===== 12AX7 PARAPHASE: gain triode V1a + paraphase inverter V1b (shared 820R) =====
+XV1a p1a g1a kc ECC83
+Ra1 vp250 p1a 200k
+XV1b p1b g1b kc ECC83
+Ra2 vp250 p1b 200k
+Rkfront kc 0 820
+* output coupling .25uF to the two 12AU7 grids (1M leaks)
+Cca p1a gAUa 0.25u
+RgAUa gAUa 0 1Meg
+Ccb p1b gAUb 0.25u
+RgAUb gAUb 0 1Meg
+* paraphase balance divider: 470K taps the AC at gAUa to drive V1b grid [I1]
+Rpara gAUa g1b 470k
+Rgl1b g1b 0 1Meg
+
+* ===== push-pull 12AU7 output (V2a / V2b) =====
+XV2a paA gAUa kA ECC82
+XV2b paB gAUb kB ECC82
+RkA kA 0 4700
+CkA kA 0 50u
+RkB kB 0 4700
+CkB kB 0 50u
+
+* ===== OUTPUT TRANSFORMER: Peerless S-217-D (push-pull, center-tapped to +290) =====
+La paA ct 50
+Lb ct paB 50
+Ls out 0 36
+Kab La Lb 0.995
+Kas La Ls 0.98
+Kbs Lb Ls 0.98
+Rct vp290 ct 1
+Rload out 0 600
+
+* ===== GLOBAL NEGATIVE FEEDBACK [I2]: OT secondary -> 2200 -> 47K bus -> 360 -> cathodes =====
+Rfb2200 out fbbus 2200
+R47k fbbus 0 47k
+Rfba fbbus kA 360
+Rfbb fbbus kB 360
+
+.SUBCKT ECC83 P G K
++ PARAMS: MU=100 EX=1.4 KG1=1060 KP=600 KVB=300 RGI=2000
++ CCG=2.3P CGP=2.4P CCP=0.9P
+E1 7 0 VALUE={V(P,K)/KP*ln(1+exp(KP*(1/MU+V(G,K)/sqrt(KVB+V(P,K)*V(P,K)))))}
+RE1 7 0 1G
+G1 P K VALUE={(pow(abs(V(7)),EX)+sgn(V(7))*pow(abs(V(7)),EX))/KG1}
+RCP P K 1G
+C1 G K {CCG}
+C2 G P {CGP}
+C3 P K {CCP}
+R1 G 5 {RGI}
+D3 5 K DX
+.MODEL DX D(IS=1N RS=1 CJO=10PF TT=1N)
+.ENDS
+
+.SUBCKT ECC82 P G K
++ PARAMS: MU=21.5 EX=1.3 KG1=1180 KP=84 KVB=300 RGI=2000
++ CCG=1.6P CGP=1.5P CCP=0.5P
+E1 7 0 VALUE={V(P,K)/KP*ln(1+exp(KP*(1/MU+V(G,K)/sqrt(KVB+V(P,K)*V(P,K)))))}
+RE1 7 0 1G
+G1 P K VALUE={(pow(abs(V(7)),EX)+sgn(V(7))*pow(abs(V(7)),EX))/KG1}
+RCP P K 1G
+C1 G K {CCG}
+C2 G P {CGP}
+C3 P K {CCP}
+R1 G 5 {RGI}
+D3 5 K DX
+.MODEL DX D(IS=1N RS=1 CJO=10PF TT=1N)
+.ENDS
+
+.control
+  set numdigits=6
+
+  * ---------- DC operating point / bias (self-validation vs scan) ----------
+  op
+  echo "==== DC BIAS (compare to scan: 12AX7 plate +140 / cath +1.3, 12AU7 cath ~+31) ===="
+  print v(p1a) v(p1b) v(kc)
+  print v(kA) v(kB)
+  print v(paA) v(paB) v(out) v(fbbus)
+
+  * ---------- THD / harmonics vs drive ----------
+  * NOTE: .25uF coupling into 1M grid leaks -> ~0.25 s settling tau. Run 1.0 s to
+  * let the asymmetric-distortion DC shift settle, then analyse the last 20 ms
+  * (20 cycles @ 1 kHz). Without this the fourier leaks a ramp -> bogus THD.
+  echo "==== DRIVE = 0.10 V pk (onset) ===="
+  reset
+  alter @Vin[sin] = [ 0 0.10 1000 ]
+  tran 10u 1.54 1.5
+  linearize
+  fourier 1000 v(out)
+
+  echo "==== DRIVE = 0.30 V pk (drive) ===="
+  reset
+  alter @Vin[sin] = [ 0 0.30 1000 ]
+  tran 10u 1.54 1.5
+  linearize
+  fourier 1000 v(out)
+
+  echo "==== DRIVE = 1.00 V pk (hard) ===="
+  reset
+  alter @Vin[sin] = [ 0 1.00 1000 ]
+  tran 10u 1.54 1.5
+  linearize
+  fourier 1000 v(out)
+
+  * ---------- NFB loop depth: closed- vs open-loop gain via .ac (fast, exact) ----------
+  echo "==== NFB CLOSED-LOOP gain @1kHz ===="
+  ac dec 30 20 20000
+  meas ac gain_cl find vdb(out) at=1000
+
+  echo "==== NFB OPEN-LOOP gain @1kHz (feedback lifted) ===="
+  alter Rfb2200 = 1G
+  ac dec 30 20 20000
+  meas ac gain_ol find vdb(out) at=1000
+  echo "feedback depth (dB) = gain_ol - gain_cl  (== 20*log10(1+T))"
+.endc
+.end

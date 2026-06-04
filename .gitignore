@@ -9,6 +9,7 @@
 # Test runner build outputs (kept out of plugin build tree)
 /tests/build/
 /tests/runtests
+/tests/measure_sat
 
 # CMake build directories (CI uses /build/; local dev sometimes uses /build-cmake/)
 /build/

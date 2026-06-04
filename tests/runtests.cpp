@@ -1334,6 +1334,30 @@ void test_sat_asymmetric_harmonics()
     expectTrue(h2 > h3, "T-sat: 2nd harmonic dominates 3rd at low-moderate drive");
 }
 
+// P2 regression: the two-tube + NFB makeup amp must stay EVEN-DOMINANT (H2 > H3)
+// not just at low drive but across the musical range. The single-stage model and
+// an un-tuned two-stage model both failed this — H3 overtook H2 once driven (a
+// symmetric output clip injecting odd harmonics). The SPICE oracle
+// (saturation-v12-spec.md §9.1) holds H2 >> H3 even at hard drive; we require H2
+// to beat H3 by a clear margin at -6 dBFS across drive 0.5..2.0.
+void test_sat_even_dominant_under_drive()
+{
+    std::printf("\n== Saturation — even-dominant across drive (H2 > H3, -6 dBFS) ==\n");
+    bool ok = true;
+    for (float drive : { 0.5f, 1.0f, 2.0f })
+    {
+        auto sp = measureSatSpectrum(1000.0, -6.0, drive);
+        const double h1 = peakBinMag(sp, 1000.0);
+        const double h2 = peakBinMag(sp, 2000.0);
+        const double h3 = peakBinMag(sp, 3000.0);
+        const double margin = dbRel(h2, h1) - dbRel(h3, h1);   // H2 over H3, dB
+        std::printf("  [INFO] drive=%.1f  H2=%+6.2f dB  H3=%+6.2f dB  (H2-H3=%+5.1f dB)\n",
+                    drive, dbRel(h2, h1), dbRel(h3, h1), margin);
+        if (margin < 3.0) ok = false;   // require a clear even-dominant margin
+    }
+    expectTrue(ok, "T-sat: 2nd harmonic dominates 3rd by >3 dB across drive 0.5..2.0");
+}
+
 void diag_sat_harmonic_spectrum()
 {
     std::printf("\n== DIAG: Sat harmonic spectrum (H2..H5) across drive & input level ==\n");
@@ -1960,6 +1984,7 @@ int main()
     test_sat_thd_monotone();
     test_sat_no_dc_drift();
     test_sat_asymmetric_harmonics();
+    test_sat_even_dominant_under_drive();
     diag_sat_harmonic_spectrum();
 
     test_pultec_frequency_response();
