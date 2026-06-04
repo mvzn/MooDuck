@@ -263,7 +263,7 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
         bandSwitches[i].getProperties().set("softSwitch", true);   // low-relief momentary LookAndFeel variant
         bandSwitches[i].getProperties().set("alwaysLit", true);    // backlight always on; colour = state
         bandSwitches[i].setTooltip("Band " + juce::String(i + 1)
-            + " — click to cycle Normal / Solo (blue) / Mute (red). Console-style on the band output; Multiband only.");
+            + " — click to cycle Normal / Solo (blue) / Mute (red). Console-style on the band output; Multiband & Spectral (not FFT-Conv).");
         bandSwitches[i].onClick = [this, i] { cycleBandState(i); };
         addAndMakeVisible(bandSwitches[i]);
     }
@@ -981,7 +981,10 @@ void MaybeDuckAudioProcessorEditor::timerCallback()
     // blue = solo, red = mute); console-style band output only exists in Multiband.
     // Only touch (and repaint) a switch when its state or enablement actually changed
     // — these used to repaint every tick, forcing the panel to redraw behind them.
-    const bool bandEnabled = (mode == 1);
+    // Per-band solo/mute gates the summed band output, which runs in both Multiband and
+    // Spectral (FFT-Conv off) — they share the same band branch in the processor. FFT-Conv
+    // has no bands (per-bin), so the switches are inert there.
+    const bool bandEnabled = (mode == 1) || (mode == 2 && !fftConvOn);
     for (int i = 0; i < 5; ++i)
     {
         const int st = juce::jlimit(0, 2,
@@ -993,7 +996,7 @@ void MaybeDuckAudioProcessorEditor::timerCallback()
                                : (st == 2) ? MaybeDuckLookAndFeel::kBandMute
                                            : 0xffCBD0D4 /* cool silver = normal/active */;
         bandSwitches[i].getProperties().set("litColour", static_cast<juce::int64>(lit));
-        bandSwitches[i].setEnabled(bandEnabled);   // Multiband only
+        bandSwitches[i].setEnabled(bandEnabled);   // Multiband + Spectral (FFT-Conv off)
         bandSwitches[i].repaint();
         prevBandState[i] = st;
     }
