@@ -191,6 +191,38 @@ static void measureBlocking()
         std::printf("  tail +%3d ms : H2/H1 = %+6.2f dB\n", ms, h2ratio(ms));
 }
 
+// P5 probe: output-transformer iron should bloom/compress at LOW frequencies and
+// stay clean at HIGH frequencies. Drive a loud tone at several frequencies and
+// report THD (harmonics) + output level — expect LF THD >> HF THD.
+static void measureIron()
+{
+    const double fs = 48000.0;
+    const int blk = 512;
+    KorenTriode12AX7 amp;
+    auto run = [&](double f0)
+    {
+        amp.prepare(fs, blk);
+        amp.setDrive(1.0f);
+        amp.setEnabled(true);
+        const int warm = (int)(fs*0.5), N = (int)(fs*0.5);
+        std::vector<float> L(blk), R(blk), out; out.reserve(N);
+        long n=0; int produced=0;
+        while (produced < warm+N)
+        {
+            for (int i=0;i<blk;++i,++n) L[i]=R[i]=(float)(0.9*std::sin(2.0*M_PI*f0*(double)n/fs));
+            amp.processBlock(L.data(), R.data(), blk);
+            for (int i=0;i<blk && produced<warm+N;++i,++produced) if (produced>=warm) out.push_back(L[i]);
+        }
+        double m[6]={0}; goertzelMags(out, fs, f0, 5, m);
+        const double h1=std::max(m[1],1e-12);
+        double thd=0; for (int h=2;h<=5;++h) thd+=m[h]*m[h]; thd=std::sqrt(thd)/h1*100.0;
+        std::printf("  f=%6.0f Hz : H1=%.4f  THD=%6.2f%%  H2=%+6.2fdB  H3=%+6.2fdB\n",
+                    f0, h1, thd, 20*std::log10(std::max(m[2]/h1,1e-9)), 20*std::log10(std::max(m[3]/h1,1e-9)));
+    };
+    std::printf("--- P5 output-transformer iron: LF bloom vs HF clean (loud 0.9 tone, drive 1.0) ---\n");
+    for (double f : { 30.0, 50.0, 100.0, 500.0, 2000.0 }) run(f);
+}
+
 int main()
 {
     std::printf("=== P2 makeup-amp harmonic probe (oracle target: even-dominant, H2 >> H3) ===\n");
@@ -204,5 +236,7 @@ int main()
     measureBreathing();
     std::printf("\n");
     measureBlocking();
+    std::printf("\n");
+    measureIron();
     return 0;
 }

@@ -1463,6 +1463,57 @@ void test_sat_grid_blocking()
                "T-sat: blocking elevates post-transient H2, recovering over ~0.25 s");
 }
 
+// P5 regression: output-transformer iron must bloom at LOW frequencies (core
+// flux ∝ 1/f saturates there first) and stay clean at HIGH frequencies. Drive a
+// loud tone low (50 Hz) and high (2 kHz); require the LF THD to clearly exceed the
+// HF THD AND the LF output to be more compressed (lower H1) than the HF output.
+void test_sat_transformer_lf_bloom()
+{
+    std::printf("\n== Saturation — output-transformer LF bloom (LF THD > HF THD) ==\n");
+    const double fs = 48000.0;
+    const int    kBlock = 512;
+
+    auto run = [&](double f0, double& thdOut, double& h1Out)
+    {
+        KorenTriode12AX7 sat;
+        sat.prepare(fs, kBlock);
+        sat.setDrive(1.0f);
+        sat.setEnabled(true);
+        const int warm = (int)(fs * 0.5), N = (int)(fs * 0.5);
+        std::vector<float> L((size_t)kBlock), R((size_t)kBlock), out; out.reserve((size_t)N);
+        long n = 0; int produced = 0;
+        while (produced < warm + N)
+        {
+            for (int i = 0; i < kBlock; ++i, ++n)
+                L[(size_t)i] = R[(size_t)i] = (float)(0.9 * std::sin(2.0*M_PI*f0*(double)n/fs));
+            sat.processBlock(L.data(), R.data(), kBlock);
+            for (int i = 0; i < kBlock && produced < warm + N; ++i, ++produced)
+                if (produced >= warm) out.push_back(L[(size_t)i]);
+        }
+        // Goertzel H1..H5 (robust at any f0, unlike a fixed FFT bin grid).
+        double m[6] = {0,0,0,0,0,0};
+        const int M = (int) out.size();
+        for (int h = 1; h <= 5; ++h)
+        {
+            double re=0, im=0; const double w = 2.0*M_PI*(h*f0)/fs;
+            for (int k = 0; k < M; ++k) { re += out[(size_t)k]*std::cos(w*k); im += out[(size_t)k]*std::sin(w*k); }
+            m[h] = (2.0/M) * std::sqrt(re*re + im*im);
+        }
+        h1Out = std::max(m[1], 1e-12);
+        double t = 0; for (int h = 2; h <= 5; ++h) t += m[h]*m[h];
+        thdOut = std::sqrt(t) / h1Out * 100.0;
+    };
+
+    double thdLo, h1Lo, thdHi, h1Hi;
+    run(50.0,   thdLo, h1Lo);
+    run(2000.0, thdHi, h1Hi);
+    const double compLo = 20.0 * std::log10(h1Lo / std::max(h1Hi, 1e-12));   // LF level vs HF
+    std::printf("  [INFO] 50 Hz: THD=%.2f%% H1=%.4f | 2 kHz: THD=%.2f%% H1=%.4f | LF comp=%.2f dB\n",
+                thdLo, h1Lo, thdHi, h1Hi, compLo);
+    expectTrue(thdLo > thdHi + 3.0 && compLo < -1.0,
+               "T-sat: transformer iron blooms LF (LF THD>HF, LF more compressed)");
+}
+
 void diag_sat_harmonic_spectrum()
 {
     std::printf("\n== DIAG: Sat harmonic spectrum (H2..H5) across drive & input level ==\n");
@@ -2092,6 +2143,7 @@ int main()
     test_sat_even_dominant_under_drive();
     test_sat_dynamic_bias_breathing();
     test_sat_grid_blocking();
+    test_sat_transformer_lf_bloom();
     diag_sat_harmonic_spectrum();
 
     test_pultec_frequency_response();

@@ -80,6 +80,11 @@ public:
         const double tauBlock = kBlockRleak * kBlockCcoup;
         blockReleaseCoeff = 1.0 - std::exp(-1.0 / (tauBlock * osRate));
 
+        // P5 output-transformer iron one-pole coefficients (a = exp(-2pi fc/fs)).
+        const double twoPiOsr = 2.0 * juce::MathConstants<double>::pi / osRate;
+        ironFluxA = std::exp(-twoPiOsr * kIronFluxFcHz);
+        ironHfA   = std::exp(-twoPiOsr * kIronHfFcHz);
+
         // Constant-latency support: size the dry-path delay ring to the
         // oversampler's group delay (reported at host rate). When the stage is
         // disabled we run the dry signal through this ring so its latency
@@ -102,6 +107,8 @@ public:
         for (auto& s : nfbPrevOut)  s = 0.0;
         for (auto& s : cathodeEnv)  s = 0.0;
         for (auto& s : blockEnv)    s = 0.0;
+        for (auto& s : ironFlux)    s = 0.0;
+        for (auto& s : ironHf)      s = 0.0;
         for (auto& s : dcPrevIn)   s = 0.0f;
         for (auto& s : dcPrevOut)  s = 0.0f;
     }
@@ -226,9 +233,20 @@ public:
                                   [this](double u) noexcept { return stage2F(u); });
         s2PrevIn[c] = aBlocked;
 
-        // Feedback taps the stage-2 output (pre-makeup); makeup restores unity.
-        nfbPrevOut[c] = b;
-        return nfbMakeup * b;
+        // P5 — output-transformer iron. Flux proxy = leaky integrator (LF-weighted);
+        // soft core saturation of the flux; subtract the saturated-flux loss so the
+        // signal is transparent until the LF flux exceeds the knee, then blooms /
+        // compresses at LF. Then a gentle HF roll-off (leakage inductance).
+        ironFlux[c] = ironFluxA * ironFlux[c] + (1.0 - ironFluxA) * b;
+        const double phi    = ironFlux[c];
+        const double phiSat = kIronBsat * std::tanh(phi / kIronBsat);
+        double y = b - kIronDepth * (phi - phiSat);          // LF bloom / compression
+        ironHf[c] = ironHfA * ironHf[c] + (1.0 - ironHfA) * y;
+        y = ironHf[c];                                        // gentle HF roll-off
+
+        // Global NFB taps the OT secondary (post-iron); makeup restores unity.
+        nfbPrevOut[c] = y;
+        return nfbMakeup * y;
     }
 
 private:
@@ -338,6 +356,24 @@ private:
     static constexpr double kBlockOnset  = 0.75;             // grid-conduction threshold (norm.)
     static constexpr double kBlockDepth  = 0.30;             // bias-shift scale
 
+    // ---- P5: output-transformer iron (Peerless S-217-D) ----
+    // Core saturation gives LF "bloom"/compression + harmonics while HF stays
+    // clean — much of the amp's "fullness". Physics: magnetising flux is the
+    // integral of the winding voltage, so for a given level the flux is larger at
+    // LOW frequencies (flux ∝ 1/f above the OT's LF corner) and the core saturates
+    // there first. Model: a leaky integrator (1-pole LP at the OT LF corner) is the
+    // flux proxy (acts as an integrator above its corner -> LF-weighted); a soft
+    // tanh core-saturation on that flux; subtract the saturated-flux *loss* from
+    // the signal so the stage is transparent until the LF flux exceeds the knee,
+    // then blooms/compresses at LF only. Plus a gentle 1-pole HF roll-off (leakage
+    // inductance). Sits post-12AU7, INSIDE the global NFB loop (tapped at the OT
+    // secondary, as in the schematic). Behavioural v1.2 hybrid; full B-H/hysteresis
+    // (even-harmonic) refinement deferred to v1.3.
+    static constexpr double kIronFluxFcHz = 60.0;            // OT LF corner -> flux weighting
+    static constexpr double kIronBsat     = 0.30;            // core flux knee (norm.)
+    static constexpr double kIronDepth    = 1.00;            // bloom/compression depth
+    static constexpr double kIronHfFcHz   = 18000.0;         // gentle HF roll-off (leakage)
+
     static constexpr double DIFF_EPS = 0.001;         // finite-diff step for slope norm
 
     // ADAA LUT range (input-sample units, drive folded in)
@@ -372,6 +408,13 @@ private:
     // coefficient (tau = Rleak*Ccoup at the OVERSAMPLED rate; fast attack).
     double blockReleaseCoeff = 0.0;
     std::array<double, 2> blockEnv {};
+
+    // P5 output-transformer iron: per-channel flux (leaky integrator) + HF-rolloff
+    // states, with their one-pole coefficients (computed at the OVERSAMPLED rate).
+    double ironFluxA = 0.0;   // flux LP coefficient (a = exp(-2pi fc/fs))
+    double ironHfA   = 0.0;   // HF roll-off LP coefficient
+    std::array<double, 2> ironFlux {};
+    std::array<double, 2> ironHf   {};
 
     // ADAA LUTs + per-channel previous-input state, per stage.
     std::array<double, LUT_SIZE> fLut1 {};
