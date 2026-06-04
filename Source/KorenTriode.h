@@ -70,6 +70,12 @@ public:
         nfbBeta   = std::pow(10.0, kNfbDepthDb / 20.0) - 1.0;
         nfbMakeup = 1.0 + nfbBeta;
 
+        // P3 dynamic cathode bias one-pole coefficient at the OVERSAMPLED rate
+        // (the per-sample path runs at 4x host). tau = Rk*Ck.
+        const double tauCathode = kCathodeRk * kCathodeCk;
+        const double osRate     = std::max(sampleRate, 1.0) * 4.0;
+        cathodeCoeff = 1.0 - std::exp(-1.0 / (tauCathode * osRate));
+
         // Constant-latency support: size the dry-path delay ring to the
         // oversampler's group delay (reported at host rate). When the stage is
         // disabled we run the dry signal through this ring so its latency
@@ -87,9 +93,10 @@ public:
         dcAlpha = std::exp(-twoPi * kDcCutoffHz / std::max(sampleRate, 1.0));
 
         // Reset per-channel state (both stages + NFB + DC blocker).
-        for (auto& s : s1PrevIn)   s = 0.0;
-        for (auto& s : s2PrevIn)   s = 0.0;
-        for (auto& s : nfbPrevOut) s = 0.0;
+        for (auto& s : s1PrevIn)    s = 0.0;
+        for (auto& s : s2PrevIn)    s = 0.0;
+        for (auto& s : nfbPrevOut)  s = 0.0;
+        for (auto& s : cathodeEnv)  s = 0.0;
         for (auto& s : dcPrevIn)   s = 0.0f;
         for (auto& s : dcPrevOut)  s = 0.0f;
     }
@@ -188,10 +195,20 @@ public:
                                   [this](double u) noexcept { return stage1F(u); });
         s1PrevIn[c] = xin;
 
+        // P3 — dynamic cathode bias on the 12AU7 stage. Track a slow rectified
+        // envelope of the stage drive (proxy for the rising average cathode
+        // current) and pull a time-varying pre-gain g<=1 around the fixed curve:
+        // sustained drive => bias toward cutoff => gain droops over tau, then
+        // recovers (the "breathing"). g multiplies the curve INPUT, so the stage-2
+        // antiderivative LUT stays valid (it is still the same static curve).
+        cathodeEnv[c] += (std::abs(a) - cathodeEnv[c]) * cathodeCoeff;
+        const double g       = 1.0 / (1.0 + kCathodeBiasDepth * cathodeEnv[c]);
+        const double aBiased = g * a;
+
         // Stage 2 — 12AU7 push-pull (odd-symmetric), ADAA-wrapped.
-        const double b = adaaStep(a, s2PrevIn[c], fLut2,
+        const double b = adaaStep(aBiased, s2PrevIn[c], fLut2,
                                   [this](double u) noexcept { return stage2F(u); });
-        s2PrevIn[c] = a;
+        s2PrevIn[c] = aBiased;
 
         // Feedback taps the stage-2 output (pre-makeup); makeup restores unity.
         nfbPrevOut[c] = b;
@@ -274,6 +291,20 @@ private:
     // ---- Global NFB ----
     static constexpr double kNfbDepthDb = 1.94;       // oracle open- vs closed-loop
 
+    // ---- P3: dynamic cathode bias (12AU7 self-bias, the "breathing") ----
+    // The 12AU7 output cathodes are 4700 ohm || 50 uF (schematic): a bypassed
+    // cathode whose cap voltage tracks the slow AVERAGE cathode current, so under
+    // sustained drive the bias drifts toward cutoff and the stage gain droops with
+    // tau = Rk*Ck, then recovers — level-dependent compression / low-end bloom.
+    // (The 12AX7 front cathode is UNbypassed, so it has no such time constant.)
+    // Modelled as a slow rectified envelope of the output-stage drive that pulls a
+    // time-varying pre-gain around the FIXED stage-2 curve (keeps the ADAA LUT
+    // valid). kCathodeBiasDepth sets how far the bias moves (≈ -1.5 dB at full
+    // drive); intentionally gentle — this is "movement", not a compressor.
+    static constexpr double kCathodeRk        = 4700.0;
+    static constexpr double kCathodeCk        = 50.0e-6;     // -> tau = 0.235 s
+    static constexpr double kCathodeBiasDepth = 0.18;
+
     static constexpr double DIFF_EPS = 0.001;         // finite-diff step for slope norm
 
     // ADAA LUT range (input-sample units, drive folded in)
@@ -298,6 +329,11 @@ private:
 
     double nfbBeta   = 0.0;    // global feedback coefficient
     double nfbMakeup = 1.0;    // = 1 + nfbBeta (restores unity small-signal gain)
+
+    // P3 dynamic cathode bias: slow rectified envelope per channel + its one-pole
+    // coefficient (tau = Rk*Ck, evaluated at the OVERSAMPLED rate).
+    double cathodeCoeff = 0.0;
+    std::array<double, 2> cathodeEnv {};
 
     // ADAA LUTs + per-channel previous-input state, per stage.
     std::array<double, LUT_SIZE> fLut1 {};

@@ -1358,6 +1358,55 @@ void test_sat_even_dominant_under_drive()
     expectTrue(ok, "T-sat: 2nd harmonic dominates 3rd by >3 dB across drive 0.5..2.0");
 }
 
+// P3 regression: dynamic cathode bias ("breathing"). The 12AU7 bypassed cathode
+// (4700 ohm || 50 uF, tau ~= 235 ms) makes the stage gain droop over time under a
+// sustained loud tone, then recover. We isolate the SLOW bias (not the instant
+// static saturation, which is identical in both windows) by comparing the output
+// RMS just after onset vs after settling: the settled RMS must be a few tenths of
+// a dB lower (droop present) but the effect must stay gentle (not a compressor).
+void test_sat_dynamic_bias_breathing()
+{
+    std::printf("\n== Saturation — dynamic cathode bias (breathing droop over ~235 ms) ==\n");
+    const double fs = 48000.0;
+    const int    kBlock = 64;
+    const double f0 = 1000.0;
+
+    KorenTriode12AX7 sat;
+    sat.prepare(fs, kBlock);
+    sat.setDrive(1.0f);
+    sat.setEnabled(true);
+
+    const double inAmp = 0.9;            // loud sustained tone
+    const int    total = (int) (fs * 0.8);
+
+    // RMS accumulators over two windows (samples), past the onset overshoot.
+    const int earlyA = (int)(fs * 0.020), earlyB = (int)(fs * 0.045);
+    const int lateA  = (int)(fs * 0.600), lateB  = (int)(fs * 0.650);
+    double eAcc = 0.0, lAcc = 0.0; int eN = 0, lN = 0;
+
+    std::vector<float> L((size_t)kBlock), R((size_t)kBlock);
+    long n = 0; int produced = 0;
+    while (produced < total)
+    {
+        for (int i = 0; i < kBlock; ++i, ++n)
+            L[(size_t)i] = R[(size_t)i] = (float)(inAmp * std::sin(2.0*M_PI*f0*(double)n/fs));
+        sat.processBlock(L.data(), R.data(), kBlock);
+        for (int i = 0; i < kBlock; ++i, ++produced)
+        {
+            const double v = L[(size_t)i];
+            if (produced >= earlyA && produced < earlyB) { eAcc += v*v; ++eN; }
+            if (produced >= lateA  && produced < lateB ) { lAcc += v*v; ++lN; }
+        }
+    }
+    const double eRms = std::sqrt(eAcc / std::max(1, eN));
+    const double lRms = std::sqrt(lAcc / std::max(1, lN));
+    const double droopDb = 20.0 * std::log10(std::max(lRms,1e-12) / std::max(eRms,1e-12));
+    std::printf("  [INFO] early RMS=%.4f  settled RMS=%.4f  droop=%+.2f dB (expect -0.3..-6 dB)\n",
+                eRms, lRms, droopDb);
+    expectTrue(droopDb < -0.3 && droopDb > -6.0,
+               "T-sat: dynamic cathode bias droops gently over time (breathing)");
+}
+
 void diag_sat_harmonic_spectrum()
 {
     std::printf("\n== DIAG: Sat harmonic spectrum (H2..H5) across drive & input level ==\n");
@@ -1985,6 +2034,7 @@ int main()
     test_sat_no_dc_drift();
     test_sat_asymmetric_harmonics();
     test_sat_even_dominant_under_drive();
+    test_sat_dynamic_bias_breathing();
     diag_sat_harmonic_spectrum();
 
     test_pultec_frequency_response();

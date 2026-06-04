@@ -91,6 +91,55 @@ static void measure(float drive, float inAmp)
                 dB(m[2]/h1) - dB(m[3]/h1));
 }
 
+// P3 breathing probe: feed a sudden sustained loud tone and report the output
+// peak in successive windows — expect a droop over tau≈235ms (dynamic cathode
+// bias) settling to a compressed steady state, then recovery after the tone stops.
+static void measureBreathing()
+{
+    const double fs = 48000.0;
+    const int    blk = 64;
+    const double f0 = 1000.0;
+    KorenTriode12AX7 amp;
+    amp.prepare(fs, blk);
+    amp.setDrive(1.0f);
+    amp.setEnabled(true);
+
+    const double inAmp = 0.9;
+    const int total = (int)(fs * 1.2);    // 1.2 s of tone
+    std::vector<float> env;               // per-sample |out|, smoothed lightly
+
+    std::vector<float> L(blk), R(blk);
+    long n = 0;
+    int produced = 0;
+    double pk = 0.0;
+    std::vector<std::pair<double,double>> marks = {
+        {0.000,0.010},{0.050,0.060},{0.120,0.130},{0.235,0.245},
+        {0.470,0.480},{0.800,0.810},{1.100,1.110}};
+    std::vector<double> peaks(marks.size(), 0.0);
+
+    while (produced < total)
+    {
+        for (int i = 0; i < blk; ++i, ++n)
+            L[i] = R[i] = (float)(inAmp * std::sin(2.0*M_PI*f0*(double)n/fs));
+        amp.processBlock(L.data(), R.data(), blk);
+        for (int i = 0; i < blk; ++i, ++produced)
+        {
+            const double t = (double)produced / fs;
+            const double v = std::fabs(L[i]);
+            for (size_t k = 0; k < marks.size(); ++k)
+                if (t >= marks[k].first && t < marks[k].second)
+                    peaks[k] = std::max(peaks[k], v);
+        }
+    }
+    (void)pk;
+    std::printf("--- P3 dynamic cathode bias (breathing): output peak vs time, loud 0.9 tone ---\n");
+    const double ref = peaks[0] > 1e-9 ? peaks[0] : 1e-9;
+    for (size_t k = 0; k < marks.size(); ++k)
+        std::printf("  t=%.0f-%.0f ms : peak=%.4f  (%+5.2f dB vs onset)\n",
+                    marks[k].first*1000, marks[k].second*1000, peaks[k],
+                    20.0*std::log10(std::max(peaks[k],1e-9)/ref));
+}
+
 int main()
 {
     std::printf("=== P2 makeup-amp harmonic probe (oracle target: even-dominant, H2 >> H3) ===\n");
@@ -100,5 +149,7 @@ int main()
     std::printf("--- sweep INPUT amplitude at drive 1.0 ---\n");
     for (float a : { 0.1f, 0.3f, 0.7f, 1.0f })
         measure(1.0f, a);
+    std::printf("\n");
+    measureBreathing();
     return 0;
 }
