@@ -25,7 +25,7 @@ namespace {
     // margins; keep kWindowH comfortably above that so nothing crowds the bottom.
     // To change the overall size, retune the section heights too.
     constexpr int kWindowW       = 820;
-    constexpr int kWindowH       = 686;   // room for the zig-zag Pultec rack
+    constexpr int kWindowH       = 782;   // room for the zig-zag Pultec rack + tube-sat knob row
     constexpr int kOuterMargin   = 22;
     constexpr int kGroupGap      = 8;    // breathing room between sections
     constexpr int kGroupTitleH   = 22;
@@ -347,9 +347,11 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
     // Bypass + Sat use the soft-switch style (like the crossover band switches),
     // lit only when engaged. Sat glows blood-orange (tube-drive); Bypass glows red.
     pultecSatButton.setButtonText("Sat");
-    pultecSatButton.setTooltip("12AX7 triode saturation on the Pultec makeup-amp stage (4× oversampled).");
+    pultecSatButton.setTooltip("Two-tube EQP-1A makeup-amp saturation (4× oversampled). Glows dim green, brightening toward red with output level.");
     pultecSatButton.getProperties().set("softSwitch", true);
-    pultecSatButton.getProperties().set("litColour", static_cast<juce::int64>(0xffCB3E12)); // blood orange
+    // Initial lit colour: dim green. timerCallback() drives it green->red by level.
+    pultecSatButton.getProperties().set("litColour", static_cast<juce::int64>(
+        static_cast<juce::uint32>(juce::Colour::fromHSV(0.33f, 0.85f, 0.40f, 1.0f).getARGB())));
     addAndMakeVisible(pultecSatButton);
     pultecSatAttachment = std::make_unique<ButtonAttachment>(
         audioProcessor.apvts, "pultecSatEnable", pultecSatButton);
@@ -361,6 +363,36 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
     addAndMakeVisible(pultecBypassButton);
     pultecBypassAttachment = std::make_unique<ButtonAttachment>(
         audioProcessor.apvts, "pultecBypass", pultecBypassButton);
+
+    // Tube-saturation controls (P6): Drive / Mix / Trim — rotary knobs matching
+    // the Pultec EQ knob styling, on a third row of the "Post PulEQ" group.
+    const juce::String satLabelsText[3] = { "Drive", "Mix", "Trim" };
+    const juce::String satIds[3]        = { "pultecSatDrive", "pultecSatMix", "pultecSatTrim" };
+    const juce::String satSuffix[3]     = { "", " %", " dB" };
+    const int          satDecimals[3]   = { 2, 0, 1 };
+    const juce::String satTips[3] = {
+        "Saturation drive — scales the 12AX7 grid excursion (1.0 = authentic EQP-1A operating point).",
+        "Parallel dry/wet for the tube saturation (100% = full tube, 0% = clean post-EQ).",
+        "Output trim on the saturated path — for loudness-matched A/B."
+    };
+    for (int i = 0; i < 3; ++i)
+    {
+        mdLookAndFeel.applyRotaryConfiguration(pultecSatSliders[i]);
+        pultecSatSliders[i].setTextBoxStyle(juce::Slider::TextBoxBelow, false, 70, 20);
+        styleValueBox(pultecSatSliders[i]);
+        pultecSatSliders[i].setTextValueSuffix(satSuffix[i]);
+        pultecSatSliders[i].setNumDecimalPlacesToDisplay(satDecimals[i]);
+        pultecSatSliders[i].setTooltip(satTips[i]);
+        addAndMakeVisible(pultecSatSliders[i]);
+
+        pultecSatLabels[i].setText(satLabelsText[i], juce::dontSendNotification);
+        pultecSatLabels[i].setJustificationType(juce::Justification::centred);
+        pultecSatLabels[i].setColour(juce::Label::textColourId, juce::Colours::white);
+        addAndMakeVisible(pultecSatLabels[i]);
+
+        pultecSatSliderAttachments[i] = std::make_unique<SliderAttachment>(
+            audioProcessor.apvts, satIds[i], pultecSatSliders[i]);
+    }
 
     // Listen for Hard Duck / Xtreme Lookahead so we can freeze + relabel the knobs
     // they override (ratio and lookahead respectively).
@@ -604,7 +636,7 @@ void MaybeDuckAudioProcessorEditor::renderBackground()
     // module spans the FULL plugin width (mounting rails at the case sides), with
     // the controls sitting in its middle — so it takes the whole horizontal body
     // rather than being inset. Drawn behind the section's controls (paint on top).
-    auto fullWidthRack = [this, &g](juce::Rectangle<int> groupBounds)
+    auto fullWidthRack = [this, &g](juce::Rectangle<int> groupBounds, float chassisBrighten = 0.0f)
     {
         if (groupBounds.isEmpty()) return;
         auto rb = groupBounds.toFloat();
@@ -612,16 +644,18 @@ void MaybeDuckAudioProcessorEditor::renderBackground()
         rb.setWidth((float) getWidth());   // full edge-to-edge, rails at the case sides
         // Pass the chassis tone at this rack's vertical centre so the panel is
         // darkened RELATIVE to its surroundings -> consistently recessed whether the
-        // rack sits high (light chassis) or low (dark chassis).
+        // rack sits high (light chassis) or low (dark chassis). chassisBrighten lifts
+        // a specific rack's face (the Pultec module reads a touch brighter).
         const float yNorm = rb.getCentreY() / (float) juce::jmax(1, getHeight());
-        mdLookAndFeel.drawRackInset(g, rb, mdLookAndFeel.chassisToneAt(yNorm));
+        mdLookAndFeel.drawRackInset(g, rb, mdLookAndFeel.chassisToneAt(yNorm).brighter(chassisBrighten));
     };
     fullWidthRack(rackBoundsDyn);
 
-    // Pultec EQ is its own rack-unit module too. The "LOW/HIGH FREQUENCY" sub-headers
-    // and the wordmark are TEXT, so they're drawn live in paint() (caching text in the
-    // logical-res background image blurs it on hi-DPI) — not here.
-    fullWidthRack(rackBoundsEq);
+    // Pultec EQ is its own rack-unit module too — drawn a bit brighter than the
+    // dynamics rack. The "LOW/HIGH FREQUENCY" sub-headers and the wordmark are TEXT,
+    // so they're drawn live in paint() (caching text in the logical-res background
+    // image blurs it on hi-DPI) — not here.
+    fullWidthRack(rackBoundsEq, 0.18f);
 
     // --- Crossover filter-band engravings ----------------------------------
     // Row 1 (the knob row): BIG engraved filter-response curves in the gaps
@@ -874,7 +908,8 @@ void MaybeDuckAudioProcessorEditor::resized()
     constexpr int pultecHdrH    = 14;  // engraved "LOW/HIGH FREQUENCY" sub-header row
     constexpr int pultecKnobH   = 96;  // per-knob block height (caption + knob)
     constexpr int pultecStagger = 30;  // selectors (bottom row) drop below boost/atten (top row)
-    constexpr int pultecGroupH  = kGroupTitleH + pultecHdrH + pultecKnobH + pultecStagger + 14;
+    constexpr int pultecSatRowH = 96;  // third row: tube-sat Drive/Mix/Trim knobs
+    constexpr int pultecGroupH  = kGroupTitleH + pultecHdrH + pultecKnobH + pultecStagger + pultecSatRowH + 14;
     auto pultecArea = area.removeFromTop(pultecGroupH);
     pultecGroup.setBounds(pultecArea);
     rackBoundsEq = pultecArea;
@@ -887,6 +922,7 @@ void MaybeDuckAudioProcessorEditor::resized()
     auto togglesCol = pultecInner.removeFromRight(togglesSlotW).reduced(4, 0);
 
     auto pultecHdrRow   = pultecInner.removeFromTop(pultecHdrH);
+    auto pultecSatRow   = pultecInner.removeFromBottom(pultecSatRowH);  // tube-sat knob row
     auto pultecKnobArea = pultecInner;   // height = pultecKnobH + pultecStagger
 
     // Authentic EQP-1A faceplate split into two tiers:
@@ -917,6 +953,22 @@ void MaybeDuckAudioProcessorEditor::resized()
     placeKnob(0, 1.0f, yBot);  // LF Sel     (bottom, under LF pair)
     placeKnob(5, 2.0f, yBot);  // Bandwidth  (bottom, centre)
     placeKnob(3, 3.0f, yBot);  // HF Sel     (bottom, under HF pair)
+
+    // Tube-sat row: Drive / Mix / Trim, centred trio aligned under the EQ knobs.
+    {
+        const float su = pultecSatRow.getWidth() / 5.0f;
+        auto placeSat = [&](int idx, float centreU)
+        {
+            juce::Rectangle<int> col(juce::roundToInt(pultecSatRow.getX() + centreU * su - su * 0.5f),
+                                     pultecSatRow.getY(), juce::roundToInt(su), pultecSatRow.getHeight());
+            col = col.reduced(4);
+            pultecSatLabels[idx].setBounds(col.removeFromTop(kKnobLabelH));
+            pultecSatSliders[idx].setBounds(col);
+        };
+        placeSat(0, 1.5f);  // Drive
+        placeSat(1, 2.5f);  // Mix
+        placeSat(2, 3.5f);  // Trim
+    }
 
     pultecLowHdr  = pultecHdrRow.withX(x0).withWidth(juce::roundToInt(2.0f * u));
     pultecHighHdr = pultecHdrRow.withX(x0 + juce::roundToInt(2.0f * u)).withWidth(juce::roundToInt(3.0f * u));
@@ -949,6 +1001,23 @@ void MaybeDuckAudioProcessorEditor::timerCallback()
     levelMeter.setLevels(audioProcessor.getInputLevelDb(),
                          audioProcessor.getSidechainLevelDb(),
                          audioProcessor.getGainReductionAmountDb());
+
+    // Tube-sat button: a level-reactive tube glow. Idle = dim green; as the
+    // post-EQ/saturation output gets hotter the lit colour brightens and shifts
+    // green -> amber -> red. (The glow only shows while Sat is engaged.)
+    {
+        const float lvl = audioProcessor.getOutputLevelDb();   // post-sat output peak (dBFS)
+        const float t   = juce::jlimit(0.0f, 1.0f, juce::jmap(lvl, -40.0f, -1.0f, 0.0f, 1.0f));
+        const float hue = juce::jmap(t, 0.0f, 1.0f, 0.33f, 0.0f);   // 0.33 green -> 0.0 red
+        const float bri = 0.40f + 0.60f * t;                       // dim -> bright
+        const juce::int64 argb = (juce::int64) (juce::uint32)
+            juce::Colour::fromHSV(hue, 0.85f, bri, 1.0f).getARGB();
+        if ((juce::int64) pultecSatButton.getProperties()["litColour"] != argb)
+        {
+            pultecSatButton.getProperties().set("litColour", argb);
+            pultecSatButton.repaint();
+        }
+    }
 
     // --- Sync mode + conv-size button visual state from APVTS via toggle state
     // so the LookAndFeel-drawn LED dot reflects the active radio.

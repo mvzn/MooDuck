@@ -130,6 +130,10 @@ private:
     std::unique_ptr<ButtonAttachment> pultecSatAttachment;
     juce::ToggleButton pultecBypassButton;
     std::unique_ptr<ButtonAttachment> pultecBypassAttachment;
+    // Tube-saturation controls (P6): Drive, Mix, Trim — a third knob row in the group.
+    juce::Slider pultecSatSliders[3];
+    juce::Label  pultecSatLabels[3];
+    std::unique_ptr<SliderAttachment> pultecSatSliderAttachments[3];
     // Engraved "LOW FREQUENCY" / "HIGH FREQUENCY" sub-section headers over the two
     // Pultec knob groups (authentic EQP-1A faceplate split). Set in resized(),
     // drawn into the cached background in renderBackground().
