@@ -160,6 +160,19 @@ private:
     int   lookaheadPendingDelay = 0;   // tap target to snap to at the fade bottom (samples)
     int   lookaheadBigJumpThresh = 0;  // samples; changes above this crossfade instead of glide
 
+    // Mode-change click suppression. Switching Wideband/Multiband/Spectral or toggling
+    // FFT-Conv swaps the whole processing path (different gain/phase/latency) -> a click.
+    // We defer the actual path switch until the output has faded to zero, then fade the
+    // new path back in. modeFadeActive* = the path currently being processed (lags the
+    // parameter target until the fade bottom). -1 = uninitialised (adopt target, no fade).
+    int   modeFadeActiveEffMode = -1;
+    bool  modeFadeActiveUseConv = false;
+    float modeFadeGain          = 1.0f; // output gain during a mode crossfade
+    int   modeFadeState         = 0;    // 0 = idle, 1 = fading out, 2 = fading in
+    float modeFadeInc           = 1.0f; // per-sample fade step (~5 ms)
+    int   modeFadeHoldSamples   = 0;    // stay muted this many samples before fading in
+                                        // (covers the FFT-conv priming latency on entry)
+
     // Wideband mode (bypass crossover)
     DynamicsProcessor widebandProcessorL, widebandProcessorR;
 

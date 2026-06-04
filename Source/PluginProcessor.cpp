@@ -423,6 +423,15 @@ void MaybeDuckAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
     lookaheadFadeInc       = 1.0f / juce::jmax(1.0f, static_cast<float>(0.012 * sampleRate));
     lookaheadBigJumpThresh = static_cast<int>(std::round(0.060 * sampleRate));
 
+    // Mode crossfade: ~5 ms each way. Re-adopt the target path on the next block (no
+    // fade on the first block / after a re-prepare).
+    modeFadeActiveEffMode  = -1;
+    modeFadeActiveUseConv  = false;
+    modeFadeGain           = 1.0f;
+    modeFadeState          = 0;
+    modeFadeInc            = 1.0f / juce::jmax(1.0f, static_cast<float>(0.005 * sampleRate));
+    modeFadeHoldSamples    = 0;
+
     // Pultec EQP-1A WDF filter + tube saturation
     pultec.prepare(sampleRate, samplesPerBlock);
     triode.prepare(sampleRate, samplesPerBlock);
@@ -433,8 +442,12 @@ void MaybeDuckAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
     for (int i = 0; i < 3; ++i)
     {
         convFftObjs[i] = std::make_unique<juce::dsp::FFT>(kOrders[i]);
+        // normalise=false: a raw Hann window has constant-overlap-add (COLA) = 1.0 at
+        // 50% hop, so the analysis-windowed OLA reconstructs at unity. JUCE's default
+        // normalise=true rescales the window by size/sum (~2x for Hann), which made the
+        // conv path reconstruct +6 dB hot whenever Spectral+FFT-Conv engaged.
         convWinObjs[i] = std::make_unique<juce::dsp::WindowingFunction<float>>(
-            (size_t)kSizes[i], juce::dsp::WindowingFunction<float>::hann);
+            (size_t)kSizes[i], juce::dsp::WindowingFunction<float>::hann, false);
     }
 
     // Clear all conv state and prime FIFO with hopSize zeros (= reported latency)
@@ -573,7 +586,27 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     // Spectral detection is meaningless without an external sidechain to analyse.
     // With no SC driving, fall back to wideband so the duck stage runs as a plain
     // self-detecting compressor on the main signal (+ the Pultec EQ downstream).
-    const int effMode = (! useSidechain && mode == 2) ? 0 : mode;
+    const int targetEffMode = (! useSidechain && mode == 2) ? 0 : mode;
+
+    // --- Mode-change click suppression ------------------------------------------
+    // Switching path (Wideband/Multiband/Spectral, or FFT-Conv on/off) is a hard
+    // discontinuity (different gain/phase/latency) -> a click. We keep processing the
+    // CURRENT path and only switch once the output has faded to zero, then fade the
+    // new path back in (see the per-sample state machine after the branch dispatch).
+    if (modeFadeActiveEffMode < 0)   // first block (or post-prepare): adopt with no fade
+    {
+        modeFadeActiveEffMode = targetEffMode;
+        modeFadeActiveUseConv = useConv;
+    }
+    const bool modeChanged = (targetEffMode != modeFadeActiveEffMode)
+                          || (useConv      != modeFadeActiveUseConv);
+    if (modeChanged && modeFadeState != 1)
+        modeFadeState = 1;                 // (re)start the fade-out toward the new path
+
+    // Everything below dispatches/reports on the ACTIVE path (lags the target until the
+    // fade bottom), so the actual swap — and its latency change — lands while muted.
+    const int  effMode        = modeFadeActiveEffMode;
+    const bool useConvActive  = modeFadeActiveUseConv;
 
     // Reset conv state if user changed FFT size
     if (sizeIdx != prevConvSizeIdx)
@@ -634,7 +667,7 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     // never changes mid-stream) + the variable FFT-conv hop. Only the hop part
     // can change between transports; adding the constant keeps the reported
     // total correct in every mode combination without extra churn.
-    const int newLatency = eqTriodeLatency + ((effMode == 2 && useConv) ? hopSize : 0);
+    const int newLatency = eqTriodeLatency + ((effMode == 2 && useConvActive) ? hopSize : 0);
     if (newLatency != prevLatencyReported)
     {
         setLatencySamples(newLatency);
@@ -753,7 +786,7 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
             -static_cast<float>(widebandProcessorL.getGainReductionDb()),
             -static_cast<float>(widebandProcessorR.getGainReductionDb()));
     }
-    else if (effMode == 1 || (effMode == 2 && !useConv))
+    else if (effMode == 1 || (effMode == 2 && !useConvActive))
     {
         // === MULTIBAND (mode 1) or SPECTRAL without conv (mode 2 + !useConv) ===
         float* mbL[numBands], *mbR[numBands], *sbL[numBands], *sbR[numBands];
@@ -920,6 +953,67 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         }
 
         grAmountDb = convFrameGrDb;
+    }
+
+    // --- Mode crossfade: apply the fade gain to the duck output and advance the state
+    // machine. The fade gain is applied BEFORE the EQ so the Pultec/triode never see the
+    // path-switch discontinuity. The actual path swap happens here at the fade bottom,
+    // while the output is silent, so neither the signal jump nor the latency change clicks.
+    if (modeFadeState == 1)            // fading out — still on the OLD (active) path
+    {
+        for (int n = 0; n < numSamples; ++n)
+        {
+            modeFadeGain -= modeFadeInc;
+            const float g = juce::jmax(0.0f, modeFadeGain);
+            outL[n] *= g;
+            if (outR) outR[n] *= g;
+        }
+        if (modeFadeGain <= 0.0f)
+        {
+            modeFadeGain = 0.0f;
+            const bool wasConv = (modeFadeActiveEffMode == 2 && modeFadeActiveUseConv);
+            modeFadeActiveEffMode = targetEffMode;
+            modeFadeActiveUseConv = useConv;
+            // Entering FFT-conv from a non-conv path: clear stale ring/FIFO/overlap state
+            // so nothing leaks in as we fade up (the fade-in already masks the priming).
+            const bool nowConv = (modeFadeActiveEffMode == 2 && modeFadeActiveUseConv);
+            if (nowConv && ! wasConv)
+            {
+                std::fill(std::begin(convInRingL), std::end(convInRingL), 0.0f);
+                std::fill(std::begin(convInRingR), std::end(convInRingR), 0.0f);
+                std::fill(std::begin(convScRing),  std::end(convScRing),  0.0f);
+                std::fill(std::begin(convOvlL),    std::end(convOvlL),    0.0f);
+                std::fill(std::begin(convOvlR),    std::end(convOvlR),    0.0f);
+                std::fill(std::begin(convOutFifoL), std::end(convOutFifoL), 0.0f);
+                std::fill(std::begin(convOutFifoR), std::end(convOutFifoR), 0.0f);
+                convInWritePos = 0; convScWritePos = 0; convNewCount = 0;
+                convOutReadPos = 0; convOutWritePos = hopSize; convOutCount = hopSize;
+                // Starting convolution from a cleared ring has a startup transient: the
+                // first frame sees half-zero input and the OLA only settles once the ring
+                // is full (~fftSize) and the first clean frame has been emitted (+hopSize).
+                // Stay muted across that whole window, then fade in on steady output.
+                modeFadeHoldSamples = activeConvFftSize + hopSize;
+            }
+            modeFadeState = 2;            // next block: fade the new path in
+        }
+    }
+    else if (modeFadeState == 2)       // fading in — on the NEW (active) path
+    {
+        for (int n = 0; n < numSamples; ++n)
+        {
+            if (modeFadeHoldSamples > 0)   // muted hold (conv priming latency)
+            {
+                --modeFadeHoldSamples;
+                outL[n] = 0.0f;
+                if (outR) outR[n] = 0.0f;
+                continue;
+            }
+            modeFadeGain += modeFadeInc;
+            const float g = juce::jmin(1.0f, modeFadeGain);
+            outL[n] *= g;
+            if (outR) outR[n] *= g;
+        }
+        if (modeFadeHoldSamples == 0 && modeFadeGain >= 1.0f) { modeFadeGain = 1.0f; modeFadeState = 0; }
     }
 
     // --- Pultec EQP-1A (WDF passive filter + Koren 12AX7 tube saturation)
