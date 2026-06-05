@@ -409,18 +409,23 @@ void MaybeDuckLookAndFeel::drawPushButtonBody (juce::Graphics& g, juce::Rectangl
 
     if (pressedLook && isEnabled)
     {
-        // Pushed IN: a soft inner shadow falling from the top edge (the socket rim
-        // shades the recessed cap face) plus an inverted bevel — dark top-left wall,
-        // a lit lower lip. Reads as a depressed button, not a flat sensor.
-        juce::ColourGradient innerSh(juce::Colours::black.withAlpha(0.55f), top.getX(), top.getY(),
-                                     juce::Colours::black.withAlpha(0.0f),  top.getX(),
-                                     top.getY() + top.getHeight() * 0.7f, false);
-        g.setGradientFill(innerSh);
+        // Pushed IN: inner shadows down from the top edge AND up from the bottom edge
+        // (the socket rim shades the recessed cap face on both sides) plus an inverted
+        // bevel — dark top-left wall. Reads as a clearly depressed button.
+        juce::ColourGradient topSh(juce::Colours::black.withAlpha(0.62f), top.getX(), top.getY(),
+                                   juce::Colours::black.withAlpha(0.0f),  top.getX(),
+                                   top.getY() + top.getHeight() * 0.75f, false);
+        g.setGradientFill(topSh);
         g.fillRoundedRectangle(top, corner);
-        g.setColour(juce::Colours::black.withAlpha(0.50f));                       // shadowed top-left recess wall
+        juce::ColourGradient botSh(juce::Colours::black.withAlpha(0.0f),  top.getX(),
+                                   top.getBottom() - top.getHeight() * 0.5f,
+                                   juce::Colours::black.withAlpha(0.45f), top.getX(), top.getBottom(), false);
+        g.setGradientFill(botSh);
+        g.fillRoundedRectangle(top, corner);
+        g.setColour(juce::Colours::black.withAlpha(0.55f));                       // shadowed top-left recess wall
         g.drawRoundedRectangle(top.translated(-0.4f, -0.4f), corner, 1.0f);
-        g.setColour(pal.chassisHighlight.withAlpha(0.45f));                       // lit bottom-right lip
-        g.drawRoundedRectangle(top.translated(0.5f, 0.6f), corner, 1.0f);
+        g.setColour(juce::Colours::black.withAlpha(0.45f));                       // shadowed bottom edge
+        g.drawRoundedRectangle(top.translated(0.0f, 0.5f), corner, 1.0f);
     }
     else
     {

@@ -605,9 +605,9 @@ void MaybeDuckAudioProcessorEditor::paint (juce::Graphics& g)
         const auto wm = topWordmarkBounds.toFloat();
         g.setFont(juce::Font(mdLookAndFeel.getMediumTypeface()).withHeight(18.0f).withExtraKerningFactor(0.14f));
         g.setColour(mdLookAndFeel.palette().dividerHighlight.withAlpha(0.55f));  // lit lower-right lip
-        g.drawText("MAYBEDUCK", wm.translated(0.8f, 1.0f), juce::Justification::centredBottom, false);
+        g.drawText("MAYBEDUCK", wm.translated(0.8f, 1.0f), juce::Justification::centred, false);
         g.setColour(mdLookAndFeel.palette().dividerShadow.withAlpha(0.95f));     // dark carved groove
-        g.drawText("MAYBEDUCK", wm, juce::Justification::centredBottom, false);
+        g.drawText("MAYBEDUCK", wm, juce::Justification::centred, false);
     }
     wordmarkBounds = topWordmarkBounds.expanded(2.0f);   // triple-click theme-flip hot-spot
 
@@ -674,7 +674,9 @@ void MaybeDuckAudioProcessorEditor::renderBackground()
         mdLookAndFeel.drawRackInset(g, rb, tone);
     };
     fullWidthRack(rackBoundsDyn);
-    fullWidthRack(rackBoundsXover);   // crossover is a rack too (neutral tone, like dynamics)
+    // Crossover is a rack too, but brightened (esp. in dark theme) so its face reads
+    // as bright as the bare-chassis Modes group rather than a dark recessed rack.
+    fullWidthRack(rackBoundsXover, mdLookAndFeel.isDarkMode() ? 0.55f : 0.12f);
 
     // Pultec EQ is its own rack-unit module too — drawn a bit brighter than the
     // dynamics rack. The "LOW/HIGH FREQUENCY" sub-headers and the wordmark are TEXT,
@@ -796,8 +798,9 @@ void MaybeDuckAudioProcessorEditor::resized()
     // Engraved "MaybeDuck" wordmark. The band tightly frames the caps (the empty
     // ascent/descent of the font is clipped), so there's no descent gap left under
     // the text before the Modes group. No extra gap below.
-    topWordmarkBounds = area.removeFromTop(12);
-    wordmarkHotspot.setBounds(topWordmarkBounds);   // tooltip + triple-click theme toggle
+    topWordmarkBounds = area.removeFromTop(15);      // ~cap height: frames the caps, clips empty ascent/descent
+    wordmarkHotspot.setBounds(topWordmarkBounds);    // tooltip + triple-click theme toggle
+    area.removeFromTop(1);                           // tiny gap so the caps don't touch the Modes title
 
     // --- Sidechain Mode group: ONE row --------------------------------------
     // Vertical layout is pad-driven: [title][modeTopPad][button row][modeBotPad],
@@ -964,9 +967,10 @@ void MaybeDuckAudioProcessorEditor::resized()
     const int yBot = yTop + pultecStagger;
     const int kw   = eqColW;
     // m in [0..4] across the 5 top knobs -> centre x = x0 + eqColW*(0.5 + 1.75 m).
-    // 1.6 spacing (was 1.75) pulls the main knobs slightly left, opening a gap on the
-    // right so HF Boost/HF Atten sit clear of Atten Sel and the Bypass button.
-    auto eqCx = [&](float m) { return juce::roundToInt(x0 + eqColW * (0.5f + 1.6f * m)); };
+    // Wider spacing spreads the 5 top knobs out (LF Boost fixed at m=0); with the
+    // larger factor HF Atten (m=3) sits closer to Atten Sel (pinned to the crossover
+    // high knob), all others spreading proportionally.
+    auto eqCx = [&](float m) { return juce::roundToInt(x0 + eqColW * (0.5f + 1.9f * m)); };
 
     auto placeKnob = [&](int idx, float m, int y)
     {
