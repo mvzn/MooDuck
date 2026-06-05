@@ -930,11 +930,15 @@ void MaybeDuckAudioProcessorEditor::resized()
     {
         const int edges[6] = { xoverBandStrip.getX(), xoverBandDivX[0], xoverBandDivX[1],
                                xoverBandDivX[2], xoverBandDivX[3], xoverBandStrip.getRight() };
+        // Narrow the switches inside their segments so the dividing "pillars" (the
+        // boundary ticks) get room to breathe — the inner bands (Lo-Mid / Mid / Hi-Mid)
+        // pull in more than the outer Low / High, which only border a pillar on one side.
         for (int i = 0; i < 5; ++i)
         {
             juce::Rectangle<int> seg(edges[i], xoverBandStrip.getY(),
                                      edges[i + 1] - edges[i], xoverBandStrip.getHeight());
-            bandSwitches[i].setBounds(seg.reduced(2, 1));
+            const int hInset = (i == 0 || i == 4) ? 7 : 13;
+            bandSwitches[i].setBounds(seg.reduced(hInset, 1));
         }
     }
 
