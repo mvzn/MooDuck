@@ -489,8 +489,7 @@ void MaybeDuckLookAndFeel::drawToggleSwitch (juce::Graphics& g, juce::Rectangle<
 {
     auto b = bounds;
 
-    // No surrounding plate — the bezel, bat handle and caption sit directly on the
-    // rack face (just a toggle, no rectangle around it).
+    // Caption engraved below the switch; no surrounding plate.
     if (caption.isNotEmpty())
     {
         auto capArea = b.removeFromBottom(12.0f);
@@ -500,45 +499,72 @@ void MaybeDuckLookAndFeel::drawToggleSwitch (juce::Graphics& g, juce::Rectangle<
 
     auto well = b.reduced(1.0f);
     const juce::Point<float> c(well.getCentreX(), well.getCentreY());
-    const float ringR = juce::jmin(well.getWidth(), well.getHeight()) * 0.44f;
 
-    // ON backlight glow behind the bezel.
+    // Desaturate + dim metal tones when disabled.
+    auto metal = [isEnabled](juce::uint32 argb)
+    {
+        juce::Colour col(argb);
+        return isEnabled ? col : col.withSaturation(0.0f).withBrightness(col.getBrightness() * 0.72f);
+    };
+
+    const float bushR  = juce::jmin(well.getWidth() * 0.40f, well.getHeight() * 0.26f);
+    const float dir    = isOn ? -1.0f : 1.0f;             // handle UP when engaged
+    const float lever  = well.getHeight() * 0.34f;
+    const juce::Point<float> tip(c.x, c.y + dir * lever);
+    const float shaftW = bushR * 0.82f;
+    const float tipR   = shaftW * 0.88f;
+
+    // Soft ON glow behind the switch.
     if (isOn && isEnabled)
     {
-        g.setColour(litColour.withAlpha(0.30f));
-        g.fillEllipse(juce::Rectangle<float>(ringR * 2.6f, ringR * 2.6f).withCentre(c));
+        g.setColour(litColour.withAlpha(0.20f));
+        g.fillEllipse(juce::Rectangle<float>(bushR * 3.4f, bushR * 3.4f).withCentre(c));
     }
 
-    // Chrome base bezel (raised ring) + dark centre hole.
-    juce::Rectangle<float> ring(0.0f, 0.0f, ringR * 2.0f, ringR * 2.0f);
-    ring.setCentre(c);
-    juce::ColourGradient bez(juce::Colour(0xffC6CACE), c.x, c.y - ringR,
-                             juce::Colour(0xff595D61), c.x, c.y + ringR, false);
-    g.setGradientFill(bez);
-    g.fillEllipse(ring);
-    g.setColour(juce::Colours::black.withAlpha(0.50f));
-    g.drawEllipse(ring, 1.0f);
-    g.setColour(juce::Colour(0xff262829));
-    g.fillEllipse(ring.reduced(ringR * 0.48f));
+    // --- Panel recess the bushing is set into (dark halo).
+    g.setColour(juce::Colours::black.withAlpha(0.38f));
+    g.fillEllipse(juce::Rectangle<float>(bushR * 2.5f, bushR * 2.5f).withCentre(c));
 
-    // Bat handle: UP when engaged, DOWN when off.
-    const float dir  = isOn ? -1.0f : 1.0f;
-    const float len  = well.getHeight() * 0.40f;
-    const juce::Point<float> tip(c.x, c.y + dir * len);
-    const float shaftW = ringR * 0.62f;
-    g.setColour(isEnabled ? juce::Colour(0xffD9DDE1) : juce::Colour(0xff8C8C8C));
-    g.drawLine(c.x, c.y, tip.x, tip.y, shaftW);
+    // --- Chrome bushing (mounting nut/bezel): diagonal metallic shading + rim.
+    juce::Rectangle<float> bush(0.0f, 0.0f, bushR * 2.0f, bushR * 2.0f); bush.setCentre(c);
+    juce::ColourGradient bushG(metal(0xffEDEFF1), c.x - bushR * 0.5f, c.y - bushR * 0.7f,
+                               metal(0xff5C6064), c.x + bushR * 0.6f, c.y + bushR * 0.8f, false);
+    bushG.addColour(0.5, metal(0xffA9AEB2));
+    g.setGradientFill(bushG); g.fillEllipse(bush);
+    g.setColour(juce::Colours::black.withAlpha(0.50f)); g.drawEllipse(bush, 1.0f);
+    // inner seat the lever pivots from (recessed).
+    juce::Rectangle<float> seat = bush.reduced(bushR * 0.42f);
+    juce::ColourGradient seatG(juce::Colour(0xff242628), c.x, c.y - bushR * 0.4f,
+                               juce::Colour(0xff45484A), c.x, c.y + bushR * 0.4f, false);
+    g.setGradientFill(seatG); g.fillEllipse(seat);
 
-    // Handle tip ball.
-    const float knobR = shaftW * 0.95f;
-    juce::Rectangle<float> knob(0.0f, 0.0f, knobR * 2.0f, knobR * 2.0f);
-    knob.setCentre(tip);
-    juce::ColourGradient kn(juce::Colour(0xffF2F4F6), knob.getX(), knob.getY(),
-                            juce::Colour(0xff868C92), knob.getRight(), knob.getBottom(), false);
-    g.setGradientFill(kn);
-    g.fillEllipse(knob);
-    g.setColour(juce::Colours::black.withAlpha(0.35f));
-    g.drawEllipse(knob, 0.8f);
+    // --- Bat lever: cast shadow, cylindrical metal shaft, domed specular tip.
+    const float topY = juce::jmin(c.y, tip.y) - shaftW * 0.18f;
+    const float botY = juce::jmax(c.y, tip.y) + shaftW * 0.18f;
+    juce::Rectangle<float> shaft(c.x - shaftW * 0.5f, topY, shaftW, botY - topY);
+
+    g.setColour(juce::Colours::black.withAlpha(0.30f));
+    g.fillRoundedRectangle(shaft.translated(1.6f, 2.0f), shaftW * 0.5f);   // shadow on panel
+
+    // Cylinder: horizontal multi-stop gradient (dark edges, bright centre).
+    juce::ColourGradient cyl(metal(0xff4E5256), shaft.getX(), c.y,
+                             metal(0xff4E5256), shaft.getRight(), c.y, false);
+    cyl.addColour(0.40, metal(0xffE6E9EC));
+    cyl.addColour(0.50, metal(0xffF6F8FA));
+    cyl.addColour(0.60, metal(0xffC2C6CA));
+    g.setGradientFill(cyl); g.fillRoundedRectangle(shaft, shaftW * 0.5f);
+    g.setColour(juce::Colours::black.withAlpha(0.38f)); g.drawRoundedRectangle(shaft, shaftW * 0.5f, 0.7f);
+
+    // Domed tip ball with a specular hotspot.
+    juce::Rectangle<float> ball(0.0f, 0.0f, tipR * 2.0f, tipR * 2.0f); ball.setCentre(tip);
+    g.setColour(juce::Colours::black.withAlpha(0.28f)); g.fillEllipse(ball.translated(1.4f, 1.8f));
+    juce::ColourGradient ballG(metal(0xffF6F8FA), tip.x - tipR * 0.45f, tip.y - tipR * 0.5f,
+                               metal(0xff6E747A), tip.x + tipR * 0.7f, tip.y + tipR * 0.85f, true);
+    g.setGradientFill(ballG); g.fillEllipse(ball);
+    g.setColour(juce::Colours::black.withAlpha(0.38f)); g.drawEllipse(ball, 0.8f);
+    g.setColour(juce::Colours::white.withAlpha(isEnabled ? 0.85f : 0.30f));
+    g.fillEllipse(juce::Rectangle<float>(tipR * 0.5f, tipR * 0.5f)
+                    .withCentre({ tip.x - tipR * 0.32f, tip.y - tipR * 0.36f }));
 }
 
 void MaybeDuckLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& b,

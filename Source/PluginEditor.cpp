@@ -25,7 +25,7 @@ namespace {
     // margins; keep kWindowH comfortably above that so nothing crowds the bottom.
     // To change the overall size, retune the section heights too.
     constexpr int kWindowW       = 820;
-    constexpr int kWindowH       = 834;   // Pultec rack + Saturation rack + slim top wordmark
+    constexpr int kWindowH       = 836;   // Pultec rack + Saturation rack + centred top wordmark band
     constexpr int kOuterMargin   = 22;
     constexpr int kGroupGap      = 8;    // breathing room between sections
     constexpr int kGroupTitleH   = 22;
@@ -599,10 +599,16 @@ void MaybeDuckAudioProcessorEditor::paint (juce::Graphics& g)
     // (a few short strings) and get clipped to the dirty region on partial repaints.
     const auto area = getLocalBounds().toFloat();
 
-    // Wordmark engraved across the TOP of the panel; version kept at bottom-right.
-    mdLookAndFeel.drawEngravedText(g, "MAYBEDUCK", topWordmarkBounds.toFloat(),
-                                   juce::Justification::centred,
-                                   juce::Font(mdLookAndFeel.getMediumTypeface()).withHeight(15.0f));
+    // Wordmark across the TOP, carved like the crossover filter-curve engravings
+    // (a dark groove with a lit lower-right lip), not the subtle group-title style.
+    {
+        const auto wm = topWordmarkBounds.toFloat();
+        g.setFont(juce::Font(mdLookAndFeel.getMediumTypeface()).withHeight(18.0f).withExtraKerningFactor(0.14f));
+        g.setColour(mdLookAndFeel.palette().dividerHighlight.withAlpha(0.55f));  // lit lower-right lip
+        g.drawText("MAYBEDUCK", wm.translated(0.8f, 1.0f), juce::Justification::centred, false);
+        g.setColour(mdLookAndFeel.palette().dividerShadow.withAlpha(0.95f));     // dark carved groove
+        g.drawText("MAYBEDUCK", wm, juce::Justification::centred, false);
+    }
     wordmarkBounds = topWordmarkBounds.expanded(2.0f);   // triple-click theme-flip hot-spot
 
     juce::Rectangle<float> versionArea (area.getRight() - 150.0f, area.getBottom() - 17.0f, 110.0f, 12.0f);
@@ -782,13 +788,13 @@ void MaybeDuckAudioProcessorEditor::renderBackground()
 void MaybeDuckAudioProcessorEditor::resized()
 {
     auto winBounds = getLocalBounds();
-    juce::Rectangle<int> area(winBounds.getX() + kOuterMargin, winBounds.getY() + 2,
+    juce::Rectangle<int> area(winBounds.getX() + kOuterMargin, winBounds.getY() + 3,
                               winBounds.getWidth() - 2 * kOuterMargin,
-                              winBounds.getHeight() - 2 - kOuterMargin);
-    // Engraved "MaybeDuck" wordmark across the top (fills what was dead top margin).
-    topWordmarkBounds = area.removeFromTop(14);
+                              winBounds.getHeight() - 3 - kOuterMargin);
+    // Engraved "MaybeDuck" wordmark, centred (H+V) in a band across the top.
+    topWordmarkBounds = area.removeFromTop(24);
     wordmarkHotspot.setBounds(topWordmarkBounds);   // tooltip + triple-click theme toggle
-    area.removeFromTop(1);
+    area.removeFromTop(2);
 
     // --- Sidechain Mode group: ONE row --------------------------------------
     // Vertical layout is pad-driven: [title][modeTopPad][button row][modeBotPad],
@@ -797,7 +803,7 @@ void MaybeDuckAudioProcessorEditor::resized()
     // hug the right (shown only in Spectral mode — see timerCallback) and read as
     // secondary. The latency readout sits at the editor's bottom-left, not here.
     constexpr int modeTopPad     = 4;   // gap under the group title (buttons were cramped to it)
-    constexpr int modeBotPad     = 8;   // gap below the buttons (matches the top)
+    constexpr int modeBotPad     = 4;   // gap below the buttons (matches the top)
     constexpr int modeBtnH       = 36;  // main mode-button height
     constexpr int convBtnH       = 30;  // conv controls height -> shorter so they read as secondary
     constexpr int modeBtnW       = 112; // mode-select button width
@@ -885,8 +891,8 @@ void MaybeDuckAudioProcessorEditor::resized()
     // --- Crossover group: 4 knobs + engraved 5-band ruler -------------------
     constexpr int xoverRowH    = 96;  // knob-row height (trimmed from 108 to make room for the band ruler)
     constexpr int xoverBandH   = 28;  // band-switch row under the knobs (solo/mute switches)
-    constexpr int xoverBandGap = 12;  // gap pushing the band switches down, away from the freq knobs
-    constexpr int xoverGroupH  = kGroupTitleH + xoverRowH + xoverBandGap + xoverBandH + 8;
+    constexpr int xoverBandGap = 6;   // gap pushing the band switches down, away from the freq knobs
+    constexpr int xoverGroupH  = kGroupTitleH + xoverRowH + xoverBandGap + xoverBandH + 4;
     auto xoverArea = area.removeFromTop(xoverGroupH);
     crossoverGroup.setBounds(xoverArea);
 
