@@ -965,9 +965,9 @@ void MaybeDuckAudioProcessorEditor::resized()
             pultecSatLabels[idx].setBounds(col.removeFromTop(kKnobLabelH));
             pultecSatSliders[idx].setBounds(col);
         };
-        placeSat(0, 1.5f);  // Drive
-        placeSat(1, 2.5f);  // Mix
-        placeSat(2, 3.5f);  // Trim
+        placeSat(0, 0.9f);  // Drive (spread wider across the rack)
+        placeSat(1, 2.5f);  // Mix   (centre)
+        placeSat(2, 4.1f);  // Trim
     }
 
     pultecLowHdr  = pultecHdrRow.withX(x0).withWidth(juce::roundToInt(2.0f * u));
