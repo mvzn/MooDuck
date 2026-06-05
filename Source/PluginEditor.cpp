@@ -371,9 +371,8 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
 
     pultecBypassButton.setButtonText("Bypass");
     pultecBypassButton.setTooltip("Bypass the Pultec EQ entirely (pure passthrough — no oversampling, no WDF).");
-    // Drawn as a vintage Pultec bat toggle switch (handle up = bypassed).
-    pultecBypassButton.getProperties().set("pultecToggle", true);
-    pultecBypassButton.getProperties().set("litColour", static_cast<juce::int64>(MaybeDuckLookAndFeel::kBandMute)); // glow when bypassed
+    pultecBypassButton.getProperties().set("softSwitch", true);
+    pultecBypassButton.getProperties().set("litColour", static_cast<juce::int64>(MaybeDuckLookAndFeel::kBandMute)); // red when bypassed
     addAndMakeVisible(pultecBypassButton);
     pultecBypassAttachment = std::make_unique<ButtonAttachment>(
         audioProcessor.apvts, "pultecBypass", pultecBypassButton);
@@ -953,51 +952,46 @@ void MaybeDuckAudioProcessorEditor::resized()
     auto pultecHdrRow   = pultecInner.removeFromTop(pultecHdrH);
     auto pultecKnobArea = pultecInner;
 
-    // Spread the EQ knobs to span the SAME horizontal extent as the dynamics knob
-    // row above, so the leftmost/rightmost EQ knobs line up with the leftmost/
-    // rightmost dynamics knobs. Dynamics lays 8 columns across the inner width minus
-    // its meter slot (kMeterW); its knob centres run colW*0.5 .. colW*7.5. Place the
-    // 5 EQ top knobs evenly across that same centre span, at the same knob size.
+    // EQ knobs as the authentic LOW-FREQUENCY (left) and HIGH-FREQUENCY (right)
+    // groups with a centre gap. Columns match the dynamics knob grid (integer colW
+    // over the inner width minus the meter slot), so LF Boost lines up with the
+    // leftmost dynamics knob and Atten Sel lines up with the dynamics Output knob.
     constexpr int kMeterW = 60;   // must match the dynamics meter slot width
-    const float eqColW = (pultecKnobArea.getWidth() - kMeterW) / 8.0f;
-    const int   x0   = pultecKnobArea.getX();
-    const int   yTop = pultecKnobArea.getY();
-    const int   yBot = yTop + pultecStagger;
-    // m in [0..4] across the 5 top knobs -> centre x aligned to the dynamics span.
-    auto eqCx = [&](float m) { return juce::roundToInt(x0 + eqColW * (0.5f + 1.75f * m)); };
-    const int kw = juce::roundToInt(eqColW);
+    const int eqColW = (pultecKnobArea.getWidth() - kMeterW) / 8;
+    const int x0   = pultecKnobArea.getX();
+    const int yTop = pultecKnobArea.getY();
+    const int yBot = yTop + pultecStagger;
+    const int kw   = eqColW;
+    // cc = column centre (column index + 0.5); x0 + cc*eqColW matches a dynamics knob centre.
+    auto eqCx = [&](float cc) { return juce::roundToInt(x0 + cc * (float) eqColW); };
 
-    auto placeKnob = [&](int idx, float m, int y)
+    auto placeKnob = [&](int idx, float cc, int y)
     {
-        juce::Rectangle<int> col(eqCx(m) - kw / 2, y, kw, pultecKnobH);
+        juce::Rectangle<int> col(eqCx(cc) - kw / 2, y, kw, pultecKnobH);
         col = col.reduced(4);
         pultecLabels[idx].setBounds(col.removeFromTop(kKnobLabelH));
         pultecSliders[idx].setBounds(col);
     };
-    // pultecIds order: 0 LF Sel, 1 LF Boost, 2 LF Atten, 3 HF Sel, 4 HF Boost,
-    //                  5 Bandwidth, 6 Atten Sel, 7 HF Atten
-    placeKnob(1, 0.0f, yTop);  // LF Boost   (top)
-    placeKnob(2, 1.0f, yTop);  // LF Atten   (top)
-    placeKnob(4, 2.0f, yTop);  // HF Boost   (top)
-    placeKnob(7, 3.0f, yTop);  // HF Atten   (top)
-    placeKnob(6, 4.0f, yTop);  // Atten Sel  (top)
-    placeKnob(0, 0.5f, yBot);  // LF Sel     (bottom, under LF pair)
-    placeKnob(5, 1.5f, yBot);  // Bandwidth  (bottom, centre)
-    placeKnob(3, 2.5f, yBot);  // HF Sel     (bottom, under HF pair)
+    // pultecIds: 0 LF Sel, 1 LF Boost, 2 LF Atten, 3 HF Sel, 4 HF Boost, 5 Bandwidth, 6 Atten Sel, 7 HF Atten
+    placeKnob(1, 0.5f, yTop);  // LF Boost  (col 0) — fixed; aligns with leftmost dynamics knob
+    placeKnob(2, 1.5f, yTop);  // LF Atten  (col 1)
+    placeKnob(4, 5.5f, yTop);  // HF Boost  (col 5)
+    placeKnob(7, 6.5f, yTop);  // HF Atten  (col 6)
+    placeKnob(6, 7.5f, yTop);  // Atten Sel (col 7) — aligns with the dynamics Output knob
+    placeKnob(0, 1.5f, yBot);  // LF Sel    (under the LF group)
+    placeKnob(5, 3.5f, yBot);  // Bandwidth (centre gap)
+    placeKnob(3, 6.0f, yBot);  // HF Sel    (under the HF group)
 
-    // EQ Bypass: vintage bat toggle switch, centre-RIGHT — in the slot above the
-    // dynamics meter column (right of the rightmost knob), vertically centred over
-    // the knob rows.
+    // EQ Bypass: a button at the bottom-LEFT of the rack, sharing the Sat button's x.
     {
-        const int togW = 54, togH = 78;
-        const int slotCx = pultecKnobArea.getRight() - kMeterW / 2;
-        pultecBypassButton.setBounds(slotCx - togW / 2,
-                                     pultecKnobArea.getCentreY() - togH / 2, togW, togH);
+        const int btnW = eqColW, btnH = 30;
+        pultecBypassButton.setBounds(eqCx(0.5f) - btnW / 2,
+                                     yBot + (pultecKnobH - btnH) / 2, btnW, btnH);
     }
 
     {
-        const int loL = eqCx(0) - kw / 2, loR = eqCx(1) + kw / 2;
-        const int hiL = eqCx(2) - kw / 2, hiR = eqCx(4) + kw / 2;
+        const int loL = eqCx(0.5f) - kw / 2, loR = eqCx(1.5f) + kw / 2;   // over the LF group
+        const int hiL = eqCx(5.5f) - kw / 2, hiR = eqCx(7.5f) + kw / 2;   // over the HF group
         pultecLowHdr  = pultecHdrRow.withX(loL).withWidth(loR - loL);
         pultecHighHdr = pultecHdrRow.withX(hiL).withWidth(hiR - hiL);
     }
@@ -1014,24 +1008,24 @@ void MaybeDuckAudioProcessorEditor::resized()
     auto satInner = satArea.reduced(8, 6);
     satInner.removeFromTop(kGroupTitleH - 8);
     {
-        const float su = satInner.getWidth() / 5.0f;
-        auto placeSat = [&](int idx, float centreU)
+        // Sat enable button at the LEFT, sharing the EQ Bypass x (eqCx(0.5));
+        // Drive / Mix / Trim spread to the right, on wide blocks so they're limited
+        // by the taller row height -> bigger knobs.
+        const int btnW = eqColW, btnH = 34;
+        pultecSatButton.setBounds(eqCx(0.5f) - btnW / 2,
+                                  satInner.getCentreY() - btnH / 2, btnW, btnH);
+
+        auto placeSat = [&](int idx, float cc)
         {
-            juce::Rectangle<int> col(juce::roundToInt(satInner.getX() + centreU * su - su * 0.5f),
-                                     satInner.getY(), juce::roundToInt(su), satInner.getHeight());
+            const int bw = juce::roundToInt((float) eqColW * 1.7f);   // wide -> knob height-limited (big)
+            juce::Rectangle<int> col(eqCx(cc) - bw / 2, satInner.getY(), bw, satInner.getHeight());
             col = col.reduced(4);
             pultecSatLabels[idx].setBounds(col.removeFromTop(kKnobLabelH));
             pultecSatSliders[idx].setBounds(col);
         };
-        placeSat(0, 0.75f);  // Drive
-        placeSat(1, 2.0f);   // Mix
-        placeSat(2, 3.25f);  // Trim
-
-        // Sat enable button at the right of its own group.
-        const int btnH = 34;
-        const int btnW = juce::roundToInt(su * 0.7f);
-        pultecSatButton.setBounds(juce::roundToInt(satInner.getX() + 4.4f * su) - btnW / 2,
-                                  satInner.getCentreY() - btnH / 2, btnW, btnH);
+        placeSat(0, 2.7f);  // Drive
+        placeSat(1, 5.0f);  // Mix
+        placeSat(2, 7.3f);  // Trim
     }
 
     // --- Latency readout: bottom-left corner of the editor, engraved into the
