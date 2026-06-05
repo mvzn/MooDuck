@@ -934,7 +934,7 @@ void MaybeDuckAudioProcessorEditor::resized()
         // PILLAR side always pulls in the same amount (13 px) so every tick has equal
         // gaps on both sides; the outer strip-edge sides (Low-left / High-right) use a
         // smaller inset since there's no pillar there.
-        constexpr int kPillarInset = 13, kEdgeInset = 7;
+        constexpr int kPillarInset = 13, kEdgeInset = 13;  // outer edges pulled in to line up with the layout margins
         for (int i = 0; i < 5; ++i)
         {
             juce::Rectangle<int> seg(edges[i], xoverBandStrip.getY(),
