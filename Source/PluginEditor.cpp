@@ -865,7 +865,7 @@ void MaybeDuckAudioProcessorEditor::resized()
     const int colW = dynKnobs.getWidth() / 8;                   // 8 columns -> width derived, not fixed
     auto layoutKnob = [&](juce::Slider& s, juce::Label& l)
     {
-        auto col = dynKnobs.removeFromLeft(colW).reduced(4);
+        auto col = dynKnobs.removeFromLeft(colW).reduced(4, 0);  // no vertical pad -> caption tight to the top line
         l.setBounds(col.removeFromTop(kKnobLabelH));  // <- kKnobLabelH (caption height)
         s.setBounds(col);                             // knob fills the rest of the column
     };
@@ -918,7 +918,7 @@ void MaybeDuckAudioProcessorEditor::resized()
     {
         auto cellRect = xoverTrack.removeFromLeft(xoverCellW);
         xoverBandDivX[i] = cellRect.getCentreX();
-        auto col = cellRect.reduced(4);
+        auto col = cellRect.reduced(4, 0);  // no vertical pad -> caption tight to the top line
         xoverLabels[i].setBounds(col.removeFromTop(kKnobLabelH));
         xoverSliders[i].setBounds(col);
     }
@@ -934,7 +934,10 @@ void MaybeDuckAudioProcessorEditor::resized()
         // PILLAR side always pulls in the same amount (13 px) so every tick has equal
         // gaps on both sides; the outer strip-edge sides (Low-left / High-right) use a
         // smaller inset since there's no pillar there.
-        constexpr int kPillarInset = 13, kEdgeInset = 13;  // outer edges pulled in to line up with the layout margins
+        // Pillars (inner ticks) breathe at 13 px; the outer edges use 2 px so Low's
+        // left lines up with the Wideband button's left and High's right with the
+        // 2048 button's right (both sit 2 px in from the content edge).
+        constexpr int kPillarInset = 13, kEdgeInset = 2;
         for (int i = 0; i < 5; ++i)
         {
             juce::Rectangle<int> seg(edges[i], xoverBandStrip.getY(),
