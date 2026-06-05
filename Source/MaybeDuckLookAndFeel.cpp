@@ -404,17 +404,35 @@ void MaybeDuckLookAndFeel::drawPushButtonBody (juce::Graphics& g, juce::Rectangl
         g.fillRoundedRectangle(top, corner);
     }
 
-    // Top-face bevel: highlight top-left, shadow bottom-right (a machined edge).
-    g.setColour(pal.chassisHighlight.brighter(0.4f).withAlpha(isEnabled ? 0.85f : 0.30f));
-    g.drawRoundedRectangle(top.translated(-0.5f, -0.5f), corner, 1.0f);
-    g.setColour(juce::Colours::black.withAlpha(0.40f));
-    g.drawRoundedRectangle(top.translated(0.5f, 0.6f), corner, 1.0f);
-
-    // Hover: faint brighten on the upper top-face.
-    if (isMouseOver && isEnabled && ! isDown)
+    if (pressedLook && isEnabled)
     {
-        g.setColour(pal.accentWhite.withAlpha(0.08f));
-        g.fillRoundedRectangle(top.withHeight(top.getHeight() * 0.5f), corner);
+        // Pushed IN: a soft inner shadow falling from the top edge (the socket rim
+        // shades the recessed cap face) plus an inverted bevel — dark top-left wall,
+        // a lit lower lip. Reads as a depressed button, not a flat sensor.
+        juce::ColourGradient innerSh(juce::Colours::black.withAlpha(0.55f), top.getX(), top.getY(),
+                                     juce::Colours::black.withAlpha(0.0f),  top.getX(),
+                                     top.getY() + top.getHeight() * 0.7f, false);
+        g.setGradientFill(innerSh);
+        g.fillRoundedRectangle(top, corner);
+        g.setColour(juce::Colours::black.withAlpha(0.50f));                       // shadowed top-left recess wall
+        g.drawRoundedRectangle(top.translated(-0.4f, -0.4f), corner, 1.0f);
+        g.setColour(pal.chassisHighlight.withAlpha(0.45f));                       // lit bottom-right lip
+        g.drawRoundedRectangle(top.translated(0.5f, 0.6f), corner, 1.0f);
+    }
+    else
+    {
+        // Raised cap bevel: highlight top-left, shadow bottom-right (a machined edge).
+        g.setColour(pal.chassisHighlight.brighter(0.4f).withAlpha(isEnabled ? 0.85f : 0.30f));
+        g.drawRoundedRectangle(top.translated(-0.5f, -0.5f), corner, 1.0f);
+        g.setColour(juce::Colours::black.withAlpha(0.40f));
+        g.drawRoundedRectangle(top.translated(0.5f, 0.6f), corner, 1.0f);
+
+        // Hover: faint brighten on the upper top-face.
+        if (isMouseOver && isEnabled && ! isDown)
+        {
+            g.setColour(pal.accentWhite.withAlpha(0.08f));
+            g.fillRoundedRectangle(top.withHeight(top.getHeight() * 0.5f), corner);
+        }
     }
 }
 
