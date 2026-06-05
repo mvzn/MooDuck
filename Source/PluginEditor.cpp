@@ -655,7 +655,7 @@ void MaybeDuckAudioProcessorEditor::renderBackground()
     // dynamics rack. The "LOW/HIGH FREQUENCY" sub-headers and the wordmark are TEXT,
     // so they're drawn live in paint() (caching text in the logical-res background
     // image blurs it on hi-DPI) — not here.
-    fullWidthRack(rackBoundsEq, 0.18f);
+    fullWidthRack(rackBoundsEq, mdLookAndFeel.isDarkMode() ? 0.18f : 0.06f);
 
     // --- Crossover filter-band engravings ----------------------------------
     // Row 1 (the knob row): BIG engraved filter-response curves in the gaps
@@ -917,13 +917,15 @@ void MaybeDuckAudioProcessorEditor::resized()
     auto pultecInner = pultecArea.reduced(8, 6);
     pultecInner.removeFromTop(kGroupTitleH - 8);
 
-    // Toggles (Bypass + Sat) stacked at the right, spanning both rows.
-    constexpr int togglesSlotW = 72;
-    auto togglesCol = pultecInner.removeFromRight(togglesSlotW).reduced(4, 0);
+    // Bypass + Sat now live in the tube-sat row (below), so the EQ knob rows use the
+    // FULL inner width and spread out. Atten Sel is pinned to its current x (the old
+    // position when a 72 px toggles column was reserved) so the spread doesn't move it.
+    const float attenPinU  = (pultecInner.getWidth() - 72) / 5.0f;
+    const int   attenSelCx = pultecInner.getX() + juce::roundToInt(4.5f * attenPinU);
 
     auto pultecHdrRow   = pultecInner.removeFromTop(pultecHdrH);
-    auto pultecSatRow   = pultecInner.removeFromBottom(pultecSatRowH);  // tube-sat knob row
-    auto pultecKnobArea = pultecInner;   // height = pultecKnobH + pultecStagger
+    auto pultecSatRow   = pultecInner.removeFromBottom(pultecSatRowH);  // tube-sat knob + button row
+    auto pultecKnobArea = pultecInner;   // full inner width -> EQ knobs spread
 
     // Authentic EQP-1A faceplate split into two tiers:
     //   TOP    (boost/atten): LF Boost · LF Atten | HF Boost · HF Atten · Atten Sel
@@ -935,13 +937,17 @@ void MaybeDuckAudioProcessorEditor::resized()
     const int   yTop = pultecKnobArea.getY();
     const int   yBot = yTop + pultecStagger;
 
-    auto placeKnob = [&](int idx, float centreU, int y)
+    auto placeKnobAt = [&](int idx, int cx, int y)
     {
-        juce::Rectangle<int> col(juce::roundToInt(x0 + centreU * u - u * 0.5f), y,
+        juce::Rectangle<int> col(cx - juce::roundToInt(u * 0.5f), y,
                                  juce::roundToInt(u), pultecKnobH);
         col = col.reduced(4);
         pultecLabels[idx].setBounds(col.removeFromTop(kKnobLabelH));
         pultecSliders[idx].setBounds(col);
+    };
+    auto placeKnob = [&](int idx, float centreU, int y)
+    {
+        placeKnobAt(idx, juce::roundToInt(x0 + centreU * u), y);
     };
     // pultecIds order: 0 LF Sel, 1 LF Boost, 2 LF Atten, 3 HF Sel, 4 HF Boost,
     //                  5 Bandwidth, 6 Atten Sel, 7 HF Atten
@@ -949,12 +955,13 @@ void MaybeDuckAudioProcessorEditor::resized()
     placeKnob(2, 1.5f, yTop);  // LF Atten   (top)
     placeKnob(4, 2.5f, yTop);  // HF Boost   (top)
     placeKnob(7, 3.5f, yTop);  // HF Atten   (top)
-    placeKnob(6, 4.5f, yTop);  // Atten Sel  (top, right of HF Atten)
+    placeKnobAt(6, attenSelCx, yTop);  // Atten Sel  (top) — pinned to its current x
     placeKnob(0, 1.0f, yBot);  // LF Sel     (bottom, under LF pair)
     placeKnob(5, 2.0f, yBot);  // Bandwidth  (bottom, centre)
     placeKnob(3, 3.0f, yBot);  // HF Sel     (bottom, under HF pair)
 
-    // Tube-sat row: Drive / Mix / Trim, centred trio aligned under the EQ knobs.
+    // Tube-sat row: Drive / Mix / Trim knobs (left, tight trio) then the bigger
+    // Sat + Bypass buttons (right) — Sat sits right next to its own controls.
     {
         const float su = pultecSatRow.getWidth() / 5.0f;
         auto placeSat = [&](int idx, float centreU)
@@ -965,21 +972,24 @@ void MaybeDuckAudioProcessorEditor::resized()
             pultecSatLabels[idx].setBounds(col.removeFromTop(kKnobLabelH));
             pultecSatSliders[idx].setBounds(col);
         };
-        placeSat(0, 0.9f);  // Drive (spread wider across the rack)
-        placeSat(1, 2.5f);  // Mix   (centre)
-        placeSat(2, 4.1f);  // Trim
+        placeSat(0, 0.6f);  // Drive
+        placeSat(1, 1.6f);  // Mix
+        placeSat(2, 2.6f);  // Trim
+
+        // Bigger Sat + Bypass buttons at the right of the row (Sat next to Trim).
+        const int btnH = 34;
+        const int btnW = juce::roundToInt(su * 0.62f);
+        const int yMid = pultecSatRow.getCentreY();
+        pultecSatButton.setBounds(juce::roundToInt(pultecSatRow.getX() + 3.62f * su) - btnW / 2,
+                                  yMid - btnH / 2, btnW, btnH);
+        pultecBypassButton.setBounds(juce::roundToInt(pultecSatRow.getX() + 4.55f * su) - btnW / 2,
+                                     yMid - btnH / 2, btnW, btnH);
     }
 
     pultecLowHdr  = pultecHdrRow.withX(x0).withWidth(juce::roundToInt(2.0f * u));
     pultecHighHdr = pultecHdrRow.withX(x0 + juce::roundToInt(2.0f * u)).withWidth(juce::roundToInt(3.0f * u));
 
-    // Bypass on top, Sat below — 24 px tall each, 6 px gap, centred vertically.
-    const int btnH = 24;
-    const int gap  = 6;
-    auto btnArea = togglesCol.withSizeKeepingCentre(togglesCol.getWidth(), btnH * 2 + gap);
-    pultecBypassButton.setBounds(btnArea.removeFromTop(btnH));
-    btnArea.removeFromTop(gap);
-    pultecSatButton   .setBounds(btnArea.removeFromTop(btnH));
+    // (Bypass + Sat buttons are placed in the tube-sat row above.)
 
     // --- Latency readout: bottom-left corner of the editor, engraved into the
     // chassis (mirrors the wordmark at the bottom-right). Offset right of the
