@@ -123,6 +123,7 @@ private:
 
     // --- Pultec EQP-1A group (replaces the old 3-band post-ducking EQ)
     juce::GroupComponent pultecGroup;
+    juce::GroupComponent pultecSatGroup;   // tube saturation — its own (darker) rack
     juce::Slider pultecSliders[8];   // LF Freq, LF Boost, LF Atten, HF Freq, HF Boost, HF BW, HF Atten Freq, HF Atten
     juce::Label  pultecLabels[8];
     std::unique_ptr<SliderAttachment> pultecAttachments[8];
@@ -144,7 +145,7 @@ private:
     // Section rects for the recessed rack-unit modules (set in resized(), drawn into
     // the cached background). Stored explicitly so they don't depend on child
     // GroupComponent bounds being valid at render time.
-    juce::Rectangle<int> rackBoundsDyn, rackBoundsEq;
+    juce::Rectangle<int> rackBoundsDyn, rackBoundsEq, rackBoundsSat;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MaybeDuckAudioProcessorEditor)
 };

@@ -25,7 +25,7 @@ namespace {
     // margins; keep kWindowH comfortably above that so nothing crowds the bottom.
     // To change the overall size, retune the section heights too.
     constexpr int kWindowW       = 820;
-    constexpr int kWindowH       = 782;   // room for the zig-zag Pultec rack + tube-sat knob row
+    constexpr int kWindowH       = 818;   // room for the Pultec rack + separate Saturation rack
     constexpr int kOuterMargin   = 22;
     constexpr int kGroupGap      = 8;    // breathing room between sections
     constexpr int kGroupTitleH   = 22;
@@ -297,6 +297,7 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
 
     // ----- Pultec EQP-1A group -----
     setupGroup(pultecGroup, "Post PulEQ");
+    setupGroup(pultecSatGroup, "Saturation");
 
     // Real EQP-1A front-panel terminology: LF Sel / LF Boost / LF Atten / HF Sel /
     // HF Boost / Bandwidth / Atten Sel / HF Atten. Avoids the prior "HF Atten Hz"
@@ -636,7 +637,7 @@ void MaybeDuckAudioProcessorEditor::renderBackground()
     // module spans the FULL plugin width (mounting rails at the case sides), with
     // the controls sitting in its middle — so it takes the whole horizontal body
     // rather than being inset. Drawn behind the section's controls (paint on top).
-    auto fullWidthRack = [this, &g](juce::Rectangle<int> groupBounds, float chassisBrighten = 0.0f)
+    auto fullWidthRack = [this, &g](juce::Rectangle<int> groupBounds, float toneShift = 0.0f)
     {
         if (groupBounds.isEmpty()) return;
         auto rb = groupBounds.toFloat();
@@ -644,10 +645,12 @@ void MaybeDuckAudioProcessorEditor::renderBackground()
         rb.setWidth((float) getWidth());   // full edge-to-edge, rails at the case sides
         // Pass the chassis tone at this rack's vertical centre so the panel is
         // darkened RELATIVE to its surroundings -> consistently recessed whether the
-        // rack sits high (light chassis) or low (dark chassis). chassisBrighten lifts
-        // a specific rack's face (the Pultec module reads a touch brighter).
+        // rack sits high (light chassis) or low (dark chassis). toneShift tweaks a
+        // specific rack's face: +ve brighter (Pultec EQ), -ve darker (Saturation).
         const float yNorm = rb.getCentreY() / (float) juce::jmax(1, getHeight());
-        mdLookAndFeel.drawRackInset(g, rb, mdLookAndFeel.chassisToneAt(yNorm).brighter(chassisBrighten));
+        auto tone = mdLookAndFeel.chassisToneAt(yNorm);
+        tone = (toneShift >= 0.0f) ? tone.brighter(toneShift) : tone.darker(-toneShift);
+        mdLookAndFeel.drawRackInset(g, rb, tone);
     };
     fullWidthRack(rackBoundsDyn);
 
@@ -656,6 +659,9 @@ void MaybeDuckAudioProcessorEditor::renderBackground()
     // so they're drawn live in paint() (caching text in the logical-res background
     // image blurs it on hi-DPI) — not here.
     fullWidthRack(rackBoundsEq, mdLookAndFeel.isDarkMode() ? 0.18f : 0.06f);
+
+    // Tube Saturation rack — its own module, intentionally DARKER than the others.
+    fullWidthRack(rackBoundsSat, -0.30f);
 
     // --- Crossover filter-band engravings ----------------------------------
     // Row 1 (the knob row): BIG engraved filter-response curves in the gaps
@@ -908,8 +914,7 @@ void MaybeDuckAudioProcessorEditor::resized()
     constexpr int pultecHdrH    = 14;  // engraved "LOW/HIGH FREQUENCY" sub-header row
     constexpr int pultecKnobH   = 96;  // per-knob block height (caption + knob)
     constexpr int pultecStagger = 30;  // selectors (bottom row) drop below boost/atten (top row)
-    constexpr int pultecSatRowH = 96;  // third row: tube-sat Drive/Mix/Trim knobs
-    constexpr int pultecGroupH  = kGroupTitleH + pultecHdrH + pultecKnobH + pultecStagger + pultecSatRowH + 14;
+    constexpr int pultecGroupH  = kGroupTitleH + pultecHdrH + pultecKnobH + pultecStagger + 14;
     auto pultecArea = area.removeFromTop(pultecGroupH);
     pultecGroup.setBounds(pultecArea);
     rackBoundsEq = pultecArea;
@@ -917,14 +922,13 @@ void MaybeDuckAudioProcessorEditor::resized()
     auto pultecInner = pultecArea.reduced(8, 6);
     pultecInner.removeFromTop(kGroupTitleH - 8);
 
-    // Bypass + Sat now live in the tube-sat row (below), so the EQ knob rows use the
-    // FULL inner width and spread out. Atten Sel is pinned to its current x (the old
-    // position when a 72 px toggles column was reserved) so the spread doesn't move it.
+    // Saturation is now its OWN rack group (below), so the EQ knob rows use the FULL
+    // inner width and spread out. Atten Sel is pinned to its current x (its position
+    // when a 72 px toggles column was reserved) so the spread doesn't move it.
     const float attenPinU  = (pultecInner.getWidth() - 72) / 5.0f;
     const int   attenSelCx = pultecInner.getX() + juce::roundToInt(4.5f * attenPinU);
 
     auto pultecHdrRow   = pultecInner.removeFromTop(pultecHdrH);
-    auto pultecSatRow   = pultecInner.removeFromBottom(pultecSatRowH);  // tube-sat knob + button row
     auto pultecKnobArea = pultecInner;   // full inner width -> EQ knobs spread
 
     // Authentic EQP-1A faceplate split into two tiers:
@@ -960,36 +964,47 @@ void MaybeDuckAudioProcessorEditor::resized()
     placeKnob(5, 2.0f, yBot);  // Bandwidth  (bottom, centre)
     placeKnob(3, 3.0f, yBot);  // HF Sel     (bottom, under HF pair)
 
-    // Tube-sat row: Drive / Mix / Trim knobs (left, tight trio) then the bigger
-    // Sat + Bypass buttons (right) — Sat sits right next to its own controls.
+    // EQ Bypass: a bigger button in the top-right corner of the EQ rack (the space
+    // right of Atten Sel that the relocated saturation controls freed up).
     {
-        const float su = pultecSatRow.getWidth() / 5.0f;
-        auto placeSat = [&](int idx, float centreU)
-        {
-            juce::Rectangle<int> col(juce::roundToInt(pultecSatRow.getX() + centreU * su - su * 0.5f),
-                                     pultecSatRow.getY(), juce::roundToInt(su), pultecSatRow.getHeight());
-            col = col.reduced(4);
-            pultecSatLabels[idx].setBounds(col.removeFromTop(kKnobLabelH));
-            pultecSatSliders[idx].setBounds(col);
-        };
-        placeSat(0, 0.6f);  // Drive
-        placeSat(1, 1.6f);  // Mix
-        placeSat(2, 2.6f);  // Trim
-
-        // Bigger Sat + Bypass buttons at the right of the row (Sat next to Trim).
-        const int btnH = 34;
-        const int btnW = juce::roundToInt(su * 0.62f);
-        const int yMid = pultecSatRow.getCentreY();
-        pultecSatButton.setBounds(juce::roundToInt(pultecSatRow.getX() + 3.62f * su) - btnW / 2,
-                                  yMid - btnH / 2, btnW, btnH);
-        pultecBypassButton.setBounds(juce::roundToInt(pultecSatRow.getX() + 4.55f * su) - btnW / 2,
-                                     yMid - btnH / 2, btnW, btnH);
+        const int byW = 76, byH = 30;
+        pultecBypassButton.setBounds(pultecKnobArea.getRight() - byW, yTop + 2, byW, byH);
     }
 
     pultecLowHdr  = pultecHdrRow.withX(x0).withWidth(juce::roundToInt(2.0f * u));
     pultecHighHdr = pultecHdrRow.withX(x0 + juce::roundToInt(2.0f * u)).withWidth(juce::roundToInt(3.0f * u));
 
-    // (Bypass + Sat buttons are placed in the tube-sat row above.)
+    // --- Tube Saturation: its OWN rack-unit group, with a DARKER faceplate, below
+    // the EQ. Drive / Mix / Trim knobs (spread) + the Sat enable button at the right.
+    area.removeFromTop(kGroupGap);
+    constexpr int satRowH   = 96;
+    constexpr int satGroupH = kGroupTitleH + satRowH + 6;
+    auto satArea = area.removeFromTop(satGroupH);
+    pultecSatGroup.setBounds(satArea);
+    rackBoundsSat = satArea;
+
+    auto satInner = satArea.reduced(8, 6);
+    satInner.removeFromTop(kGroupTitleH - 8);
+    {
+        const float su = satInner.getWidth() / 5.0f;
+        auto placeSat = [&](int idx, float centreU)
+        {
+            juce::Rectangle<int> col(juce::roundToInt(satInner.getX() + centreU * su - su * 0.5f),
+                                     satInner.getY(), juce::roundToInt(su), satInner.getHeight());
+            col = col.reduced(4);
+            pultecSatLabels[idx].setBounds(col.removeFromTop(kKnobLabelH));
+            pultecSatSliders[idx].setBounds(col);
+        };
+        placeSat(0, 0.75f);  // Drive
+        placeSat(1, 2.0f);   // Mix
+        placeSat(2, 3.25f);  // Trim
+
+        // Sat enable button at the right of its own group.
+        const int btnH = 34;
+        const int btnW = juce::roundToInt(su * 0.7f);
+        pultecSatButton.setBounds(juce::roundToInt(satInner.getX() + 4.4f * su) - btnW / 2,
+                                  satInner.getCentreY() - btnH / 2, btnW, btnH);
+    }
 
     // --- Latency readout: bottom-left corner of the editor, engraved into the
     // chassis (mirrors the wordmark at the bottom-right). Offset right of the
