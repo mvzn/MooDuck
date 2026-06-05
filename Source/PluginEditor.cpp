@@ -670,13 +670,17 @@ void MaybeDuckAudioProcessorEditor::renderBackground()
         // specific rack's face: +ve brighter (Pultec EQ), -ve darker (Saturation).
         const float yNorm = rb.getCentreY() / (float) juce::jmax(1, getHeight());
         auto tone = mdLookAndFeel.chassisToneAt(yNorm);
-        tone = (toneShift >= 0.0f) ? tone.brighter(toneShift) : tone.darker(-toneShift);
+        // Brighten by raising HSB brightness only (keep the warm hue + saturation).
+        // juce::Colour::brighter() pushes the lowest channel — blue, on a warm grey —
+        // toward white the most, which tints the panel bluish; this avoids that.
+        tone = (toneShift >= 0.0f) ? tone.withBrightness(tone.brighter(toneShift).getBrightness())
+                                   : tone.darker(-toneShift);
         mdLookAndFeel.drawRackInset(g, rb, tone);
     };
     fullWidthRack(rackBoundsDyn);
     // Crossover is a rack too, but brightened (esp. in dark theme) so its face reads
     // as bright as the bare-chassis Modes group rather than a dark recessed rack.
-    fullWidthRack(rackBoundsXover, mdLookAndFeel.isDarkMode() ? 0.38f : 0.30f);
+    fullWidthRack(rackBoundsXover, mdLookAndFeel.isDarkMode() ? 0.30f : 0.60f);
 
     // Pultec EQ is its own rack-unit module too — drawn a bit brighter than the
     // dynamics rack. The "LOW/HIGH FREQUENCY" sub-headers and the wordmark are TEXT,
@@ -798,7 +802,7 @@ void MaybeDuckAudioProcessorEditor::resized()
     // Engraved "MaybeDuck" wordmark. The band tightly frames the caps (the empty
     // ascent/descent of the font is clipped), so there's no descent gap left under
     // the text before the Modes group. No extra gap below.
-    topWordmarkBounds = area.removeFromTop(15);      // ~cap height: frames the caps, clips empty ascent/descent
+    topWordmarkBounds = area.removeFromTop(10);      // ~cap height: frames the caps, clips empty ascent/descent
     wordmarkHotspot.setBounds(topWordmarkBounds);    // tooltip + triple-click theme toggle
     area.removeFromTop(1);                           // tiny gap so the caps don't touch the Modes title
 
