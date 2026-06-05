@@ -25,7 +25,7 @@ namespace {
     // margins; keep kWindowH comfortably above that so nothing crowds the bottom.
     // To change the overall size, retune the section heights too.
     constexpr int kWindowW       = 820;
-    constexpr int kWindowH       = 822;   // Pultec rack + separate Saturation rack + top wordmark
+    constexpr int kWindowH       = 842;   // Pultec rack (+ centred Bypass band) + Saturation rack + top wordmark
     constexpr int kOuterMargin   = 22;
     constexpr int kGroupGap      = 8;    // breathing room between sections
     constexpr int kGroupTitleH   = 22;
@@ -923,7 +923,8 @@ void MaybeDuckAudioProcessorEditor::resized()
     constexpr int pultecHdrH    = 14;  // engraved "LOW/HIGH FREQUENCY" sub-header row
     constexpr int pultecKnobH   = 96;  // per-knob block height (caption + knob)
     constexpr int pultecStagger = 46;  // selectors (bottom row) drop further below boost/atten (top row)
-    constexpr int pultecGroupH  = kGroupTitleH + pultecHdrH + pultecKnobH + pultecStagger + 14;
+    constexpr int pultecBypassBandH = 34;  // centred bottom band for the Bypass bat toggle
+    constexpr int pultecGroupH  = kGroupTitleH + pultecHdrH + pultecKnobH + pultecStagger + pultecBypassBandH;
     auto pultecArea = area.removeFromTop(pultecGroupH);
     pultecGroup.setBounds(pultecArea);
     rackBoundsEq = pultecArea;
@@ -937,8 +938,9 @@ void MaybeDuckAudioProcessorEditor::resized()
     const float attenPinU  = (pultecInner.getWidth() - 72) / 5.0f;
     const int   attenSelCx = pultecInner.getX() + juce::roundToInt(4.5f * attenPinU);
 
-    auto pultecHdrRow   = pultecInner.removeFromTop(pultecHdrH);
-    auto pultecKnobArea = pultecInner;   // full inner width -> EQ knobs spread
+    auto pultecHdrRow     = pultecInner.removeFromTop(pultecHdrH);
+    auto pultecBypassBand = pultecInner.removeFromBottom(pultecBypassBandH);  // centred Bypass toggle
+    auto pultecKnobArea   = pultecInner;   // full inner width -> EQ knobs spread
 
     // Authentic EQP-1A faceplate split into two tiers:
     //   TOP    (boost/atten): LF Boost · LF Atten | HF Boost · HF Atten · Atten Sel
@@ -973,11 +975,12 @@ void MaybeDuckAudioProcessorEditor::resized()
     placeKnob(5, 2.0f, yBot);  // Bandwidth  (bottom, centre)
     placeKnob(3, 3.0f, yBot);  // HF Sel     (bottom, under HF pair)
 
-    // EQ Bypass: a bigger button in the top-right corner of the EQ rack (the space
-    // right of Atten Sel that the relocated saturation controls freed up).
+    // EQ Bypass: vintage bat toggle switch, centred in its own band at the bottom
+    // of the EQ rack.
     {
-        const int byW = 76, byH = 30;
-        pultecBypassButton.setBounds(pultecKnobArea.getRight() - byW, yTop + 2, byW, byH);
+        const int togW = 84, togH = 30;
+        pultecBypassButton.setBounds(pultecBypassBand.getCentreX() - togW / 2,
+                                     pultecBypassBand.getCentreY() - togH / 2, togW, togH);
     }
 
     pultecLowHdr  = pultecHdrRow.withX(x0).withWidth(juce::roundToInt(2.0f * u));
