@@ -930,15 +930,20 @@ void MaybeDuckAudioProcessorEditor::resized()
     {
         const int edges[6] = { xoverBandStrip.getX(), xoverBandDivX[0], xoverBandDivX[1],
                                xoverBandDivX[2], xoverBandDivX[3], xoverBandStrip.getRight() };
-        // Narrow the switches inside their segments so the dividing "pillars" (the
-        // boundary ticks) get room to breathe — the inner bands (Lo-Mid / Mid / Hi-Mid)
-        // pull in more than the outer Low / High, which only border a pillar on one side.
+        // Inset each switch so the dividing "pillars" (boundary ticks) breathe. The
+        // PILLAR side always pulls in the same amount (13 px) so every tick has equal
+        // gaps on both sides; the outer strip-edge sides (Low-left / High-right) use a
+        // smaller inset since there's no pillar there.
+        constexpr int kPillarInset = 13, kEdgeInset = 7;
         for (int i = 0; i < 5; ++i)
         {
             juce::Rectangle<int> seg(edges[i], xoverBandStrip.getY(),
                                      edges[i + 1] - edges[i], xoverBandStrip.getHeight());
-            const int hInset = (i == 0 || i == 4) ? 7 : 13;
-            bandSwitches[i].setBounds(seg.reduced(hInset, 1));
+            seg.removeFromLeft (i == 0 ? kEdgeInset : kPillarInset);   // Low's left = strip edge
+            seg.removeFromRight(i == 4 ? kEdgeInset : kPillarInset);   // High's right = strip edge
+            seg.removeFromTop(1);
+            seg.removeFromBottom(1);
+            bandSwitches[i].setBounds(seg);
         }
     }
 
