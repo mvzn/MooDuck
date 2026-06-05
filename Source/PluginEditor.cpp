@@ -25,7 +25,7 @@ namespace {
     // margins; keep kWindowH comfortably above that so nothing crowds the bottom.
     // To change the overall size, retune the section heights too.
     constexpr int kWindowW       = 820;
-    constexpr int kWindowH       = 842;   // Pultec rack (+ centred Bypass band) + Saturation rack + top wordmark
+    constexpr int kWindowH       = 834;   // Pultec rack + Saturation rack + slim top wordmark
     constexpr int kOuterMargin   = 22;
     constexpr int kGroupGap      = 8;    // breathing room between sections
     constexpr int kGroupTitleH   = 22;
@@ -298,6 +298,18 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
     // ----- Pultec EQP-1A group -----
     setupGroup(pultecGroup, "Post PulEQ");
     setupGroup(pultecSatGroup, "Saturation");
+
+    // Top "MaybeDuck" wordmark hotspot: tooltip + triple-click theme toggle.
+    wordmarkHotspot.setTooltip("Triple-click to toggle light / dark theme");
+    wordmarkHotspot.onMouseDown = [this](const juce::MouseEvent& e)
+    {
+        if (e.getNumberOfClicks() >= 3)
+        {
+            ThemeState::get().toggle();
+            applyTheme();
+        }
+    };
+    addAndMakeVisible(wordmarkHotspot);
 
     // Real EQP-1A front-panel terminology: LF Sel / LF Boost / LF Atten / HF Sel /
     // HF Boost / Bandwidth / Atten Sel / HF Atten. Avoids the prior "HF Atten Hz"
@@ -663,8 +675,8 @@ void MaybeDuckAudioProcessorEditor::renderBackground()
     // image blurs it on hi-DPI) — not here.
     fullWidthRack(rackBoundsEq, mdLookAndFeel.isDarkMode() ? 0.18f : 0.06f);
 
-    // Tube Saturation rack — its own module, a touch darker than the others.
-    fullWidthRack(rackBoundsSat, -0.18f);
+    // Tube Saturation rack — its own module, only a hair darker than the others.
+    fullWidthRack(rackBoundsSat, -0.08f);
 
     // --- Crossover filter-band engravings ----------------------------------
     // Row 1 (the knob row): BIG engraved filter-response curves in the gaps
@@ -774,8 +786,9 @@ void MaybeDuckAudioProcessorEditor::resized()
                               winBounds.getWidth() - 2 * kOuterMargin,
                               winBounds.getHeight() - 2 - kOuterMargin);
     // Engraved "MaybeDuck" wordmark across the top (fills what was dead top margin).
-    topWordmarkBounds = area.removeFromTop(16);
-    area.removeFromTop(2);
+    topWordmarkBounds = area.removeFromTop(14);
+    wordmarkHotspot.setBounds(topWordmarkBounds);   // tooltip + triple-click theme toggle
+    area.removeFromTop(1);
 
     // --- Sidechain Mode group: ONE row --------------------------------------
     // Vertical layout is pad-driven: [title][modeTopPad][button row][modeBotPad],
@@ -783,7 +796,7 @@ void MaybeDuckAudioProcessorEditor::resized()
     // Mode-select buttons hug the left; the smaller FFT-conv toggle + size buttons
     // hug the right (shown only in Spectral mode — see timerCallback) and read as
     // secondary. The latency readout sits at the editor's bottom-left, not here.
-    constexpr int modeTopPad     = 8;   // gap under the group title (buttons were cramped to it)
+    constexpr int modeTopPad     = 4;   // gap under the group title (buttons were cramped to it)
     constexpr int modeBotPad     = 8;   // gap below the buttons (matches the top)
     constexpr int modeBtnH       = 36;  // main mode-button height
     constexpr int convBtnH       = 30;  // conv controls height -> shorter so they read as secondary
@@ -871,7 +884,7 @@ void MaybeDuckAudioProcessorEditor::resized()
 
     // --- Crossover group: 4 knobs + engraved 5-band ruler -------------------
     constexpr int xoverRowH    = 96;  // knob-row height (trimmed from 108 to make room for the band ruler)
-    constexpr int xoverBandH   = 24;  // band-switch row under the knobs (solo/mute switches)
+    constexpr int xoverBandH   = 28;  // band-switch row under the knobs (solo/mute switches)
     constexpr int xoverBandGap = 12;  // gap pushing the band switches down, away from the freq knobs
     constexpr int xoverGroupH  = kGroupTitleH + xoverRowH + xoverBandGap + xoverBandH + 8;
     auto xoverArea = area.removeFromTop(xoverGroupH);
@@ -907,7 +920,7 @@ void MaybeDuckAudioProcessorEditor::resized()
         {
             juce::Rectangle<int> seg(edges[i], xoverBandStrip.getY(),
                                      edges[i + 1] - edges[i], xoverBandStrip.getHeight());
-            bandSwitches[i].setBounds(seg.reduced(3, 1));
+            bandSwitches[i].setBounds(seg.reduced(2, 1));
         }
     }
 
@@ -922,9 +935,8 @@ void MaybeDuckAudioProcessorEditor::resized()
     // · Atten Sel · Atten), with the Bypass/Sat toggles stacked at the right.
     constexpr int pultecHdrH    = 14;  // engraved "LOW/HIGH FREQUENCY" sub-header row
     constexpr int pultecKnobH   = 96;  // per-knob block height (caption + knob)
-    constexpr int pultecStagger = 46;  // selectors (bottom row) drop further below boost/atten (top row)
-    constexpr int pultecBypassBandH = 34;  // centred bottom band for the Bypass bat toggle
-    constexpr int pultecGroupH  = kGroupTitleH + pultecHdrH + pultecKnobH + pultecStagger + pultecBypassBandH;
+    constexpr int pultecStagger = 60;  // selectors (bottom row) drop well below boost/atten (top row)
+    constexpr int pultecGroupH  = kGroupTitleH + pultecHdrH + pultecKnobH + pultecStagger + 14;
     auto pultecArea = area.removeFromTop(pultecGroupH);
     pultecGroup.setBounds(pultecArea);
     rackBoundsEq = pultecArea;
@@ -932,59 +944,57 @@ void MaybeDuckAudioProcessorEditor::resized()
     auto pultecInner = pultecArea.reduced(8, 6);
     pultecInner.removeFromTop(kGroupTitleH - 8);
 
-    // Saturation is now its OWN rack group (below), so the EQ knob rows use the FULL
-    // inner width and spread out. Atten Sel is pinned to its current x (its position
-    // when a 72 px toggles column was reserved) so the spread doesn't move it.
-    const float attenPinU  = (pultecInner.getWidth() - 72) / 5.0f;
-    const int   attenSelCx = pultecInner.getX() + juce::roundToInt(4.5f * attenPinU);
+    auto pultecHdrRow   = pultecInner.removeFromTop(pultecHdrH);
+    auto pultecKnobArea = pultecInner;
 
-    auto pultecHdrRow     = pultecInner.removeFromTop(pultecHdrH);
-    auto pultecBypassBand = pultecInner.removeFromBottom(pultecBypassBandH);  // centred Bypass toggle
-    auto pultecKnobArea   = pultecInner;   // full inner width -> EQ knobs spread
-
-    // Authentic EQP-1A faceplate split into two tiers:
-    //   TOP    (boost/atten): LF Boost · LF Atten | HF Boost · HF Atten · Atten Sel
-    //   BOTTOM (selectors)  : LF Sel (under the LF pair) · Bandwidth (centre) · HF Sel
-    // 5 equal columns across the width; bottom knobs sit half-a-column inset beneath
-    // their group, and Atten Sel sits to the right of HF Atten.
-    const float u    = pultecKnobArea.getWidth() / 5.0f;
+    // Spread the EQ knobs to span the SAME horizontal extent as the dynamics knob
+    // row above, so the leftmost/rightmost EQ knobs line up with the leftmost/
+    // rightmost dynamics knobs. Dynamics lays 8 columns across the inner width minus
+    // its meter slot (kMeterW); its knob centres run colW*0.5 .. colW*7.5. Place the
+    // 5 EQ top knobs evenly across that same centre span, at the same knob size.
+    constexpr int kMeterW = 60;   // must match the dynamics meter slot width
+    const float eqColW = (pultecKnobArea.getWidth() - kMeterW) / 8.0f;
     const int   x0   = pultecKnobArea.getX();
     const int   yTop = pultecKnobArea.getY();
     const int   yBot = yTop + pultecStagger;
+    // m in [0..4] across the 5 top knobs -> centre x aligned to the dynamics span.
+    auto eqCx = [&](float m) { return juce::roundToInt(x0 + eqColW * (0.5f + 1.75f * m)); };
+    const int kw = juce::roundToInt(eqColW);
 
-    auto placeKnobAt = [&](int idx, int cx, int y)
+    auto placeKnob = [&](int idx, float m, int y)
     {
-        juce::Rectangle<int> col(cx - juce::roundToInt(u * 0.5f), y,
-                                 juce::roundToInt(u), pultecKnobH);
+        juce::Rectangle<int> col(eqCx(m) - kw / 2, y, kw, pultecKnobH);
         col = col.reduced(4);
         pultecLabels[idx].setBounds(col.removeFromTop(kKnobLabelH));
         pultecSliders[idx].setBounds(col);
     };
-    auto placeKnob = [&](int idx, float centreU, int y)
-    {
-        placeKnobAt(idx, juce::roundToInt(x0 + centreU * u), y);
-    };
     // pultecIds order: 0 LF Sel, 1 LF Boost, 2 LF Atten, 3 HF Sel, 4 HF Boost,
     //                  5 Bandwidth, 6 Atten Sel, 7 HF Atten
-    placeKnob(1, 0.5f, yTop);  // LF Boost   (top)
-    placeKnob(2, 1.5f, yTop);  // LF Atten   (top)
-    placeKnob(4, 2.5f, yTop);  // HF Boost   (top)
-    placeKnob(7, 3.5f, yTop);  // HF Atten   (top)
-    placeKnobAt(6, attenSelCx, yTop);  // Atten Sel  (top) — pinned to its current x
-    placeKnob(0, 1.0f, yBot);  // LF Sel     (bottom, under LF pair)
-    placeKnob(5, 2.0f, yBot);  // Bandwidth  (bottom, centre)
-    placeKnob(3, 3.0f, yBot);  // HF Sel     (bottom, under HF pair)
+    placeKnob(1, 0.0f, yTop);  // LF Boost   (top)
+    placeKnob(2, 1.0f, yTop);  // LF Atten   (top)
+    placeKnob(4, 2.0f, yTop);  // HF Boost   (top)
+    placeKnob(7, 3.0f, yTop);  // HF Atten   (top)
+    placeKnob(6, 4.0f, yTop);  // Atten Sel  (top)
+    placeKnob(0, 0.5f, yBot);  // LF Sel     (bottom, under LF pair)
+    placeKnob(5, 1.5f, yBot);  // Bandwidth  (bottom, centre)
+    placeKnob(3, 2.5f, yBot);  // HF Sel     (bottom, under HF pair)
 
-    // EQ Bypass: vintage bat toggle switch, centred in its own band at the bottom
-    // of the EQ rack.
+    // EQ Bypass: vintage bat toggle switch, centre-RIGHT — in the slot above the
+    // dynamics meter column (right of the rightmost knob), vertically centred over
+    // the knob rows.
     {
-        const int togW = 84, togH = 30;
-        pultecBypassButton.setBounds(pultecBypassBand.getCentreX() - togW / 2,
-                                     pultecBypassBand.getCentreY() - togH / 2, togW, togH);
+        const int togW = 54, togH = 78;
+        const int slotCx = pultecKnobArea.getRight() - kMeterW / 2;
+        pultecBypassButton.setBounds(slotCx - togW / 2,
+                                     pultecKnobArea.getCentreY() - togH / 2, togW, togH);
     }
 
-    pultecLowHdr  = pultecHdrRow.withX(x0).withWidth(juce::roundToInt(2.0f * u));
-    pultecHighHdr = pultecHdrRow.withX(x0 + juce::roundToInt(2.0f * u)).withWidth(juce::roundToInt(3.0f * u));
+    {
+        const int loL = eqCx(0) - kw / 2, loR = eqCx(1) + kw / 2;
+        const int hiL = eqCx(2) - kw / 2, hiR = eqCx(4) + kw / 2;
+        pultecLowHdr  = pultecHdrRow.withX(loL).withWidth(loR - loL);
+        pultecHighHdr = pultecHdrRow.withX(hiL).withWidth(hiR - hiL);
+    }
 
     // --- Tube Saturation: its OWN rack-unit group, with a DARKER faceplate, below
     // the EQ. Drive / Mix / Trim knobs (spread) + the Sat enable button at the right.

@@ -52,6 +52,15 @@ private:
 
     juce::Rectangle<int> wordmarkBounds;   // triple-click hot-spot (set in renderBackground())
     juce::Rectangle<int> topWordmarkBounds;// engraved "MaybeDuck" strip along the top (set in resized())
+
+    // Invisible hotspot over the top wordmark: hosts a tooltip and the triple-click
+    // theme toggle (a painted string can't carry a tooltip itself).
+    struct WordmarkHotspot : juce::Component, juce::SettableTooltipClient
+    {
+        std::function<void(const juce::MouseEvent&)> onMouseDown;
+        void mouseDown(const juce::MouseEvent& e) override { if (onMouseDown) onMouseDown(e); }
+    };
+    WordmarkHotspot wordmarkHotspot;
     int lastThemeGen = -1;                 // last ThemeState generation we applied
 
     // timerCallback change-detection so we only repaint widgets that actually moved.

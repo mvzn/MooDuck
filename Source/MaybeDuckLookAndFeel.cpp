@@ -487,25 +487,20 @@ void MaybeDuckLookAndFeel::drawToggleSwitch (juce::Graphics& g, juce::Rectangle<
                                              bool isOn, bool isEnabled,
                                              const juce::String& caption, juce::Colour litColour) const
 {
-    auto b = bounds.reduced(1.0f);
+    auto b = bounds;
 
-    // Recessed mounting sub-plate.
-    g.setColour(pal.buttonSocket);
-    g.fillRoundedRectangle(b, 3.0f);
-    g.setColour(juce::Colours::black.withAlpha(0.40f));
-    g.drawRoundedRectangle(b.reduced(0.5f), 3.0f, 1.0f);
-
-    // Engraved caption along the bottom.
+    // No surrounding plate — the bezel, bat handle and caption sit directly on the
+    // rack face (just a toggle, no rectangle around it).
     if (caption.isNotEmpty())
     {
-        auto capArea = b.removeFromBottom(11.0f);
+        auto capArea = b.removeFromBottom(12.0f);
         drawEngravedText(g, caption.toUpperCase(), capArea, juce::Justification::centred,
-                         juce::Font(regularTypeface).withHeight(8.5f));
+                         juce::Font(regularTypeface).withHeight(9.5f));
     }
 
-    auto well = b.reduced(2.0f);
+    auto well = b.reduced(1.0f);
     const juce::Point<float> c(well.getCentreX(), well.getCentreY());
-    const float ringR = juce::jmin(well.getWidth(), well.getHeight()) * 0.36f;
+    const float ringR = juce::jmin(well.getWidth(), well.getHeight()) * 0.44f;
 
     // ON backlight glow behind the bezel.
     if (isOn && isEnabled)
