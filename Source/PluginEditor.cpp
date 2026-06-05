@@ -25,7 +25,7 @@ namespace {
     // margins; keep kWindowH comfortably above that so nothing crowds the bottom.
     // To change the overall size, retune the section heights too.
     constexpr int kWindowW       = 820;
-    constexpr int kWindowH       = 836;   // Pultec rack + Saturation rack + centred top wordmark band
+    constexpr int kWindowH       = 858;   // Pultec rack + (taller) Saturation rack + top wordmark band
     constexpr int kOuterMargin   = 22;
     constexpr int kGroupGap      = 8;    // breathing room between sections
     constexpr int kGroupTitleH   = 22;
@@ -1005,7 +1005,7 @@ void MaybeDuckAudioProcessorEditor::resized()
     // --- Tube Saturation: its OWN rack-unit group, with a DARKER faceplate, below
     // the EQ. Drive / Mix / Trim knobs (spread) + the Sat enable button at the right.
     area.removeFromTop(kGroupGap);
-    constexpr int satRowH   = 96;
+    constexpr int satRowH   = 118;  // taller row -> bigger saturation knobs
     constexpr int satGroupH = kGroupTitleH + satRowH + 6;
     auto satArea = area.removeFromTop(satGroupH);
     pultecSatGroup.setBounds(satArea);

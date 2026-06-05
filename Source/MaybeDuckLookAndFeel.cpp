@@ -498,73 +498,106 @@ void MaybeDuckLookAndFeel::drawToggleSwitch (juce::Graphics& g, juce::Rectangle<
     }
 
     auto well = b.reduced(1.0f);
-    const juce::Point<float> c(well.getCentreX(), well.getCentreY());
+    const float cx = well.getCentreX();
+    const float cy = well.getCentreY();
 
     // Desaturate + dim metal tones when disabled.
     auto metal = [isEnabled](juce::uint32 argb)
     {
         juce::Colour col(argb);
-        return isEnabled ? col : col.withSaturation(0.0f).withBrightness(col.getBrightness() * 0.72f);
+        return isEnabled ? col : col.withSaturation(0.0f).withBrightness(col.getBrightness() * 0.7f);
     };
 
-    const float bushR  = juce::jmin(well.getWidth() * 0.40f, well.getHeight() * 0.26f);
-    const float dir    = isOn ? -1.0f : 1.0f;             // handle UP when engaged
-    const float lever  = well.getHeight() * 0.34f;
-    const juce::Point<float> tip(c.x, c.y + dir * lever);
-    const float shaftW = bushR * 0.82f;
-    const float tipR   = shaftW * 0.88f;
+    const float nutR  = juce::jmin(well.getWidth() * 0.46f, well.getHeight() * 0.28f); // hex corner radius
+    const float dir   = isOn ? -1.0f : 1.0f;              // handle UP when engaged
+    const float lever = well.getHeight() * 0.42f;
+    const float tipX  = cx;
+    const float tipY  = cy + dir * lever;
+    const float baseW = nutR * 0.74f;                     // shaft width at the pivot
+    const float neckW = nutR * 0.48f;                     // shaft width just under the ball
+    const float tipR  = nutR * 0.56f;                     // ball radius
 
-    // Soft ON glow behind the switch.
-    if (isOn && isEnabled)
+    // ---- Soft drop shadow of the whole switch on the panel.
     {
-        g.setColour(litColour.withAlpha(0.20f));
-        g.fillEllipse(juce::Rectangle<float>(bushR * 3.4f, bushR * 3.4f).withCentre(c));
+        juce::Rectangle<float> sh(nutR * 2.5f, nutR * 1.7f);
+        sh.setCentre(cx + 1.5f, cy + 3.0f);
+        g.setColour(juce::Colours::black.withAlpha(0.30f));
+        g.fillEllipse(sh);
+    }
+    if (isOn && isEnabled)   // subtle ON glow
+    {
+        g.setColour(litColour.withAlpha(0.18f));
+        g.fillEllipse(juce::Rectangle<float>(nutR * 3.6f, nutR * 3.6f).withCentre({ cx, cy }));
     }
 
-    // --- Panel recess the bushing is set into (dark halo).
-    g.setColour(juce::Colours::black.withAlpha(0.38f));
-    g.fillEllipse(juce::Rectangle<float>(bushR * 2.5f, bushR * 2.5f).withCentre(c));
+    // ---- Hex mounting nut (flat-top hexagon, slightly squashed for perspective).
+    juce::Path hex;
+    for (int i = 0; i < 6; ++i)
+    {
+        const float a  = juce::MathConstants<float>::pi / 6.0f + (float) i * juce::MathConstants<float>::pi / 3.0f;
+        const float px = cx + nutR * std::cos(a);
+        const float py = cy + nutR * std::sin(a) * 0.9f;
+        if (i == 0) hex.startNewSubPath(px, py); else hex.lineTo(px, py);
+    }
+    hex.closeSubPath();
+    juce::ColourGradient nutG(metal(0xffDADDDF), cx, cy - nutR, metal(0xff3F4245), cx, cy + nutR, false);
+    nutG.addColour(0.5, metal(0xff8C9094));
+    g.setGradientFill(nutG); g.fillPath(hex);
+    g.setColour(metal(0xffF4F6F7).withAlpha(0.55f));                       // lit top bevel
+    g.strokePath(hex, juce::PathStrokeType(1.0f), juce::AffineTransform::translation(0.0f, -0.5f));
+    g.setColour(juce::Colours::black.withAlpha(0.55f));                    // dark rim
+    g.strokePath(hex, juce::PathStrokeType(0.9f));
 
-    // --- Chrome bushing (mounting nut/bezel): diagonal metallic shading + rim.
-    juce::Rectangle<float> bush(0.0f, 0.0f, bushR * 2.0f, bushR * 2.0f); bush.setCentre(c);
-    juce::ColourGradient bushG(metal(0xffEDEFF1), c.x - bushR * 0.5f, c.y - bushR * 0.7f,
-                               metal(0xff5C6064), c.x + bushR * 0.6f, c.y + bushR * 0.8f, false);
-    bushG.addColour(0.5, metal(0xffA9AEB2));
-    g.setGradientFill(bushG); g.fillEllipse(bush);
-    g.setColour(juce::Colours::black.withAlpha(0.50f)); g.drawEllipse(bush, 1.0f);
-    // inner seat the lever pivots from (recessed).
-    juce::Rectangle<float> seat = bush.reduced(bushR * 0.42f);
-    juce::ColourGradient seatG(juce::Colour(0xff242628), c.x, c.y - bushR * 0.4f,
-                               juce::Colour(0xff45484A), c.x, c.y + bushR * 0.4f, false);
-    g.setGradientFill(seatG); g.fillEllipse(seat);
+    // ---- Lever shaft as a tapered trapezoid (wide at the pivot, narrow under ball).
+    auto shaftPath = [&](float dx, float dy)
+    {
+        juce::Path p;
+        p.startNewSubPath(cx - baseW * 0.5f + dx, cy + dy);
+        p.lineTo(tipX - neckW * 0.5f + dx, tipY + dy);
+        p.lineTo(tipX + neckW * 0.5f + dx, tipY + dy);
+        p.lineTo(cx + baseW * 0.5f + dx, cy + dy);
+        p.closeSubPath();
+        return p;
+    };
+    g.setColour(juce::Colours::black.withAlpha(0.32f));                    // cast shadow
+    g.fillPath(shaftPath(1.8f, 2.4f));
 
-    // --- Bat lever: cast shadow, cylindrical metal shaft, domed specular tip.
-    const float topY = juce::jmin(c.y, tip.y) - shaftW * 0.18f;
-    const float botY = juce::jmax(c.y, tip.y) + shaftW * 0.18f;
-    juce::Rectangle<float> shaft(c.x - shaftW * 0.5f, topY, shaftW, botY - topY);
+    // Chrome reflection banding across the shaft width (dark-bright-horizon-bright-dark).
+    juce::ColourGradient chrome(metal(0xff2E3134), cx - baseW * 0.5f, cy,
+                                metal(0xff2A2D30), cx + baseW * 0.5f, cy, false);
+    chrome.addColour(0.20, metal(0xffEFF2F4));
+    chrome.addColour(0.44, metal(0xff707479));   // reflected "horizon"
+    chrome.addColour(0.62, metal(0xffF6F8FA));
+    chrome.addColour(0.84, metal(0xff52565A));
+    g.setGradientFill(chrome); g.fillPath(shaftPath(0.0f, 0.0f));
+    g.setColour(juce::Colours::black.withAlpha(0.40f));
+    g.strokePath(shaftPath(0.0f, 0.0f), juce::PathStrokeType(0.7f));
 
-    g.setColour(juce::Colours::black.withAlpha(0.30f));
-    g.fillRoundedRectangle(shaft.translated(1.6f, 2.0f), shaftW * 0.5f);   // shadow on panel
+    // ---- Pivot collar where the lever meets the nut (small chrome ring + AO).
+    g.setColour(juce::Colours::black.withAlpha(0.45f));
+    g.fillEllipse(juce::Rectangle<float>(baseW * 1.25f, baseW * 0.7f).withCentre({ cx, cy }));
+    juce::Rectangle<float> collar(baseW * 1.05f, baseW * 0.5f); collar.setCentre(cx, cy);
+    juce::ColourGradient colG(metal(0xffE3E6E8), cx, collar.getY(), metal(0xff55585B), cx, collar.getBottom(), false);
+    g.setGradientFill(colG); g.fillEllipse(collar);
 
-    // Cylinder: horizontal multi-stop gradient (dark edges, bright centre).
-    juce::ColourGradient cyl(metal(0xff4E5256), shaft.getX(), c.y,
-                             metal(0xff4E5256), shaft.getRight(), c.y, false);
-    cyl.addColour(0.40, metal(0xffE6E9EC));
-    cyl.addColour(0.50, metal(0xffF6F8FA));
-    cyl.addColour(0.60, metal(0xffC2C6CA));
-    g.setGradientFill(cyl); g.fillRoundedRectangle(shaft, shaftW * 0.5f);
-    g.setColour(juce::Colours::black.withAlpha(0.38f)); g.drawRoundedRectangle(shaft, shaftW * 0.5f, 0.7f);
-
-    // Domed tip ball with a specular hotspot.
-    juce::Rectangle<float> ball(0.0f, 0.0f, tipR * 2.0f, tipR * 2.0f); ball.setCentre(tip);
-    g.setColour(juce::Colours::black.withAlpha(0.28f)); g.fillEllipse(ball.translated(1.4f, 1.8f));
-    juce::ColourGradient ballG(metal(0xffF6F8FA), tip.x - tipR * 0.45f, tip.y - tipR * 0.5f,
-                               metal(0xff6E747A), tip.x + tipR * 0.7f, tip.y + tipR * 0.85f, true);
-    g.setGradientFill(ballG); g.fillEllipse(ball);
-    g.setColour(juce::Colours::black.withAlpha(0.38f)); g.drawEllipse(ball, 0.8f);
-    g.setColour(juce::Colours::white.withAlpha(isEnabled ? 0.85f : 0.30f));
-    g.fillEllipse(juce::Rectangle<float>(tipR * 0.5f, tipR * 0.5f)
-                    .withCentre({ tip.x - tipR * 0.32f, tip.y - tipR * 0.36f }));
+    // ---- Chrome-sphere tip: body, reflected rim light, dark outline, sharp specular.
+    juce::Rectangle<float> ball(tipR * 2.0f, tipR * 2.0f); ball.setCentre(tipX, tipY);
+    g.setColour(juce::Colours::black.withAlpha(0.30f)); g.fillEllipse(ball.translated(1.6f, 2.2f));
+    juce::ColourGradient sph(metal(0xffFAFBFC), tipX - tipR * 0.42f, tipY - tipR * 0.5f,
+                             metal(0xff44484C), tipX + tipR * 0.7f, tipY + tipR * 0.9f, true);
+    sph.addColour(0.78, metal(0xff6C7176));
+    g.setGradientFill(sph); g.fillEllipse(ball);
+    // reflected light crescent along the lower-right rim
+    g.setColour(metal(0xffC9CDD0).withAlpha(0.55f));
+    g.drawEllipse(ball.reduced(tipR * 0.14f).translated(tipR * 0.05f, tipR * 0.16f), 1.3f);
+    g.setColour(juce::Colours::black.withAlpha(0.45f)); g.drawEllipse(ball, 0.9f);
+    // sharp specular hotspot (top-left) + tiny secondary glint
+    g.setColour(juce::Colours::white.withAlpha(isEnabled ? 0.92f : 0.30f));
+    g.fillEllipse(juce::Rectangle<float>(tipR * 0.52f, tipR * 0.40f)
+                    .withCentre({ tipX - tipR * 0.34f, tipY - tipR * 0.40f }));
+    g.setColour(juce::Colours::white.withAlpha(isEnabled ? 0.5f : 0.2f));
+    g.fillEllipse(juce::Rectangle<float>(tipR * 0.16f, tipR * 0.16f)
+                    .withCentre({ tipX + tipR * 0.2f, tipY + tipR * 0.28f }));
 }
 
 void MaybeDuckLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& b,
