@@ -303,7 +303,8 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
     wordmarkHotspot.setTooltip("Triple-click to toggle light / dark theme");
     wordmarkHotspot.onMouseDown = [this](const juce::MouseEvent& e)
     {
-        if (e.getNumberOfClicks() >= 3)
+        // EXACTLY 3 — `>= 3` would fire again on the 4th click (count 4) and toggle back.
+        if (e.getNumberOfClicks() == 3)
         {
             ThemeState::get().toggle();
             applyTheme();
@@ -546,7 +547,7 @@ void MaybeDuckAudioProcessorEditor::applyTheme()
 void MaybeDuckAudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
 {
     // Triple-click the wordmark to flip dark/light (process-wide, persisted).
-    if (e.getNumberOfClicks() >= 3 && wordmarkBounds.contains(e.getPosition()))
+    if (e.getNumberOfClicks() == 3 && wordmarkBounds.contains(e.getPosition()))
     {
         ThemeState::get().toggle();
         applyTheme();  // this editor flips instantly; siblings catch up on the next timer tick
