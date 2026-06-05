@@ -981,13 +981,14 @@ void MaybeDuckAudioProcessorEditor::resized()
     placeKnob(5, 1.5f, yBot);  // Bandwidth
     placeKnob(3, 2.5f, yBot);  // HF Sel
 
-    // EQ Bypass button: centre-RIGHT, in the slot above the dynamics meter column,
-    // vertically centred over the knob rows.
+    // EQ Bypass button: bottom-RIGHT, horizontally aligned with the Sat button
+    // (same x = inner.getX() + 4.4*su) and the SAME size, on the bottom row.
     {
-        const int btnW = kMeterW - 6, btnH = 30;
-        const int slotCx = pultecKnobArea.getRight() - kMeterW / 2;
-        pultecBypassButton.setBounds(slotCx - btnW / 2,
-                                     pultecKnobArea.getCentreY() - btnH / 2, btnW, btnH);
+        const float su = pultecKnobArea.getWidth() / 5.0f;          // matches the sat rack's su
+        const int btnW = juce::roundToInt(su * 0.7f), btnH = 34;    // same size as the Sat button
+        const int cxB  = juce::roundToInt(x0 + 4.4f * su);          // same x as the Sat button
+        pultecBypassButton.setBounds(cxB - btnW / 2,
+                                     yBot + (pultecKnobH - btnH) / 2, btnW, btnH);
     }
 
     {
