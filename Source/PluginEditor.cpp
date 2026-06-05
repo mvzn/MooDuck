@@ -25,7 +25,7 @@ namespace {
     // margins; keep kWindowH comfortably above that so nothing crowds the bottom.
     // To change the overall size, retune the section heights too.
     constexpr int kWindowW       = 820;
-    constexpr int kWindowH       = 842;   // Pultec rack + (taller) Saturation rack + top wordmark (tight gaps) band
+    constexpr int kWindowH       = 832;   // Pultec rack + (taller) Saturation rack + top wordmark (tight gaps)
     constexpr int kOuterMargin   = 22;
     constexpr int kGroupGap      = 4;    // breathing room between sections (tight -> groups sit up near the wordmark)
     constexpr int kGroupTitleH   = 22;
@@ -791,10 +791,11 @@ void MaybeDuckAudioProcessorEditor::resized()
     juce::Rectangle<int> area(winBounds.getX() + kOuterMargin, winBounds.getY() + 3,
                               winBounds.getWidth() - 2 * kOuterMargin,
                               winBounds.getHeight() - 3 - kOuterMargin);
-    // Engraved "MaybeDuck" wordmark, centred (H+V) in a band across the top.
-    topWordmarkBounds = area.removeFromTop(24);
+    // Engraved "MaybeDuck" wordmark. The band tightly frames the caps (the empty
+    // ascent/descent of the font is clipped), so there's no descent gap left under
+    // the text before the Modes group. No extra gap below.
+    topWordmarkBounds = area.removeFromTop(16);
     wordmarkHotspot.setBounds(topWordmarkBounds);   // tooltip + triple-click theme toggle
-    area.removeFromTop(2);
 
     // --- Sidechain Mode group: ONE row --------------------------------------
     // Vertical layout is pad-driven: [title][modeTopPad][button row][modeBotPad],
