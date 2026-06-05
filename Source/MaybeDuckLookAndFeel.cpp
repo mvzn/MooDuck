@@ -466,10 +466,84 @@ void MaybeDuckLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButt
 {
     const auto bounds = b.getLocalBounds().toFloat();
     const bool isOn = b.getToggleState();
+
+    // Pultec-style bat toggle switch (e.g. the EQ Bypass) — draws its own caption.
+    if (b.getProperties().contains("pultecToggle"))
+    {
+        drawToggleSwitch(g, bounds, isOn, b.isEnabled(), b.getButtonText(), litColourFor(b));
+        return;
+    }
+
     const bool soft = isSoftSwitch(b);
     const bool alwaysLit = b.getProperties().contains("alwaysLit");
     drawPushButtonBody (g, bounds, isOn, isOver, isDown, b.isEnabled(), litColourFor(b), soft, alwaysLit);
     drawPushButtonLabel(g, bounds, b.getButtonText(), isOn, isOver, isDown, b.isEnabled(), soft);
+}
+
+// Vintage bat toggle switch: a recessed sub-plate, a chrome base bezel, and a
+// metallic bat handle that points UP when engaged (isOn) and DOWN when off, with
+// an engraved caption beneath. Mirrors the EQP-1A's faceplate toggle switches.
+void MaybeDuckLookAndFeel::drawToggleSwitch (juce::Graphics& g, juce::Rectangle<float> bounds,
+                                             bool isOn, bool isEnabled,
+                                             const juce::String& caption, juce::Colour litColour) const
+{
+    auto b = bounds.reduced(1.0f);
+
+    // Recessed mounting sub-plate.
+    g.setColour(pal.buttonSocket);
+    g.fillRoundedRectangle(b, 3.0f);
+    g.setColour(juce::Colours::black.withAlpha(0.40f));
+    g.drawRoundedRectangle(b.reduced(0.5f), 3.0f, 1.0f);
+
+    // Engraved caption along the bottom.
+    if (caption.isNotEmpty())
+    {
+        auto capArea = b.removeFromBottom(11.0f);
+        drawEngravedText(g, caption.toUpperCase(), capArea, juce::Justification::centred,
+                         juce::Font(regularTypeface).withHeight(8.5f));
+    }
+
+    auto well = b.reduced(2.0f);
+    const juce::Point<float> c(well.getCentreX(), well.getCentreY());
+    const float ringR = juce::jmin(well.getWidth(), well.getHeight()) * 0.36f;
+
+    // ON backlight glow behind the bezel.
+    if (isOn && isEnabled)
+    {
+        g.setColour(litColour.withAlpha(0.30f));
+        g.fillEllipse(juce::Rectangle<float>(ringR * 2.6f, ringR * 2.6f).withCentre(c));
+    }
+
+    // Chrome base bezel (raised ring) + dark centre hole.
+    juce::Rectangle<float> ring(0.0f, 0.0f, ringR * 2.0f, ringR * 2.0f);
+    ring.setCentre(c);
+    juce::ColourGradient bez(juce::Colour(0xffC6CACE), c.x, c.y - ringR,
+                             juce::Colour(0xff595D61), c.x, c.y + ringR, false);
+    g.setGradientFill(bez);
+    g.fillEllipse(ring);
+    g.setColour(juce::Colours::black.withAlpha(0.50f));
+    g.drawEllipse(ring, 1.0f);
+    g.setColour(juce::Colour(0xff262829));
+    g.fillEllipse(ring.reduced(ringR * 0.48f));
+
+    // Bat handle: UP when engaged, DOWN when off.
+    const float dir  = isOn ? -1.0f : 1.0f;
+    const float len  = well.getHeight() * 0.40f;
+    const juce::Point<float> tip(c.x, c.y + dir * len);
+    const float shaftW = ringR * 0.62f;
+    g.setColour(isEnabled ? juce::Colour(0xffD9DDE1) : juce::Colour(0xff8C8C8C));
+    g.drawLine(c.x, c.y, tip.x, tip.y, shaftW);
+
+    // Handle tip ball.
+    const float knobR = shaftW * 0.95f;
+    juce::Rectangle<float> knob(0.0f, 0.0f, knobR * 2.0f, knobR * 2.0f);
+    knob.setCentre(tip);
+    juce::ColourGradient kn(juce::Colour(0xffF2F4F6), knob.getX(), knob.getY(),
+                            juce::Colour(0xff868C92), knob.getRight(), knob.getBottom(), false);
+    g.setGradientFill(kn);
+    g.fillEllipse(knob);
+    g.setColour(juce::Colours::black.withAlpha(0.35f));
+    g.drawEllipse(knob, 0.8f);
 }
 
 void MaybeDuckLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& b,

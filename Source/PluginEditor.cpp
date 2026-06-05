@@ -25,7 +25,7 @@ namespace {
     // margins; keep kWindowH comfortably above that so nothing crowds the bottom.
     // To change the overall size, retune the section heights too.
     constexpr int kWindowW       = 820;
-    constexpr int kWindowH       = 818;   // room for the Pultec rack + separate Saturation rack
+    constexpr int kWindowH       = 822;   // Pultec rack + separate Saturation rack + top wordmark
     constexpr int kOuterMargin   = 22;
     constexpr int kGroupGap      = 8;    // breathing room between sections
     constexpr int kGroupTitleH   = 22;
@@ -359,8 +359,9 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
 
     pultecBypassButton.setButtonText("Bypass");
     pultecBypassButton.setTooltip("Bypass the Pultec EQ entirely (pure passthrough — no oversampling, no WDF).");
-    pultecBypassButton.getProperties().set("softSwitch", true);
-    pultecBypassButton.getProperties().set("litColour", static_cast<juce::int64>(MaybeDuckLookAndFeel::kBandMute)); // red when bypassed
+    // Drawn as a vintage Pultec bat toggle switch (handle up = bypassed).
+    pultecBypassButton.getProperties().set("pultecToggle", true);
+    pultecBypassButton.getProperties().set("litColour", static_cast<juce::int64>(MaybeDuckLookAndFeel::kBandMute)); // glow when bypassed
     addAndMakeVisible(pultecBypassButton);
     pultecBypassAttachment = std::make_unique<ButtonAttachment>(
         audioProcessor.apvts, "pultecBypass", pultecBypassButton);
@@ -586,13 +587,15 @@ void MaybeDuckAudioProcessorEditor::paint (juce::Graphics& g)
     // (a few short strings) and get clipped to the dirty region on partial repaints.
     const auto area = getLocalBounds().toFloat();
 
-    juce::Rectangle<float> wordmarkArea(area.getRight() - 150.0f, area.getBottom() - 33.0f, 110.0f, 16.0f);
+    // Wordmark engraved across the TOP of the panel; version kept at bottom-right.
+    mdLookAndFeel.drawEngravedText(g, "MAYBEDUCK", topWordmarkBounds.toFloat(),
+                                   juce::Justification::centred,
+                                   juce::Font(mdLookAndFeel.getMediumTypeface()).withHeight(15.0f));
+    wordmarkBounds = topWordmarkBounds.expanded(2.0f);   // triple-click theme-flip hot-spot
+
     juce::Rectangle<float> versionArea (area.getRight() - 150.0f, area.getBottom() - 17.0f, 110.0f, 12.0f);
-    mdLookAndFeel.drawEngravedText(g, "MAYBEDUCK", wordmarkArea, juce::Justification::centredRight,
-                                   juce::Font(mdLookAndFeel.getMediumTypeface()).withHeight(14.0f));
-    mdLookAndFeel.drawEngravedText(g, "v1.0", versionArea, juce::Justification::centredRight,
+    mdLookAndFeel.drawEngravedText(g, "v1.2", versionArea, juce::Justification::centredRight,
                                    juce::Font(mdLookAndFeel.getRegularTypeface()).withHeight(9.5f));
-    wordmarkBounds = wordmarkArea.getUnion(versionArea).expanded(2.0f).toNearestInt();
 
     juce::Font hdr(mdLookAndFeel.getMediumTypeface());
     hdr.setHeight(11.0f);
@@ -660,8 +663,8 @@ void MaybeDuckAudioProcessorEditor::renderBackground()
     // image blurs it on hi-DPI) — not here.
     fullWidthRack(rackBoundsEq, mdLookAndFeel.isDarkMode() ? 0.18f : 0.06f);
 
-    // Tube Saturation rack — its own module, intentionally DARKER than the others.
-    fullWidthRack(rackBoundsSat, -0.30f);
+    // Tube Saturation rack — its own module, a touch darker than the others.
+    fullWidthRack(rackBoundsSat, -0.18f);
 
     // --- Crossover filter-band engravings ----------------------------------
     // Row 1 (the knob row): BIG engraved filter-response curves in the gaps
@@ -766,7 +769,13 @@ void MaybeDuckAudioProcessorEditor::renderBackground()
 // inset it, drop the title row, then lay knobs left-to-right inside what's left.
 void MaybeDuckAudioProcessorEditor::resized()
 {
-    auto area = getLocalBounds().reduced(kOuterMargin);
+    auto winBounds = getLocalBounds();
+    juce::Rectangle<int> area(winBounds.getX() + kOuterMargin, winBounds.getY() + 2,
+                              winBounds.getWidth() - 2 * kOuterMargin,
+                              winBounds.getHeight() - 2 - kOuterMargin);
+    // Engraved "MaybeDuck" wordmark across the top (fills what was dead top margin).
+    topWordmarkBounds = area.removeFromTop(16);
+    area.removeFromTop(2);
 
     // --- Sidechain Mode group: ONE row --------------------------------------
     // Vertical layout is pad-driven: [title][modeTopPad][button row][modeBotPad],
@@ -774,9 +783,9 @@ void MaybeDuckAudioProcessorEditor::resized()
     // Mode-select buttons hug the left; the smaller FFT-conv toggle + size buttons
     // hug the right (shown only in Spectral mode — see timerCallback) and read as
     // secondary. The latency readout sits at the editor's bottom-left, not here.
-    constexpr int modeTopPad     = 12;  // gap under the group title (buttons were cramped to it)
-    constexpr int modeBotPad     = 12;  // gap below the buttons (matches the top)
-    constexpr int modeBtnH       = 40;  // main mode-button height
+    constexpr int modeTopPad     = 8;   // gap under the group title (buttons were cramped to it)
+    constexpr int modeBotPad     = 8;   // gap below the buttons (matches the top)
+    constexpr int modeBtnH       = 36;  // main mode-button height
     constexpr int convBtnH       = 30;  // conv controls height -> shorter so they read as secondary
     constexpr int modeBtnW       = 112; // mode-select button width
     constexpr int convBtnW       = 120; // "FFT Conv" toggle button width
@@ -913,7 +922,7 @@ void MaybeDuckAudioProcessorEditor::resized()
     // · Atten Sel · Atten), with the Bypass/Sat toggles stacked at the right.
     constexpr int pultecHdrH    = 14;  // engraved "LOW/HIGH FREQUENCY" sub-header row
     constexpr int pultecKnobH   = 96;  // per-knob block height (caption + knob)
-    constexpr int pultecStagger = 30;  // selectors (bottom row) drop below boost/atten (top row)
+    constexpr int pultecStagger = 46;  // selectors (bottom row) drop further below boost/atten (top row)
     constexpr int pultecGroupH  = kGroupTitleH + pultecHdrH + pultecKnobH + pultecStagger + 14;
     auto pultecArea = area.removeFromTop(pultecGroupH);
     pultecGroup.setBounds(pultecArea);

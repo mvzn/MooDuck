@@ -51,6 +51,7 @@ private:
     bool backgroundDirty = true;   // rebuild the cache lazily in paint() (bounds guaranteed valid there)
 
     juce::Rectangle<int> wordmarkBounds;   // triple-click hot-spot (set in renderBackground())
+    juce::Rectangle<int> topWordmarkBounds;// engraved "MaybeDuck" strip along the top (set in resized())
     int lastThemeGen = -1;                 // last ThemeState generation we applied
 
     // timerCallback change-detection so we only repaint widgets that actually moved.

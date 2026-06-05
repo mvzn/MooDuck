@@ -102,6 +102,10 @@ public:
     void drawScrew          (juce::Graphics&, juce::Point<float> centre, float radius, float slotAngleRadians) const;
     void drawEngravedText   (juce::Graphics&, const juce::String& text, juce::Rectangle<float> area,
                              juce::Justification just, juce::Font font) const;
+    // Vintage Pultec-style bat toggle switch (used for the EQ Bypass). Handle UP =
+    // engaged (isOn). Draws its own engraved caption.
+    void drawToggleSwitch   (juce::Graphics&, juce::Rectangle<float> bounds, bool isOn,
+                             bool isEnabled, const juce::String& caption, juce::Colour litColour) const;
 
     // Set sliding behavior + 270° rotary angles on a slider — call from the editor
     // for every rotary so the drawRotarySlider override sees the right angle range.
