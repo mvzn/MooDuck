@@ -150,7 +150,7 @@ private:
     void drawPushButtonLabel (juce::Graphics&, juce::Rectangle<float> bounds,
                               const juce::String& text,
                               bool isOn, bool isMouseOver, bool isDown, bool isEnabled,
-                              bool softProfile) const;
+                              bool softProfile, bool alwaysLit = false) const;
 
     // Pull the optional per-button styling a caller may have stashed in the
     // component properties: "softSwitch" (bool) and "litColour" (ARGB uint32).

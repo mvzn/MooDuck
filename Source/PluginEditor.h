@@ -155,7 +155,7 @@ private:
     // Section rects for the recessed rack-unit modules (set in resized(), drawn into
     // the cached background). Stored explicitly so they don't depend on child
     // GroupComponent bounds being valid at render time.
-    juce::Rectangle<int> rackBoundsDyn, rackBoundsEq, rackBoundsSat;
+    juce::Rectangle<int> rackBoundsDyn, rackBoundsEq, rackBoundsSat, rackBoundsXover;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MaybeDuckAudioProcessorEditor)
 };

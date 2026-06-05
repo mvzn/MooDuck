@@ -333,7 +333,10 @@ void MaybeDuckLookAndFeel::drawPushButtonBody (juce::Graphics& g, juce::Rectangl
     // OFF and flattens flush into the socket when ENGAGED (latching cap) or
     // DISABLED; momentary soft switches only dip while held. The state colour
     // glows in the socket gap ALL AROUND the cap, not on the face.
-    const bool pressedLook = (! softProfile && isOn) || isDown || (! softProfile && ! isEnabled);
+    // Engaged (latched) caps read as pushed IN — both the hard caps AND the soft
+    // toggle switches (Bypass / Sat), so all the buttons depress consistently. The
+    // "always lit" soft switches (band solo/mute) keep glowing without depressing.
+    const bool pressedLook = isDown || (isOn && ! alwaysLit) || (! softProfile && ! isEnabled);
     // Soft switches that are "always lit" (the band switches) glow whenever enabled;
     // soft toggles (Pultec Bypass/Sat) and hard caps glow only when engaged.
     const bool lit         = isEnabled && (alwaysLit || isOn);
@@ -439,11 +442,11 @@ void MaybeDuckLookAndFeel::drawPushButtonBody (juce::Graphics& g, juce::Rectangl
 void MaybeDuckLookAndFeel::drawPushButtonLabel (juce::Graphics& g, juce::Rectangle<float> bounds,
                                                 const juce::String& text,
                                                 bool isOn, bool /*isMouseOver*/, bool isDown, bool isEnabled,
-                                                bool softProfile) const
+                                                bool softProfile, bool alwaysLit) const
 {
     if (text.isEmpty()) return;
 
-    const bool pressedLook = (! softProfile && isOn) || isDown || (! softProfile && ! isEnabled);
+    const bool pressedLook = isDown || (isOn && ! alwaysLit) || (! softProfile && ! isEnabled);
     const auto geo = computeCapGeometry(bounds, pressedLook, softProfile);
 
     // Legend sits on the raised top face.
@@ -487,7 +490,7 @@ void MaybeDuckLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButt
     const bool soft = isSoftSwitch(b);
     const bool alwaysLit = b.getProperties().contains("alwaysLit");
     drawPushButtonBody (g, bounds, isOn, isOver, isDown, b.isEnabled(), litColourFor(b), soft, alwaysLit);
-    drawPushButtonLabel(g, bounds, b.getButtonText(), isOn, isOver, isDown, b.isEnabled(), soft);
+    drawPushButtonLabel(g, bounds, b.getButtonText(), isOn, isOver, isDown, b.isEnabled(), soft, alwaysLit);
 }
 
 void MaybeDuckLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& b,
@@ -504,7 +507,7 @@ void MaybeDuckLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& 
 {
     drawPushButtonLabel(g, b.getLocalBounds().toFloat(),
                         b.getButtonText(), b.getToggleState(), isOver, isDown,
-                        b.isEnabled(), isSoftSwitch(b));
+                        b.isEnabled(), isSoftSwitch(b), b.getProperties().contains("alwaysLit"));
 }
 
 juce::Font MaybeDuckLookAndFeel::getLabelFont (juce::Label& l)

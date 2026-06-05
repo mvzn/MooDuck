@@ -25,7 +25,7 @@ namespace {
     // margins; keep kWindowH comfortably above that so nothing crowds the bottom.
     // To change the overall size, retune the section heights too.
     constexpr int kWindowW       = 820;
-    constexpr int kWindowH       = 832;   // Pultec rack + (taller) Saturation rack + top wordmark (tight gaps)
+    constexpr int kWindowH       = 855;   // wordmark band + dyn/xover/EQ/sat racks (EQ bottom row dropped)
     constexpr int kOuterMargin   = 22;
     constexpr int kGroupGap      = 4;    // breathing room between sections (tight -> groups sit up near the wordmark)
     constexpr int kGroupTitleH   = 22;
@@ -605,9 +605,9 @@ void MaybeDuckAudioProcessorEditor::paint (juce::Graphics& g)
         const auto wm = topWordmarkBounds.toFloat();
         g.setFont(juce::Font(mdLookAndFeel.getMediumTypeface()).withHeight(18.0f).withExtraKerningFactor(0.14f));
         g.setColour(mdLookAndFeel.palette().dividerHighlight.withAlpha(0.55f));  // lit lower-right lip
-        g.drawText("MAYBEDUCK", wm.translated(0.8f, 1.0f), juce::Justification::centred, false);
+        g.drawText("MAYBEDUCK", wm.translated(0.8f, 1.0f), juce::Justification::centredBottom, false);
         g.setColour(mdLookAndFeel.palette().dividerShadow.withAlpha(0.95f));     // dark carved groove
-        g.drawText("MAYBEDUCK", wm, juce::Justification::centred, false);
+        g.drawText("MAYBEDUCK", wm, juce::Justification::centredBottom, false);
     }
     wordmarkBounds = topWordmarkBounds.expanded(2.0f);   // triple-click theme-flip hot-spot
 
@@ -674,6 +674,7 @@ void MaybeDuckAudioProcessorEditor::renderBackground()
         mdLookAndFeel.drawRackInset(g, rb, tone);
     };
     fullWidthRack(rackBoundsDyn);
+    fullWidthRack(rackBoundsXover);   // crossover is a rack too (neutral tone, like dynamics)
 
     // Pultec EQ is its own rack-unit module too — drawn a bit brighter than the
     // dynamics rack. The "LOW/HIGH FREQUENCY" sub-headers and the wordmark are TEXT,
@@ -681,8 +682,9 @@ void MaybeDuckAudioProcessorEditor::renderBackground()
     // image blurs it on hi-DPI) — not here.
     fullWidthRack(rackBoundsEq, mdLookAndFeel.isDarkMode() ? 0.18f : 0.06f);
 
-    // Tube Saturation rack — its own module, only a hair darker than the others.
-    fullWidthRack(rackBoundsSat, -0.08f);
+    // Tube Saturation rack — its own module; brighter than before but kept below the
+    // Pultec EQ rack's brightness.
+    fullWidthRack(rackBoundsSat, mdLookAndFeel.isDarkMode() ? 0.10f : 0.02f);
 
     // --- Crossover filter-band engravings ----------------------------------
     // Row 1 (the knob row): BIG engraved filter-response curves in the gaps
@@ -788,13 +790,13 @@ void MaybeDuckAudioProcessorEditor::renderBackground()
 void MaybeDuckAudioProcessorEditor::resized()
 {
     auto winBounds = getLocalBounds();
-    juce::Rectangle<int> area(winBounds.getX() + kOuterMargin, winBounds.getY() + 3,
+    juce::Rectangle<int> area(winBounds.getX() + kOuterMargin, winBounds.getY() + 10,
                               winBounds.getWidth() - 2 * kOuterMargin,
-                              winBounds.getHeight() - 3 - kOuterMargin);
+                              winBounds.getHeight() - 10 - kOuterMargin);
     // Engraved "MaybeDuck" wordmark. The band tightly frames the caps (the empty
     // ascent/descent of the font is clipped), so there's no descent gap left under
     // the text before the Modes group. No extra gap below.
-    topWordmarkBounds = area.removeFromTop(16);
+    topWordmarkBounds = area.removeFromTop(12);
     wordmarkHotspot.setBounds(topWordmarkBounds);   // tooltip + triple-click theme toggle
 
     // --- Sidechain Mode group: ONE row --------------------------------------
@@ -803,14 +805,14 @@ void MaybeDuckAudioProcessorEditor::resized()
     // Mode-select buttons hug the left; the smaller FFT-conv toggle + size buttons
     // hug the right (shown only in Spectral mode — see timerCallback) and read as
     // secondary. The latency readout sits at the editor's bottom-left, not here.
-    constexpr int modeTopPad     = 4;   // gap under the group title (buttons were cramped to it)
+    constexpr int modeTopPad     = 0;   // gap under the group title (buttons were cramped to it)
     constexpr int modeBotPad     = 4;   // gap below the buttons (matches the top)
     constexpr int modeBtnH       = 36;  // main mode-button height
     constexpr int convBtnH       = 30;  // conv controls height -> shorter so they read as secondary
     constexpr int modeBtnW       = 112; // mode-select button width
     constexpr int convBtnW       = 120; // "FFT Conv" toggle button width
     constexpr int convSizeW      = 84;  // buffer-size button width (wider so 1024/2048 aren't cramped)
-    constexpr int convRightInset = 6;   // keep the conv cluster off the group's right edge
+    constexpr int convRightInset = 2;   // right edge lines up with the highest crossover knob's right edge
     constexpr int modeGroupH     = kGroupTitleH + modeTopPad + modeBtnH + modeBotPad;
     auto modeArea = area.removeFromTop(modeGroupH);
     modeGroup.setBounds(modeArea);
@@ -873,18 +875,15 @@ void MaybeDuckAudioProcessorEditor::resized()
     constexpr int toggleBtnH = 34;                                           // <- toggle button height (smaller caps)
     toggles.removeFromTop(juce::jmax(0, dynamicsToggleH - toggleBtnH));      // spare slot height pushes buttons DOWN (needs slot >= toggleBtnH)
     toggles = toggles.removeFromTop(toggleBtnH);                             // lock the row to the button height
-    toggles.removeFromRight(18);                                            // gap so the last toggle doesn't crowd the meter
     {
-        juce::FlexBox fb;
-        fb.flexDirection  = juce::FlexBox::Direction::row;
-        fb.justifyContent = juce::FlexBox::JustifyContent::flexStart;
-        fb.alignItems     = juce::FlexBox::AlignItems::stretch;
-        const juce::FlexItem::Margin m(0.0f, 2.0f, 0.0f, 2.0f);
-        fb.items.add(juce::FlexItem(sidechainButton)      .withFlex(1.0f).withMargin(m));
-        fb.items.add(juce::FlexItem(softKneeButton)       .withFlex(1.0f).withMargin(m));
-        fb.items.add(juce::FlexItem(limiterButton)        .withFlex(1.0f).withMargin(m));
-        fb.items.add(juce::FlexItem(xtremeLookaheadButton).withFlex(1.0f).withMargin(m));
-        fb.performLayout(toggles.toFloat());
+        // Each toggle spans exactly TWO knob columns, so the button edges line up with
+        // the knob columns / value boxes above (4 buttons under the 8 knobs).
+        juce::Button* toggleBtns[4] = { &sidechainButton, &softKneeButton, &limiterButton, &xtremeLookaheadButton };
+        for (int i = 0; i < 4; ++i)
+        {
+            const int bx = dynamicsInner.getX() + 2 * i * colW;
+            toggleBtns[i]->setBounds(juce::Rectangle<int>(bx, toggles.getY(), 2 * colW, toggleBtnH).reduced(2, 0));
+        }
     }
 
     area.removeFromTop(kGroupGap);
@@ -896,6 +895,7 @@ void MaybeDuckAudioProcessorEditor::resized()
     constexpr int xoverGroupH  = kGroupTitleH + xoverRowH + xoverBandGap + xoverBandH + 4;
     auto xoverArea = area.removeFromTop(xoverGroupH);
     crossoverGroup.setBounds(xoverArea);
+    rackBoundsXover = xoverArea;
 
     auto xoverInner = xoverArea.reduced(8, 6);
     xoverInner.removeFromTop(kGroupTitleH - 8);
@@ -942,7 +942,7 @@ void MaybeDuckAudioProcessorEditor::resized()
     // · Atten Sel · Atten), with the Bypass/Sat toggles stacked at the right.
     constexpr int pultecHdrH    = 14;  // engraved "LOW/HIGH FREQUENCY" sub-header row
     constexpr int pultecKnobH   = 96;  // per-knob block height (caption + knob)
-    constexpr int pultecStagger = 60;  // selectors (bottom row) drop well below boost/atten (top row)
+    constexpr int pultecStagger = 76;  // bottom row drops so its CAPTIONS line up with the top knobs' value boxes
     constexpr int pultecGroupH  = kGroupTitleH + pultecHdrH + pultecKnobH + pultecStagger + 14;
     auto pultecArea = area.removeFromTop(pultecGroupH);
     pultecGroup.setBounds(pultecArea);
@@ -964,7 +964,9 @@ void MaybeDuckAudioProcessorEditor::resized()
     const int yBot = yTop + pultecStagger;
     const int kw   = eqColW;
     // m in [0..4] across the 5 top knobs -> centre x = x0 + eqColW*(0.5 + 1.75 m).
-    auto eqCx = [&](float m) { return juce::roundToInt(x0 + eqColW * (0.5f + 1.75f * m)); };
+    // 1.6 spacing (was 1.75) pulls the main knobs slightly left, opening a gap on the
+    // right so HF Boost/HF Atten sit clear of Atten Sel and the Bypass button.
+    auto eqCx = [&](float m) { return juce::roundToInt(x0 + eqColW * (0.5f + 1.6f * m)); };
 
     auto placeKnob = [&](int idx, float m, int y)
     {
