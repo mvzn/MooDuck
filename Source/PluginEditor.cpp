@@ -25,9 +25,9 @@ namespace {
     // margins; keep kWindowH comfortably above that so nothing crowds the bottom.
     // To change the overall size, retune the section heights too.
     constexpr int kWindowW       = 820;
-    constexpr int kWindowH       = 858;   // Pultec rack + (taller) Saturation rack + top wordmark band
+    constexpr int kWindowH       = 842;   // Pultec rack + (taller) Saturation rack + top wordmark (tight gaps) band
     constexpr int kOuterMargin   = 22;
-    constexpr int kGroupGap      = 8;    // breathing room between sections
+    constexpr int kGroupGap      = 4;    // breathing room between sections (tight -> groups sit up near the wordmark)
     constexpr int kGroupTitleH   = 22;
     constexpr int kKnobLabelH    = 18;   // height of the caption above every knob
 
@@ -976,7 +976,13 @@ void MaybeDuckAudioProcessorEditor::resized()
     placeKnob(2, 1.0f, yTop);  // LF Atten
     placeKnob(4, 2.0f, yTop);  // HF Boost
     placeKnob(7, 3.0f, yTop);  // HF Atten
-    placeKnob(6, 4.0f, yTop);  // Atten Sel — aligns with the dynamics Output knob
+    // Atten Sel — align x with the highest crossover band knob.
+    {
+        juce::Rectangle<int> col(xoverBandDivX[3] - kw / 2, yTop, kw, pultecKnobH);
+        col = col.reduced(4);
+        pultecLabels[6].setBounds(col.removeFromTop(kKnobLabelH));
+        pultecSliders[6].setBounds(col);
+    }
     placeKnob(0, 0.5f, yBot);  // LF Sel
     placeKnob(5, 1.5f, yBot);  // Bandwidth
     placeKnob(3, 2.5f, yBot);  // HF Sel
@@ -988,7 +994,7 @@ void MaybeDuckAudioProcessorEditor::resized()
         const int btnW = juce::roundToInt(su * 0.7f), btnH = 34;    // same size as the Sat button
         const int cxB  = juce::roundToInt(x0 + 4.4f * su);          // same x as the Sat button
         pultecBypassButton.setBounds(cxB - btnW / 2,
-                                     yBot + (pultecKnobH - btnH) / 2, btnW, btnH);
+                                     yBot + pultecKnobH - btnH, btnW, btnH);   // bottom of the rack
     }
 
     {
