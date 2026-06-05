@@ -347,6 +347,14 @@ void MaybeDuckLookAndFeel::drawPushButtonBody (juce::Graphics& g, juce::Rectangl
     const auto base   = geo.base;
     const auto top    = geo.top;
 
+    // --- Outer cast shadow on the chassis: the cap throws a soft shadow BELOW it
+    // (outside the button), more when raised, less when pressed. This is the main
+    // depth cue; the soft toggles (Bypass/Sat) cast a lighter shadow.
+    if (isEnabled)
+        juce::DropShadow(juce::Colours::black.withAlpha(softProfile ? 0.20f : 0.28f),
+                         pressedLook ? 3 : 5, juce::Point<int>(0, pressedLook ? 1 : 3))
+            .drawForRectangle(g, socket.toNearestInt());
+
     // --- Recessed socket (the dark hole the cap rises out of).
     g.setColour(pal.buttonSocket.withAlpha(softProfile ? 0.85f : 1.0f));
     g.fillRoundedRectangle(socket, corner + 2.0f);
@@ -409,23 +417,16 @@ void MaybeDuckLookAndFeel::drawPushButtonBody (juce::Graphics& g, juce::Rectangl
 
     if (pressedLook && isEnabled)
     {
-        // Pushed IN: inner shadows down from the top edge AND up from the bottom edge
-        // (the socket rim shades the recessed cap face on both sides) plus an inverted
-        // bevel — dark top-left wall. Reads as a clearly depressed button.
-        juce::ColourGradient topSh(juce::Colours::black.withAlpha(0.62f), top.getX(), top.getY(),
-                                   juce::Colours::black.withAlpha(0.0f),  top.getX(),
-                                   top.getY() + top.getHeight() * 0.75f, false);
+        // Pushed IN: just a FAINT top-edge inner shadow as a recess hint — the main
+        // depth comes from the outer cast shadow above. Lighter still on soft toggles.
+        const float ia = softProfile ? 0.16f : 0.26f;
+        juce::ColourGradient topSh(juce::Colours::black.withAlpha(ia), top.getX(), top.getY(),
+                                   juce::Colours::black.withAlpha(0.0f), top.getX(),
+                                   top.getY() + top.getHeight() * 0.55f, false);
         g.setGradientFill(topSh);
         g.fillRoundedRectangle(top, corner);
-        juce::ColourGradient botSh(juce::Colours::black.withAlpha(0.0f),  top.getX(),
-                                   top.getBottom() - top.getHeight() * 0.5f,
-                                   juce::Colours::black.withAlpha(0.45f), top.getX(), top.getBottom(), false);
-        g.setGradientFill(botSh);
-        g.fillRoundedRectangle(top, corner);
-        g.setColour(juce::Colours::black.withAlpha(0.55f));                       // shadowed top-left recess wall
+        g.setColour(juce::Colours::black.withAlpha(ia));
         g.drawRoundedRectangle(top.translated(-0.4f, -0.4f), corner, 1.0f);
-        g.setColour(juce::Colours::black.withAlpha(0.45f));                       // shadowed bottom edge
-        g.drawRoundedRectangle(top.translated(0.0f, 0.5f), corner, 1.0f);
     }
     else
     {

@@ -676,7 +676,7 @@ void MaybeDuckAudioProcessorEditor::renderBackground()
     fullWidthRack(rackBoundsDyn);
     // Crossover is a rack too, but brightened (esp. in dark theme) so its face reads
     // as bright as the bare-chassis Modes group rather than a dark recessed rack.
-    fullWidthRack(rackBoundsXover, mdLookAndFeel.isDarkMode() ? 0.55f : 0.12f);
+    fullWidthRack(rackBoundsXover, mdLookAndFeel.isDarkMode() ? 0.38f : 0.30f);
 
     // Pultec EQ is its own rack-unit module too — drawn a bit brighter than the
     // dynamics rack. The "LOW/HIGH FREQUENCY" sub-headers and the wordmark are TEXT,
@@ -815,7 +815,7 @@ void MaybeDuckAudioProcessorEditor::resized()
     constexpr int modeBtnW       = 112; // mode-select button width
     constexpr int convBtnW       = 120; // "FFT Conv" toggle button width
     constexpr int convSizeW      = 84;  // buffer-size button width (wider so 1024/2048 aren't cramped)
-    constexpr int convRightInset = 2;   // right edge lines up with the highest crossover knob's right edge
+    constexpr int convRightInset = 0;   // right edge lines up with the highest crossover knob's right edge
     constexpr int modeGroupH     = kGroupTitleH + modeTopPad + modeBtnH + modeBotPad;
     auto modeArea = area.removeFromTop(modeGroupH);
     modeGroup.setBounds(modeArea);
@@ -876,7 +876,7 @@ void MaybeDuckAudioProcessorEditor::resized()
 
     auto toggles = dynamicsInner.removeFromTop(dynamicsToggleH);              // <- dynamicsToggleH (row slot)
     constexpr int toggleBtnH = 34;                                           // <- toggle button height (smaller caps)
-    toggles.removeFromTop(juce::jmax(0, dynamicsToggleH - toggleBtnH));      // spare slot height pushes buttons DOWN (needs slot >= toggleBtnH)
+    toggles.removeFromTop(juce::jmax(0, (dynamicsToggleH - toggleBtnH) / 2));  // centre the buttons in the slot (lifted off the bottom edge)
     toggles = toggles.removeFromTop(toggleBtnH);                             // lock the row to the button height
     {
         // Each toggle spans exactly TWO knob columns, so the button edges line up with
