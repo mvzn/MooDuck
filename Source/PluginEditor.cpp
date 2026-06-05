@@ -25,7 +25,7 @@ namespace {
     // margins; keep kWindowH comfortably above that so nothing crowds the bottom.
     // To change the overall size, retune the section heights too.
     constexpr int kWindowW       = 820;
-    constexpr int kWindowH       = 855;   // wordmark band + dyn/xover/EQ/sat racks (EQ bottom row dropped)
+    constexpr int kWindowH       = 847;   // wordmark band + dyn/xover/EQ/sat racks (EQ bottom row dropped)
     constexpr int kOuterMargin   = 22;
     constexpr int kGroupGap      = 4;    // breathing room between sections (tight -> groups sit up near the wordmark)
     constexpr int kGroupTitleH   = 22;
@@ -802,7 +802,7 @@ void MaybeDuckAudioProcessorEditor::resized()
     // Engraved "MaybeDuck" wordmark. The band tightly frames the caps (the empty
     // ascent/descent of the font is clipped), so there's no descent gap left under
     // the text before the Modes group. No extra gap below.
-    topWordmarkBounds = area.removeFromTop(10);      // ~cap height: frames the caps, clips empty ascent/descent
+    topWordmarkBounds = area.removeFromTop(6);      // ~cap height: frames the caps, clips empty ascent/descent
     wordmarkHotspot.setBounds(topWordmarkBounds);    // tooltip + triple-click theme toggle
     area.removeFromTop(1);                           // tiny gap so the caps don't touch the Modes title
 
@@ -950,7 +950,7 @@ void MaybeDuckAudioProcessorEditor::resized()
     constexpr int pultecHdrH    = 14;  // engraved "LOW/HIGH FREQUENCY" sub-header row
     constexpr int pultecKnobH   = 96;  // per-knob block height (caption + knob)
     constexpr int pultecStagger = 76;  // bottom row drops so its CAPTIONS line up with the top knobs' value boxes
-    constexpr int pultecGroupH  = kGroupTitleH + pultecHdrH + pultecKnobH + pultecStagger + 14;
+    constexpr int pultecGroupH  = kGroupTitleH + pultecHdrH + pultecKnobH + pultecStagger + 6;  // bottom pad matches the other racks
     auto pultecArea = area.removeFromTop(pultecGroupH);
     pultecGroup.setBounds(pultecArea);
     rackBoundsEq = pultecArea;
