@@ -555,6 +555,17 @@ bool MaybeDuckAudioProcessor::isBusesLayoutSupported(const BusesLayout &layouts)
         return false;
 #endif
 
+    // Sidechain bus (input bus 1): must be disabled, mono, or stereo.
+    // Without this check the host can negotiate e.g. quad (4ch) for the sidechain.
+    if (layouts.inputBuses.size() > 1)
+    {
+        const auto& sc = layouts.inputBuses[1];
+        if (sc != juce::AudioChannelSet::disabled()
+         && sc != juce::AudioChannelSet::mono()
+         && sc != juce::AudioChannelSet::stereo())
+            return false;
+    }
+
     return true;
 #endif
 }
