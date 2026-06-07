@@ -51,9 +51,10 @@ MaybeDuckAudioProcessor::MaybeDuckAudioProcessor()
     for (int b = 0; b < StereoMultibandCrossover::numBands; ++b)
         pBandState[b] = apvts.getRawParameterValue("bandState" + juce::String(b));
 
-    pSidechainMode = apvts.getRawParameterValue("sidechainMode");
-    pFftConv       = apvts.getRawParameterValue("fftConvolution");
-    pFftConvSize   = apvts.getRawParameterValue("fftConvSize");
+    pSidechainMode  = apvts.getRawParameterValue("sidechainMode");
+    pFftConv        = apvts.getRawParameterValue("fftConvolution");
+    pFftConvSize    = apvts.getRawParameterValue("fftConvSize");
+    pCrossoverClean = apvts.getRawParameterValue("crossoverClean");
 
     pGrOut = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("grOut"));
 
@@ -231,6 +232,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout MaybeDuckAudioProcessor::cre
     // 0 = 512, 1 = 1024, 2 = 2048
     params.push_back(std::make_unique<juce::AudioParameterInt>(
         "fftConvSize", "FFT Conv Size", 0, 2, 1));
+
+    // Crossover reconstruction: false = "coloured" (cascaded LR4, the original),
+    // true = "clean" (allpass-compensated so the bands sum to flat magnitude).
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        "crossoverClean", "Crossover Clean", false));
 
     // Pultec EQP-1A — passive LC filter + tube saturation stage
     // LF section: frequency index (0-4 → 20/30/40/60/100 Hz), boost and atten dB
@@ -463,13 +469,25 @@ void MaybeDuckAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
     for (int i = 0; i < 3; ++i)
     {
         convFftObjs[i] = std::make_unique<juce::dsp::FFT>(kOrders[i]);
-        // normalise=false: a raw Hann window has constant-overlap-add (COLA) = 1.0 at
-        // 50% hop, so the analysis-windowed OLA reconstructs at unity. JUCE's default
-        // normalise=true rescales the window by size/sum (~2x for Hann), which made the
-        // conv path reconstruct +6 dB hot whenever Spectral+FFT-Conv engaged.
+        // Sidechain analysis window: plain Hann (normalise=false). Used only for the
+        // per-bin SC magnitude; reconstruction does not depend on it.
         convWinObjs[i] = std::make_unique<juce::dsp::WindowingFunction<float>>(
             (size_t)kSizes[i], juce::dsp::WindowingFunction<float>::hann, false);
+
+        // Main-audio analysis+synthesis window: periodic SQRT-Hann. Applied on BOTH
+        // sides; √H·√H = periodic Hann, whose 50%-hop COLA = 1, so the windowed OLA
+        // reconstructs at unity while tapering the frame edges (WOLA).
+        convSqrtHann[i].resize((size_t)kSizes[i]);
+        for (int n = 0; n < kSizes[i]; ++n)
+        {
+            const double hann = 0.5 * (1.0 - std::cos(juce::MathConstants<double>::twoPi
+                                                       * (double) n / (double) kSizes[i]));
+            convSqrtHann[i][(size_t) n] = (float) std::sqrt(hann);
+        }
     }
+
+    // Per-bin GR envelope starts at unity (no reduction).
+    std::fill(std::begin(convBinGainEnv), std::end(convBinGainEnv), 1.0f);
 
     // Clear all conv state and prime FIFO with hopSize zeros (= reported latency)
     std::fill(std::begin(convInRingL), std::end(convInRingL), 0.0f);
@@ -488,7 +506,7 @@ void MaybeDuckAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
     convOutReadPos  = 0;
     convOutWritePos = initHop;
     convOutCount    = initHop;
-    prevConvSizeIdx = initSizeIdx;
+    modeFadeActiveSizeIdx = initSizeIdx;
 
     // Spectral SC analysis state
     std::fill(std::begin(scSpectralRing), std::end(scSpectralRing), 0.0f);
@@ -601,10 +619,12 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     // --- Read mode params
     const int  mode       = pSidechainMode ? juce::jlimit(0, 2, (int) pSidechainMode->load()) : 1;
     const bool useConv    = pFftConv && (*pFftConv > 0.5f);
+    const bool cleanXover = pCrossoverClean && (*pCrossoverClean > 0.5f);
     const int  sizeIdx    = pFftConvSize ? juce::jlimit(0, 2, (int) pFftConvSize->load()) : 1;
     static constexpr int kConvSizes[3] = { 512, 1024, 2048 };
-    const int  activeConvFftSize = kConvSizes[sizeIdx];
-    const int  hopSize           = activeConvFftSize / 2;
+    // NOTE: activeConvFftSize / hopSize are derived AFTER the mode-fade resolves the
+    // ACTIVE size below, so a size change processes (and reports latency) on the OLD
+    // size until the crossfade bottom swaps it — see modeFadeActiveSizeIdx.
 
     // --- Bus pointers + sidechain availability (needed up here to derive the
     //     effective mode and the reported latency before the conv/latency logic).
@@ -629,35 +649,24 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     {
         modeFadeActiveEffMode = targetEffMode;
         modeFadeActiveUseConv = useConv;
+        modeFadeActiveSizeIdx = sizeIdx;
     }
+    // An FFT-Conv SIZE change is also a hard discontinuity (different hop + latency),
+    // so route it through the same crossfade as a path change rather than flushing
+    // the rings mid-stream. The actual size swap + ring reset happens at the fade
+    // bottom (while muted), exactly like entering FFT-Conv.
     const bool modeChanged = (targetEffMode != modeFadeActiveEffMode)
-                          || (useConv      != modeFadeActiveUseConv);
+                          || (useConv      != modeFadeActiveUseConv)
+                          || (sizeIdx      != modeFadeActiveSizeIdx);
     if (modeChanged && modeFadeState != 1)
         modeFadeState = 1;                 // (re)start the fade-out toward the new path
 
     // Everything below dispatches/reports on the ACTIVE path (lags the target until the
     // fade bottom), so the actual swap — and its latency change — lands while muted.
-    const int  effMode        = modeFadeActiveEffMode;
-    const bool useConvActive  = modeFadeActiveUseConv;
-
-    // Reset conv state if user changed FFT size
-    if (sizeIdx != prevConvSizeIdx)
-    {
-        std::fill(std::begin(convInRingL), std::end(convInRingL), 0.0f);
-        std::fill(std::begin(convInRingR), std::end(convInRingR), 0.0f);
-        std::fill(std::begin(convScRing),  std::end(convScRing),  0.0f);
-        std::fill(std::begin(convOvlL),    std::end(convOvlL),    0.0f);
-        std::fill(std::begin(convOvlR),    std::end(convOvlR),    0.0f);
-        std::fill(std::begin(convOutFifoL), std::end(convOutFifoL), 0.0f);
-        std::fill(std::begin(convOutFifoR), std::end(convOutFifoR), 0.0f);
-        convInWritePos  = 0;
-        convScWritePos  = 0;
-        convNewCount    = 0;
-        convOutReadPos  = 0;
-        convOutWritePos = hopSize;
-        convOutCount    = hopSize;
-        prevConvSizeIdx = sizeIdx;
-    }
+    const int  effMode           = modeFadeActiveEffMode;
+    const bool useConvActive     = modeFadeActiveUseConv;
+    const int  activeConvFftSize = kConvSizes[modeFadeActiveSizeIdx];
+    const int  hopSize           = activeConvFftSize / 2;
 
     // --- Lookahead: clamp to allocated max, set tap, update latency report
     const double sr = juce::jmax(1.0, getSampleRate());
@@ -829,7 +838,7 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
             sbL[b] = scBandBufL.getWritePointer(b);
             sbR[b] = scBandBufR.getWritePointer(b);
         }
-        crossover.processBlock(mainL, mainR, scLPtr, scRPtr, mbL, mbR, sbL, sbR, numSamples);
+        crossover.processBlock(mainL, mainR, scLPtr, scRPtr, mbL, mbR, sbL, sbR, numSamples, cleanXover);
 
         juce::FloatVectorOperations::fill(outL, 0.0f, numSamples);
         if (outR) juce::FloatVectorOperations::fill(outR, 0.0f, numSamples);
@@ -973,9 +982,10 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
             if (++convNewCount >= hopSize)
             {
                 convNewCount = 0;
-                processConvFrame(activeConvFftSize, sizeIdx,
+                processConvFrame(activeConvFftSize, modeFadeActiveSizeIdx,
                                  dynParams.threshold_dB, dynParams.ratio,
-                                 useSidechain);
+                                 dynParams.attack_ms, dynParams.release_ms,
+                                 dynParams.output_gain_dB, useSidechain);
             }
 
             outL[n] = convOutFifoL[convOutReadPos];
@@ -1003,14 +1013,21 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         if (modeFadeGain <= 0.0f)
         {
             modeFadeGain = 0.0f;
-            const bool wasConv = (modeFadeActiveEffMode == 2 && modeFadeActiveUseConv);
+            const bool wasConv      = (modeFadeActiveEffMode == 2 && modeFadeActiveUseConv);
+            const int  oldSizeIdx   = modeFadeActiveSizeIdx;
             modeFadeActiveEffMode = targetEffMode;
             modeFadeActiveUseConv = useConv;
-            // Entering FFT-conv from a non-conv path: clear stale ring/FIFO/overlap state
-            // so nothing leaks in as we fade up (the fade-in already masks the priming).
-            const bool nowConv = (modeFadeActiveEffMode == 2 && modeFadeActiveUseConv);
-            if (nowConv && ! wasConv)
+            modeFadeActiveSizeIdx = sizeIdx;
+            // Clear + re-prime the conv state when we (a) enter FFT-conv from a non-conv
+            // path, or (b) change FFT size while in conv. Both need fresh rings sized to
+            // the NEW hop; the fade-in masks the priming. Done here at the fade bottom so
+            // the flush + latency change land while the output is muted (no click).
+            const bool nowConv     = (modeFadeActiveEffMode == 2 && modeFadeActiveUseConv);
+            const bool sizeChanged = (modeFadeActiveSizeIdx != oldSizeIdx);
+            if (nowConv && (! wasConv || sizeChanged))
             {
+                const int newFft = kConvSizes[modeFadeActiveSizeIdx];
+                const int newHop = newFft / 2;
                 std::fill(std::begin(convInRingL), std::end(convInRingL), 0.0f);
                 std::fill(std::begin(convInRingR), std::end(convInRingR), 0.0f);
                 std::fill(std::begin(convScRing),  std::end(convScRing),  0.0f);
@@ -1018,13 +1035,14 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                 std::fill(std::begin(convOvlR),    std::end(convOvlR),    0.0f);
                 std::fill(std::begin(convOutFifoL), std::end(convOutFifoL), 0.0f);
                 std::fill(std::begin(convOutFifoR), std::end(convOutFifoR), 0.0f);
+                std::fill(std::begin(convBinGainEnv), std::end(convBinGainEnv), 1.0f);
                 convInWritePos = 0; convScWritePos = 0; convNewCount = 0;
-                convOutReadPos = 0; convOutWritePos = hopSize; convOutCount = hopSize;
+                convOutReadPos = 0; convOutWritePos = newHop; convOutCount = newHop;
                 // Starting convolution from a cleared ring has a startup transient: the
                 // first frame sees half-zero input and the OLA only settles once the ring
                 // is full (~fftSize) and the first clean frame has been emitted (+hopSize).
                 // Stay muted across that whole window, then fade in on steady output.
-                modeFadeHoldSamples = activeConvFftSize + hopSize;
+                modeFadeHoldSamples = newFft + newHop;
             }
             modeFadeState = 2;            // next block: fade the new path in
         }
@@ -1132,79 +1150,99 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
 
 void MaybeDuckAudioProcessor::processConvFrame(int fftSize, int sizeIdx,
                                                 double thresholdDb, double ratio,
-                                                bool useSidechain)
+                                                double attackMs, double releaseMs,
+                                                double outGainDb, bool useSidechain)
 {
     const int hopSize = fftSize / 2;
-    auto& fft = *convFftObjs[sizeIdx];
-    auto& win = *convWinObjs[sizeIdx];
+    const int numBins = fftSize / 2;                   // bins 0..numBins (incl. Nyquist)
+    auto&        fft  = *convFftObjs[sizeIdx];
+    auto&        scWin = *convWinObjs[sizeIdx];         // Hann — sidechain analysis
+    const float* aWin = convSqrtHann[sizeIdx].data();   // sqrt-Hann — main analysis + synthesis
 
     // Assemble frames from ring buffers (oldest → newest)
-    for (int i = 0; i < fftSize; ++i)
-        convWorkL[i] = convInRingL[(convInWritePos + i) % fftSize];
-    std::fill(convWorkL + fftSize, convWorkL + 2 * fftSize, 0.0f);
-
-    for (int i = 0; i < fftSize; ++i)
-        convWorkR[i] = convInRingR[(convInWritePos + i) % fftSize];
-    std::fill(convWorkR + fftSize, convWorkR + 2 * fftSize, 0.0f);
-
-    for (int i = 0; i < fftSize; ++i)
-        convScWork[i] = convScRing[(convScWritePos + i) % fftSize];
+    for (int i = 0; i < fftSize; ++i) convWorkL[i]  = convInRingL[(convInWritePos + i) % fftSize];
+    for (int i = 0; i < fftSize; ++i) convWorkR[i]  = convInRingR[(convInWritePos + i) % fftSize];
+    for (int i = 0; i < fftSize; ++i) convScWork[i] = convScRing [(convScWritePos + i) % fftSize];
+    std::fill(convWorkL  + fftSize, convWorkL  + 2 * fftSize, 0.0f);
+    std::fill(convWorkR  + fftSize, convWorkR  + 2 * fftSize, 0.0f);
     std::fill(convScWork + fftSize, convScWork + 2 * fftSize, 0.0f);
 
-    win.multiplyWithWindowingTable(convWorkL,  static_cast<size_t>(fftSize));
-    win.multiplyWithWindowingTable(convWorkR,  static_cast<size_t>(fftSize));
-    win.multiplyWithWindowingTable(convScWork, static_cast<size_t>(fftSize));
+    // Main = sqrt-Hann (analysis half of the WOLA pair); sidechain = Hann (detect only).
+    for (int i = 0; i < fftSize; ++i) { convWorkL[i] *= aWin[i]; convWorkR[i] *= aWin[i]; }
+    scWin.multiplyWithWindowingTable(convScWork, static_cast<size_t>(fftSize));
 
     fft.performRealOnlyForwardTransform(convWorkL);
     fft.performRealOnlyForwardTransform(convWorkR);
     fft.performRealOnlyForwardTransform(convScWork);
 
     const float invN      = 1.0f / (float) fftSize;
+    // SC magnitude calibration: *2 (≈ 1/Hann coherent gain) so a 0 dBFS tone reads ~1.0,
+    // matching the no-conv spectral path's scaling so the Threshold means the same thing.
+    const float scCal     = 2.0f;
     const float threshLin = juce::Decibels::decibelsToGain(static_cast<float>(thresholdDb));
     const float invRatio  = 1.0f / static_cast<float>(juce::jmax(0.001, ratio));
-    float worstGainDb     = 0.0f;
+    const float outGain   = juce::Decibels::decibelsToGain(static_cast<float>(outGainDb));
 
-    auto binGain = [&](float scMag) -> float
+    // Per-bin gain is smoothed across frames (frame rate = sr/hop) with the attack/release
+    // coefficients, so the spectral duck has real timing AND the mask can't jump per frame
+    // (kills the "birdies"/musical noise of a static mask).
+    const double sr        = std::max(1.0, getSampleRate());
+    const double frameRate = sr / (double) hopSize;
+    auto coeff = [frameRate](double ms) -> float
     {
-        if (!useSidechain) return 1.0f;
-        if (scMag <= threshLin) return 1.0f;
+        const double frames = std::max(1.0e-4, ms * 0.001) * frameRate;   // time constant in frames
+        return (float) std::exp(-1.0 / frames);
+    };
+    const float aCoeff = coeff(attackMs);
+    const float rCoeff = coeff(releaseMs);
+
+    auto targetGain = [&](float scMag) -> float
+    {
+        if (! useSidechain || scMag <= threshLin) return 1.0f;
         const float overDb = juce::Decibels::gainToDecibels(scMag / threshLin);
-        const float gainDb = (invRatio - 1.0f) * overDb;  // negative
-        if (gainDb < worstGainDb) worstGainDb = gainDb;
-        return juce::Decibels::decibelsToGain(gainDb);
+        return juce::Decibels::decibelsToGain((invRatio - 1.0f) * overDb);   // <= 1
     };
 
-    // DC bin (real-only at index 0)
+    float worstGainDb = 0.0f;
+
+    // Per bin: SC magnitude -> target gain -> attack/release smoothing -> apply to L & R.
+    // DC (bin 0) and Nyquist (bin N/2) are real-only; in JUCE's interleaved layout DC sits
+    // at [0] and Nyquist at [fftSize] (NOT [1] — [1] is DC's imaginary part, ~0).
+    for (int k = 0; k <= numBins; ++k)
     {
-        const float scMag = std::abs(convScWork[0]) * invN;
-        const float g = binGain(scMag);
-        convWorkL[0] *= g;
-        convWorkR[0] *= g;
-    }
-    // Nyquist (real-only, packed at index 1)
-    {
-        const float scMag = std::abs(convScWork[1]) * invN;
-        const float g = binGain(scMag);
-        convWorkL[1] *= g;
-        convWorkR[1] *= g;
-    }
-    // Mid bins (Re, Im interleaved)
-    for (int k = 1; k < fftSize / 2; ++k)
-    {
-        const float re = convScWork[2 * k];
-        const float im = convScWork[2 * k + 1];
-        const float scMag = std::sqrt(re * re + im * im) * invN;
-        const float g = binGain(scMag);
-        convWorkL[2 * k    ] *= g;
-        convWorkL[2 * k + 1] *= g;
-        convWorkR[2 * k    ] *= g;
-        convWorkR[2 * k + 1] *= g;
+        int re, im;
+        if      (k == 0)       { re = 0;       im = -1; }   // DC      (real)
+        else if (k == numBins) { re = fftSize; im = -1; }   // Nyquist (real)
+        else                   { re = 2 * k;   im = 2 * k + 1; }
+
+        const float scMag = (im < 0)
+            ? std::abs(convScWork[re]) * invN * scCal
+            : std::sqrt(convScWork[re] * convScWork[re] + convScWork[im] * convScWork[im]) * invN * scCal;
+
+        const float tg  = targetGain(scMag);
+        float&      env = convBinGainEnv[k];
+        const float c   = (tg < env) ? aCoeff : rCoeff;     // gain falling = attack, rising = release
+        env = tg + c * (env - tg);
+
+        convWorkL[re] *= env; if (im >= 0) convWorkL[im] *= env;
+        convWorkR[re] *= env; if (im >= 0) convWorkR[im] *= env;
+
+        const float grDb = juce::Decibels::gainToDecibels(juce::jmax(1.0e-4f, env));
+        if (grDb < worstGainDb) worstGainDb = grDb;
     }
 
     fft.performRealOnlyInverseTransform(convWorkL);
     fft.performRealOnlyInverseTransform(convWorkR);
 
-    // OLA: emit first half + overlap, save second half as next overlap
+    // Synthesis window (sqrt-Hann, the other half of the WOLA pair) + output makeup gain.
+    for (int i = 0; i < fftSize; ++i)
+    {
+        const float w = aWin[i] * outGain;
+        convWorkL[i] *= w;
+        convWorkR[i] *= w;
+    }
+
+    // OLA: emit first half + saved overlap, save second half as next overlap.
     for (int i = 0; i < hopSize; ++i)
     {
         convOutFifoL[convOutWritePos] = convWorkL[i] + convOvlL[i];

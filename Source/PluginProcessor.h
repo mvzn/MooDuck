@@ -95,9 +95,10 @@ public:
     std::atomic<float>* pXover[StereoMultibandCrossover::numCrossoverPoints] = {};
     std::atomic<float>* pBandScale[StereoMultibandCrossover::numBands] = {};
     std::atomic<float>* pBandState[StereoMultibandCrossover::numBands] = {}; // 0 Normal / 1 Solo / 2 Mute
-    std::atomic<float>* pSidechainMode = nullptr;
-    std::atomic<float>* pFftConv       = nullptr;
-    std::atomic<float>* pFftConvSize   = nullptr;
+    std::atomic<float>* pSidechainMode  = nullptr;
+    std::atomic<float>* pFftConv        = nullptr;
+    std::atomic<float>* pFftConvSize    = nullptr;
+    std::atomic<float>* pCrossoverClean = nullptr;
 
     // Read-only output parameter: GR amount in dB, written from audio thread for host
     // automation recording. Not used to drive any DSP.
@@ -175,6 +176,9 @@ private:
     // parameter target until the fade bottom). -1 = uninitialised (adopt target, no fade).
     int   modeFadeActiveEffMode = -1;
     bool  modeFadeActiveUseConv = false;
+    int   modeFadeActiveSizeIdx = 1;    // FFT-conv size currently being processed (lags
+                                        // the param so a size change crossfades, like
+                                        // conv on/off — no flush click + no latency jump)
     float modeFadeGain          = 1.0f; // output gain during a mode crossfade
     int   modeFadeState         = 0;    // 0 = idle, 1 = fading out, 2 = fading in
     float modeFadeInc           = 1.0f; // per-sample fade step (~5 ms)
@@ -198,7 +202,12 @@ private:
     // FFT Conv (overlap-add STFT, user-selectable: 512 / 1024 / 2048)
     static constexpr int kMaxConvFftSize = 2048;
     std::unique_ptr<juce::dsp::FFT>                      convFftObjs[3]; // orders 9,10,11
-    std::unique_ptr<juce::dsp::WindowingFunction<float>> convWinObjs[3]; // sizes 512,1024,2048
+    std::unique_ptr<juce::dsp::WindowingFunction<float>> convWinObjs[3]; // sidechain analysis (Hann)
+    // Main-audio analysis+synthesis window: periodic SQRT-Hann. Applied on BOTH the
+    // analysis (pre-FFT) and synthesis (post-IFFT) sides; √H·√H = Hann, whose 50%-hop
+    // COLA = 1, so reconstruction stays unity AND frame edges are tapered (WOLA) to
+    // suppress the block-edge discontinuities a per-bin gain mask would otherwise make.
+    std::vector<float> convSqrtHann[3];
 
     float convInRingL [kMaxConvFftSize]     = {};
     float convInRingR [kMaxConvFftSize]     = {};
@@ -221,13 +230,18 @@ private:
     float convWorkR [kMaxConvFftSize * 2]  = {};
     float convScWork[kMaxConvFftSize * 2]  = {};
 
-    int   prevConvSizeIdx     = 1; // 0=512, 1=1024, 2=2048
+    // Per-bin gain-reduction envelope (linear, mono SC). Smoothed across frames with
+    // the attack/release coefficients so the spectral duck has real timing and the
+    // per-frame gain can't jump (the "birdies"/musical-noise fix). Index 0..N/2.
+    float convBinGainEnv[kMaxConvFftSize / 2 + 1];
+
     int   prevLatencyReported = 0;
     int   eqTriodeLatency     = 0; // constant Pultec EQ + triode oversampler delay (host-rate samples), set in prepareToPlay
     float convFrameGrDb       = 0.0f; // worst-case dB reduction from last conv frame
 
     void processConvFrame (int fftSize, int sizeIdx,
                            double thresholdDb, double ratio,
+                           double attackMs, double releaseMs, double outGainDb,
                            bool useSidechain);
 
     struct BandControlValues

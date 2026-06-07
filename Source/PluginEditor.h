@@ -113,11 +113,22 @@ private:
     juce::Slider xoverSliders[4];
     juce::Label  xoverLabels[4];
     std::unique_ptr<SliderAttachment> xoverAttachments[4];
+    // Soft band-switch-style toggle after the "Crossover" title, extra-flat relief:
+    // COLOURED (green backlight) <-> CLEAN (white backlight). Bound to the crossoverClean
+    // bool param; backlight + label track the state in timerCallback.
+    juce::TextButton crossoverCleanButton;
+    std::unique_ptr<ButtonAttachment> crossoverCleanAttachment;
+    int prevCrossoverCleanState = -1;   // -1 forces the first timer sync
     // Engraved band ruler under the crossover knobs (geometry set in resized(),
     // drawn in paint()). xoverBandDivX = x of each crossover boundary (knob centre).
     juce::Rectangle<int> xoverBandStrip;   // row 2: band-switch row + boundary ticks
     juce::Rectangle<int> xoverKnobRow;     // row 1: knob row (big filter curves drawn in its gaps)
     int                  xoverBandDivX[4] {};
+    // Editor-x anchors for the OUTER filter-curve engravings (set in resized()): the LOW
+    // curve's gap starts here, the HIGH curve's gap ends here — aligned to the Dynamics
+    // sidechain button's left edge and the meter's right edge respectively.
+    int                  xoverCurveLeftX  = 0;
+    int                  xoverCurveRightX = 0;
 
     // Per-band solo/mute switches (soft backlit momentary rectangles) sitting in
     // the ruler segments. Single click cycles Normal->Solo->Mute; backlight colour

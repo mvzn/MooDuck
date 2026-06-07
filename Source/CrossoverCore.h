@@ -359,11 +359,19 @@ public:
     {
         for (auto& xover : crossovers)
             xover.prepare(sampleRate);
+
+        // Clean-mode reconstruction allpasses (see processCleanBlend). Only the
+        // [b][j] with j > b are ever used; the rest are inert.
+        forEachCompStage([sampleRate](LR4CrossoverStage& s) { s.prepare(sampleRate); });
+
+        // 20 ms click-free morph between coloured and clean reconstruction.
+        cleanInc = static_cast<float>(1.0 / juce::jmax(1.0, 0.020 * sampleRate));
     }
 
     void reset()
     {
         for (auto& xover : crossovers) xover.reset();
+        forEachCompStage([](LR4CrossoverStage& s) { s.reset(); });
     }
 
     // Applies to all four internal crossovers. Call from audio thread.
@@ -371,6 +379,14 @@ public:
     {
         for (auto& xover : crossovers)
             xover.setCrossoverFrequency(index, fc);
+
+        // Mirror onto the clean-mode compensators: crossover point `index` is an
+        // allpass on every band strictly below it (b < index).
+        for (int b = 0; b < index; ++b)
+        {
+            compL[b][index].setCrossoverFrequency(fc);
+            compR[b][index].setCrossoverFrequency(fc);
+        }
     }
 
     // Sets frequency with no smoothing ramp — use in prepareToPlay only.
@@ -378,23 +394,114 @@ public:
     {
         for (auto& xover : crossovers)
             xover.setCrossoverFrequencyImmediate(index, fc);
+
+        for (int b = 0; b < index; ++b)
+        {
+            compL[b][index].setCrossoverFrequencyImmediate(fc);
+            compR[b][index].setCrossoverFrequencyImmediate(fc);
+        }
     }
 
     // All pointer arrays must be pre-allocated to at least numSamples floats each.
+    // clean = true engages the allpass-compensated reconstruction so the main
+    // bands sum to flat magnitude (see applyCleanCompensation). The sidechain
+    // bands are never compensated (detection is magnitude-only).
     void processBlock(
         const float* mainL, const float* mainR,
         const float* scL,   const float* scR,
         float* mainBandL[numBands], float* mainBandR[numBands],
         float* scBandL[numBands],   float* scBandR[numBands],
-        int numSamples)
+        int numSamples, bool clean = false)
     {
         crossovers[0].processBlock(mainL, mainBandL, numSamples);
         crossovers[1].processBlock(mainR, mainBandR, numSamples);
         crossovers[2].processBlock(scL,   scBandL,   numSamples);
         crossovers[3].processBlock(scR,   scBandR,   numSamples);
+
+        cleanTarget = clean ? 1.0f : 0.0f;
+
+        // Keep the compensation fc smoothers tracking even while coloured so
+        // enabling clean is immediately accurate (no fc-convergence lag on toggle).
+        forEachCompStage([numSamples](LR4CrossoverStage& s) { s.advanceSmootherBlock(numSamples); });
+
+        // Skip entirely only when fully settled on coloured, so the default path
+        // costs exactly what it did before this feature existed.
+        if (cleanMix != 0.0f || cleanTarget != 0.0f)
+            processCleanBlend(mainBandL, mainBandR, numSamples);
     }
 
 private:
+    // Click-free morph between the "coloured" (uncompensated) bands and the "clean"
+    // (allpass-compensated) reconstruction.
+    //
+    // Why compensation: the cascaded split leaves each lower band with LESS
+    // accumulated allpass phase than the bands below it, so the naive sum is not
+    // flat (the "coloured" ripple). Realign by passing band b through the LR4
+    // allpass of every crossover point above it (j > b): an LR4 stage's (lp + hp)
+    // output IS that 2nd-order allpass. The result: sum of bands =
+    // AP0·AP1·AP2·AP3(x) — pure allpass, flat magnitude.
+    //
+    // Why no click: the compensating allpasses run every sample while active (state
+    // stays warm and continuous), and the coloured→clean blend is ramped (cleanMix)
+    // over 20 ms, so toggling never steps the output. Bands 3/4 need no
+    // compensation (already maximally shifted), so coloured == clean there.
+    void processCleanBlend(float* bandL[numBands], float* bandR[numBands], int numSamples)
+    {
+        for (int b = 0; b < numBands; ++b)
+        {
+            const int jLo = b + 1;
+            if (jLo >= numCrossoverPoints)
+                continue;   // top bands: no allpass to apply, blend is a no-op
+
+            float* bl  = bandL[b];
+            float* br  = bandR[b];
+            float  mix = cleanMix;
+            for (int n = 0; n < numSamples; ++n)
+            {
+                double yl = static_cast<double>(bl[n]);   // coloured (cascade input)
+                double yr = static_cast<double>(br[n]);
+                for (int j = jLo; j < numCrossoverPoints; ++j)
+                {
+                    const auto al = compL[b][j].processSample(yl); yl = al.first + al.second;
+                    const auto ar = compR[b][j].processSample(yr); yr = ar.first + ar.second;
+                }
+                bl[n] += mix * (static_cast<float>(yl) - bl[n]);   // lerp coloured -> clean
+                br[n] += mix * (static_cast<float>(yr) - br[n]);
+                mix = stepToward(mix, cleanTarget, 1);
+            }
+        }
+        cleanMix = stepToward(cleanMix, cleanTarget, numSamples);   // advance shared mix once
+    }
+
+    // Linear ramp of `v` toward `target` by up to `steps` increments, clamped.
+    float stepToward(float v, float target, int steps) const noexcept
+    {
+        const float d = cleanInc * static_cast<float>(steps);
+        return (v < target) ? juce::jmin(target, v + d)
+                            : juce::jmax(target, v - d);
+    }
+
+    template <typename Fn>
+    void forEachCompStage(Fn&& fn)
+    {
+        for (int b = 0; b < numBands; ++b)
+            for (int j = b + 1; j < numCrossoverPoints; ++j)
+            {
+                fn(compL[b][j]);
+                fn(compR[b][j]);
+            }
+    }
+
     // [0]=mainL, [1]=mainR, [2]=scL, [3]=scR
     MonoMultibandCrossover crossovers[4];
+
+    // Clean-mode per-band phase-compensation allpasses (main L/R only). compX[b][j]
+    // applies the LR4 allpass at crossover point j to band b; only j > b are used.
+    LR4CrossoverStage compL[numBands][numCrossoverPoints];
+    LR4CrossoverStage compR[numBands][numCrossoverPoints];
+
+    // Coloured(0) <-> clean(1) crossfade state (smoothed for click-free toggling).
+    float cleanMix    = 0.0f;
+    float cleanTarget = 0.0f;
+    float cleanInc    = 1.0f;   // per-sample ramp step, set in prepare()
 };

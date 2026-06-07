@@ -303,9 +303,10 @@ bool MaybeDuckLookAndFeel::isSoftSwitch (const juce::Button& b)
 }
 
 MaybeDuckLookAndFeel::CapGeom
-MaybeDuckLookAndFeel::computeCapGeometry (juce::Rectangle<float> bounds, bool pressedLook, bool softProfile) const
+MaybeDuckLookAndFeel::computeCapGeometry (juce::Rectangle<float> bounds, bool pressedLook, bool softProfile,
+                                          bool flatRelief) const
 {
-    const float corner = softProfile ? 2.5f : 3.5f;
+    const float corner = flatRelief ? 0.5f : (softProfile ? 2.5f : 3.5f);   // flat = near-square
     auto socket = bounds.reduced(1.5f);
     const float gap = softProfile ? 2.5f : 4.0f;     // glowing ring between cap silhouette and socket
     auto inner = socket.reduced(gap);
@@ -314,7 +315,9 @@ MaybeDuckLookAndFeel::computeCapGeometry (juce::Rectangle<float> bounds, bool pr
     // FRONT (bottom) wall shows under top-left light — the top face keeps its full
     // width. The top edge is ANCHORED, so pressing only shrinks the wall: the cap
     // flattens in place rather than sinking and leaving a hole at the top.
-    const float maxWall = softProfile ? 2.5f
+    // flatRelief = barely proud of the chassis (~1 px wall) — flatter than the others.
+    const float maxWall = flatRelief  ? 1.0f
+                        : softProfile ? 2.5f
                                       : juce::jlimit(4.0f, 9.0f, inner.getHeight() * 0.18f);
     const float wall    = pressedLook ? (softProfile ? 0.4f : 1.2f) : maxWall;
 
@@ -326,7 +329,8 @@ MaybeDuckLookAndFeel::computeCapGeometry (juce::Rectangle<float> bounds, bool pr
 
 void MaybeDuckLookAndFeel::drawPushButtonBody (juce::Graphics& g, juce::Rectangle<float> bounds,
                                                bool isOn, bool isMouseOver, bool isDown, bool isEnabled,
-                                               juce::Colour litColour, bool softProfile, bool alwaysLit) const
+                                               juce::Colour litColour, bool softProfile, bool alwaysLit,
+                                               bool flatRelief) const
 {
     // A real, extruded brushed-metal cap standing proud of a recessed socket.
     // The front (bottom) wall is visible (top-left light). The cap is raised when
@@ -341,7 +345,7 @@ void MaybeDuckLookAndFeel::drawPushButtonBody (juce::Graphics& g, juce::Rectangl
     // soft toggles (Pultec Bypass/Sat) and hard caps glow only when engaged.
     const bool lit         = isEnabled && (alwaysLit || isOn);
 
-    const auto geo    = computeCapGeometry(bounds, pressedLook, softProfile);
+    const auto geo    = computeCapGeometry(bounds, pressedLook, softProfile, flatRelief);
     const float corner = geo.corner;
     const auto socket = geo.socket;
     const auto base   = geo.base;
@@ -349,17 +353,27 @@ void MaybeDuckLookAndFeel::drawPushButtonBody (juce::Graphics& g, juce::Rectangl
 
     // --- Outer cast shadow on the chassis: the cap throws a soft shadow BELOW it
     // (outside the button), more when raised, less when pressed. This is the main
-    // depth cue; the soft toggles (Bypass/Sat) cast a lighter shadow.
+    // depth cue; the soft toggles (Bypass/Sat) cast a lighter shadow, and a flatRelief
+    // cap (barely proud) throws almost none.
     if (isEnabled)
-        juce::DropShadow(juce::Colours::black.withAlpha(softProfile ? 0.20f : 0.28f),
-                         pressedLook ? 3 : 5, juce::Point<int>(0, pressedLook ? 1 : 3))
+    {
+        const float shadowAlpha = flatRelief ? 0.05f : (softProfile ? 0.20f : 0.28f);
+        const int   shadowRad   = flatRelief ? 1 : (pressedLook ? 3 : 5);
+        const int   shadowOff   = flatRelief ? 1 : (pressedLook ? 1 : 3);
+        juce::DropShadow(juce::Colours::black.withAlpha(shadowAlpha), shadowRad,
+                         juce::Point<int>(0, shadowOff))
             .drawForRectangle(g, socket.toNearestInt());
+    }
 
-    // --- Recessed socket (the dark hole the cap rises out of).
-    g.setColour(pal.buttonSocket.withAlpha(softProfile ? 0.85f : 1.0f));
-    g.fillRoundedRectangle(socket, corner + 2.0f);
-    g.setColour(juce::Colours::black.withAlpha(0.45f));
-    g.drawRoundedRectangle(socket.reduced(0.5f), corner + 2.0f, 1.0f);
+    // --- Recessed socket (the dark hole the cap rises out of). flatRelief skips the
+    // dark outline ring (minimal borders).
+    g.setColour(pal.buttonSocket.withAlpha(flatRelief ? 0.55f : (softProfile ? 0.85f : 1.0f)));
+    g.fillRoundedRectangle(socket, corner + (flatRelief ? 0.5f : 2.0f));
+    if (! flatRelief)
+    {
+        g.setColour(juce::Colours::black.withAlpha(0.45f));
+        g.drawRoundedRectangle(socket.reduced(0.5f), corner + 2.0f, 1.0f);
+    }
 
     // --- Backlight halo in the gap (state colour), blooming onto the chassis.
     if (lit)
@@ -388,8 +402,11 @@ void MaybeDuckLookAndFeel::drawPushButtonBody (juce::Graphics& g, juce::Rectangl
                                   wallBot, base.getX(), base.getBottom(), false); // vertical: darkest at the front (bottom)
         g.setGradientFill(wall);
         g.fillRoundedRectangle(base, corner);
-        g.setColour(juce::Colours::black.withAlpha(0.45f));
-        g.drawRoundedRectangle(base, corner, 0.7f);
+        if (! flatRelief)
+        {
+            g.setColour(juce::Colours::black.withAlpha(0.45f));
+            g.drawRoundedRectangle(base, corner, 0.7f);
+        }
     }
 
     // --- Top face: brushed metal, lighter than the walls; light from top-left.
@@ -430,11 +447,20 @@ void MaybeDuckLookAndFeel::drawPushButtonBody (juce::Graphics& g, juce::Rectangl
     }
     else
     {
-        // Raised cap bevel: highlight top-left, shadow bottom-right (a machined edge).
-        g.setColour(pal.chassisHighlight.brighter(0.4f).withAlpha(isEnabled ? 0.85f : 0.30f));
-        g.drawRoundedRectangle(top.translated(-0.5f, -0.5f), corner, 1.0f);
-        g.setColour(juce::Colours::black.withAlpha(0.40f));
-        g.drawRoundedRectangle(top.translated(0.5f, 0.6f), corner, 1.0f);
+        if (flatRelief)
+        {
+            // Minimal edge: a single faint top-left highlight, NO dark machined edge.
+            g.setColour(pal.chassisHighlight.withAlpha(isEnabled ? 0.28f : 0.10f));
+            g.drawRoundedRectangle(top.translated(-0.3f, -0.3f), corner, 0.6f);
+        }
+        else
+        {
+            // Raised cap bevel: highlight top-left, shadow bottom-right (a machined edge).
+            g.setColour(pal.chassisHighlight.brighter(0.4f).withAlpha(isEnabled ? 0.85f : 0.30f));
+            g.drawRoundedRectangle(top.translated(-0.5f, -0.5f), corner, 1.0f);
+            g.setColour(juce::Colours::black.withAlpha(0.40f));
+            g.drawRoundedRectangle(top.translated(0.5f, 0.6f), corner, 1.0f);
+        }
 
         // Hover: faint brighten on the upper top-face.
         if (isMouseOver && isEnabled && ! isDown)
@@ -448,15 +474,17 @@ void MaybeDuckLookAndFeel::drawPushButtonBody (juce::Graphics& g, juce::Rectangl
 void MaybeDuckLookAndFeel::drawPushButtonLabel (juce::Graphics& g, juce::Rectangle<float> bounds,
                                                 const juce::String& text,
                                                 bool isOn, bool /*isMouseOver*/, bool isDown, bool isEnabled,
-                                                bool softProfile, bool alwaysLit) const
+                                                bool softProfile, bool alwaysLit, bool flatRelief) const
 {
     if (text.isEmpty()) return;
 
     const bool pressedLook = isDown || (isOn && ! alwaysLit) || (! softProfile && ! isEnabled);
-    const auto geo = computeCapGeometry(bounds, pressedLook, softProfile);
+    const auto geo = computeCapGeometry(bounds, pressedLook, softProfile, flatRelief);
 
-    // Legend sits on the raised top face.
-    auto rect = geo.top.reduced(3.0f, 1.5f);
+    // Legend sits on the raised top face. The flat chip is narrow, so eat less
+    // horizontal padding there (more room for "COLOURED") and nudge down to optical centre.
+    auto rect = geo.top.reduced(flatRelief ? 1.5f : 3.0f, 1.5f);
+    if (flatRelief) rect.translate(0.0f, 0.8f);
 
     const float fontSize = juce::jlimit(8.5f, 13.0f, rect.getHeight() * 0.5f);
     juce::Font font(getMediumTypeface());
@@ -495,8 +523,9 @@ void MaybeDuckLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButt
     const bool isOn = b.getToggleState();
     const bool soft = isSoftSwitch(b);
     const bool alwaysLit = b.getProperties().contains("alwaysLit");
-    drawPushButtonBody (g, bounds, isOn, isOver, isDown, b.isEnabled(), litColourFor(b), soft, alwaysLit);
-    drawPushButtonLabel(g, bounds, b.getButtonText(), isOn, isOver, isDown, b.isEnabled(), soft, alwaysLit);
+    const bool flatRelief = b.getProperties().contains("flatRelief");
+    drawPushButtonBody (g, bounds, isOn, isOver, isDown, b.isEnabled(), litColourFor(b), soft, alwaysLit, flatRelief);
+    drawPushButtonLabel(g, bounds, b.getButtonText(), isOn, isOver, isDown, b.isEnabled(), soft, alwaysLit, flatRelief);
 }
 
 void MaybeDuckLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& b,
@@ -505,7 +534,8 @@ void MaybeDuckLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button
 {
     drawPushButtonBody(g, b.getLocalBounds().toFloat(),
                        b.getToggleState(), isOver, isDown, b.isEnabled(),
-                       litColourFor(b), isSoftSwitch(b), b.getProperties().contains("alwaysLit"));
+                       litColourFor(b), isSoftSwitch(b), b.getProperties().contains("alwaysLit"),
+                       b.getProperties().contains("flatRelief"));
 }
 
 void MaybeDuckLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& b,
@@ -513,7 +543,8 @@ void MaybeDuckLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& 
 {
     drawPushButtonLabel(g, b.getLocalBounds().toFloat(),
                         b.getButtonText(), b.getToggleState(), isOver, isDown,
-                        b.isEnabled(), isSoftSwitch(b), b.getProperties().contains("alwaysLit"));
+                        b.isEnabled(), isSoftSwitch(b), b.getProperties().contains("alwaysLit"),
+                        b.getProperties().contains("flatRelief"));
 }
 
 juce::Font MaybeDuckLookAndFeel::getLabelFont (juce::Label& l)
@@ -550,7 +581,7 @@ void MaybeDuckLookAndFeel::drawLabel (juce::Graphics& g, juce::Label& l)
 void MaybeDuckLookAndFeel::drawGroupComponentOutline (juce::Graphics& g, int width, int height,
                                                      const juce::String& text,
                                                      const juce::Justification& /*position*/,
-                                                     juce::GroupComponent& /*group*/)
+                                                     juce::GroupComponent& group)
 {
     // We don't draw the enclosing box at all — just an engraved title in the top-left
     // and a thin recessed horizontal divider line extending across the section width.
@@ -570,9 +601,14 @@ void MaybeDuckLookAndFeel::drawGroupComponentOutline (juce::Graphics& g, int wid
     juce::Rectangle<float> titleArea(padX, topY, titleWidth, titleHeight);
     drawEngravedText(g, upper, titleArea, juce::Justification::centredLeft, font);
 
-    // Divider line — starts after the title, runs to the right edge, with engraved styling.
+    // Divider line — starts after the title, runs to the right edge, with engraved
+    // styling. A group may host an inline widget on its title row (the Crossover
+    // Coloured/Clean toggle) and set "dividerStartX" (group-local) so the rule begins
+    // AFTER the widget rather than underneath it.
     const float lineY      = topY + titleHeight * 0.5f - 0.5f;
-    const float lineStartX = padX + titleWidth + 10.0f;
+    float lineStartX       = padX + titleWidth + 10.0f;
+    if (group.getProperties().contains("dividerStartX"))
+        lineStartX = juce::jmax(lineStartX, (float) (double) group.getProperties()["dividerStartX"]);
     const float lineEndX   = static_cast<float>(width) - padX;
 
     if (lineEndX > lineStartX + 4.0f)
@@ -584,6 +620,15 @@ void MaybeDuckLookAndFeel::drawGroupComponentOutline (juce::Graphics& g, int wid
     }
 
     juce::ignoreUnused(height);
+}
+
+float MaybeDuckLookAndFeel::groupTitleRightEdge (const juce::String& title) const
+{
+    const float padX = 8.0f;
+    juce::Font font(mediumTypeface);
+    font.setHeight(13.5f);
+    font.setExtraKerningFactor(0.10f);
+    return padX + font.getStringWidthFloat(title.toUpperCase()) + 6.0f;
 }
 
 void MaybeDuckLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height,

@@ -44,7 +44,7 @@ juce_add_plugin(MaybeDuck
     NEEDS_MIDI_OUTPUT        FALSE
     IS_MIDI_EFFECT           FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
-    COPY_PLUGIN_AFTER_BUILD  FALSE
+    COPY_PLUGIN_AFTER_BUILD  TRUE
     VST3_CATEGORIES          "Fx" "Dynamics"
     AU_MAIN_TYPE             "kAudioUnitType_Effect"
 )

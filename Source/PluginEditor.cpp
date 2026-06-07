@@ -252,6 +252,28 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
             audioProcessor.apvts, xoverIds[i], xoverSliders[i]);
     }
 
+    // Coloured/Clean reconstruction toggle — soft band-switch style (always backlit;
+    // the BACKLIGHT shows the state) but an EXTRA-FLAT relief ("flatRelief") so it sits
+    // barely proud of the chassis with almost no cast shadow, distinct from the chunkier
+    // switches. Sits right after the engraved "Crossover" title so it reads
+    // "CROSSOVER COLOURED" / "CROSSOVER CLEAN". Coloured = green backlight, Clean = white.
+    {
+        const bool cleanOn = *audioProcessor.apvts.getRawParameterValue("crossoverClean") > 0.5f;
+        crossoverCleanButton.setButtonText(cleanOn ? "Clean" : "Coloured");
+        crossoverCleanButton.setClickingTogglesState(true);
+        crossoverCleanButton.setToggleState(cleanOn, juce::dontSendNotification);
+        crossoverCleanButton.setTooltip("Crossover reconstruction. Coloured (green): the original cascaded LR4 (small ripple at the crossover points). Clean (white): allpass-compensated so the bands sum to flat magnitude. Click-free morph.");
+        crossoverCleanButton.getProperties().set("softSwitch", true);   // low-relief band-switch variant
+        crossoverCleanButton.getProperties().set("alwaysLit", true);    // backlight always on; colour = state
+        crossoverCleanButton.getProperties().set("flatRelief", true);   // sits ~1px proud, minimal shadow
+        crossoverCleanButton.getProperties().set("litColour", static_cast<juce::int64>(
+            static_cast<juce::uint32>((cleanOn ? juce::Colours::white
+                                               : juce::Colour::fromHSV(0.34f, 0.72f, 0.95f, 1.0f)).getARGB())));
+        addAndMakeVisible(crossoverCleanButton);
+        crossoverCleanAttachment = std::make_unique<ButtonAttachment>(
+            audioProcessor.apvts, "crossoverClean", crossoverCleanButton);
+    }
+
     // Band solo/mute switches — soft backlit momentary rectangles in the ruler.
     // Single click cycles Normal -> Solo -> Mute (see cycleBandState); the timer
     // syncs each switch's backlight colour + enabled state from its bandState param.
@@ -752,8 +774,12 @@ void MaybeDuckAudioProcessorEditor::renderBackground()
             // Curves centred in each gap: LP left of knob 1, BP between knobs, HP
             // right of knob 4 — symmetric, MID dead-centre. One uniform size, fit
             // to the smallest gap so LP/HP read the same as BP.
-            const float gapL[5] = { innerL, kc[0] + knobR, kc[1] + knobR, kc[2] + knobR, kc[3] + knobR };
-            const float gapR[5] = { kc[0] - knobR, kc[1] - knobR, kc[2] - knobR, kc[3] - knobR, innerR };
+            // Outer curve gaps start/end at the cross-group anchors (sidechain-button
+            // left, meter right) when set; inner gaps use the knob edges as before.
+            const float curveL = xoverCurveLeftX  > 0 ? (float) xoverCurveLeftX  : innerL;
+            const float curveR = xoverCurveRightX > 0 ? (float) xoverCurveRightX : innerR;
+            const float gapL[5] = { curveL, kc[0] + knobR, kc[1] + knobR, kc[2] + knobR, kc[3] + knobR };
+            const float gapR[5] = { kc[0] - knobR, kc[1] - knobR, kc[2] - knobR, kc[3] - knobR, curveR };
             float minGap = gapR[0] - gapL[0];
             for (int b = 1; b < 5; ++b) minGap = juce::jmin(minGap, gapR[b] - gapL[b]);
             const float curveW = juce::jlimit(28.0f, 56.0f, minGap - 6.0f);
@@ -845,6 +871,12 @@ void MaybeDuckAudioProcessorEditor::resized()
 
     area.removeFromTop(kGroupGap);
 
+    // Cross-group alignment anchors (editor coords), captured during the Dynamics
+    // layout and reused for the Crossover Coloured/Clean toggle + the outer filter-curve
+    // engravings: sidechain-button span = [threshold box left .. ratio box right];
+    // dynMeterR = right edge of the GR meter.
+    int sideBtnL = 0, sideBtnR = 0, dynMeterR = 0;
+
     // --- Dynamics group: 8-knob row + toggles row, GR meter on the right ---
     constexpr int dynamicsKnobsH  = 100;  // knob-row height (knobs are width-limited by the 8-col split, so this just sets the row's vertical air)
     constexpr int dynamicsToggleH = 50;   // toggle-row slot  -> vertical position of the toggle buttons
@@ -860,9 +892,18 @@ void MaybeDuckAudioProcessorEditor::resized()
     // Three-strip meter (IN / SC / GR) lives in the wider slot on the right.
     auto meterArea = dynamicsInner.removeFromRight(60);   // <- 230 = meter width (height spans both rows)
     levelMeter.setBounds(meterArea);
+    dynMeterR = meterArea.getRight();                     // high curve engraving aligns here
 
     auto dynKnobs = dynamicsInner.removeFromTop(dynamicsKnobsH); // <- dynamicsKnobsH (knob-row height)
     const int colW = dynKnobs.getWidth() / 8;                   // 8 columns -> width derived, not fixed
+    // Value-box geometry (matches setTextBoxStyle(...,70,...), centred under each knob
+    // and clamped to the column). Toggle buttons + the crossover toggle align to these.
+    const int dynColX0 = dynKnobs.getX();
+    const int dynBoxW  = juce::jmin(70, colW - 8);
+    auto boxLeft  = [&](int k) { return dynColX0 + colW * k + (colW - dynBoxW) / 2; };
+    auto boxRight = [&](int k) { return boxLeft(k) + dynBoxW; };
+    sideBtnL = boxLeft(0);    // threshold value-box left
+    sideBtnR = boxRight(1);   // ratio value-box right
     auto layoutKnob = [&](juce::Slider& s, juce::Label& l)
     {
         auto col = dynKnobs.removeFromLeft(colW).reduced(4, 0);  // no vertical pad -> caption tight to the top line
@@ -883,20 +924,25 @@ void MaybeDuckAudioProcessorEditor::resized()
     toggles.removeFromTop(juce::jmax(0, (dynamicsToggleH - toggleBtnH) / 2));  // centre the buttons in the slot (lifted off the bottom edge)
     toggles = toggles.removeFromTop(toggleBtnH);                             // lock the row to the button height
     {
-        // Each toggle spans exactly TWO knob columns, so the button edges line up with
-        // the knob columns / value boxes above (4 buttons under the 8 knobs).
+        // Each toggle spans from the LEFT edge of its first knob's value box to the
+        // RIGHT edge of its second knob's value box, so the button edges line up exactly
+        // with the value boxes above: Sidechain = [threshold..ratio], Soft Knee =
+        // [attack..hold], Hard Duck = [release..lookahead], Xtreme = [knee..output].
         juce::Button* toggleBtns[4] = { &sidechainButton, &softKneeButton, &limiterButton, &xtremeLookaheadButton };
         for (int i = 0; i < 4; ++i)
         {
-            const int bx = dynamicsInner.getX() + 2 * i * colW;
-            toggleBtns[i]->setBounds(juce::Rectangle<int>(bx, toggles.getY(), 2 * colW, toggleBtnH).reduced(2, 0));
+            const int l = boxLeft (2 * i);
+            const int r = boxRight(2 * i + 1);
+            toggleBtns[i]->setBounds(l, toggles.getY(), r - l, toggleBtnH);
         }
     }
 
     area.removeFromTop(kGroupGap);
 
-    // --- Crossover group: 4 knobs + engraved 5-band ruler -------------------
-    constexpr int xoverRowH    = 96;  // knob-row height (trimmed from 108 to make room for the band ruler)
+    // --- Crossover group: 4 knobs + engraved 5-band ruler. The Coloured/Clean toggle
+    // sits INLINE on the title row (after "CROSSOVER"), so no dedicated row is reserved
+    // and the rack keeps its original (shorter) height.
+    constexpr int xoverRowH    = 96;  // knob-row height
     constexpr int xoverBandH   = 28;  // band-switch row under the knobs (solo/mute switches)
     constexpr int xoverBandGap = 6;   // gap pushing the band switches down, away from the freq knobs
     constexpr int xoverGroupH  = kGroupTitleH + xoverRowH + xoverBandGap + xoverBandH + 4;
@@ -912,13 +958,24 @@ void MaybeDuckAudioProcessorEditor::resized()
     // rest evenly between, so the whole row (knobs + the filter curves between them)
     // is left-right symmetric with the MID band-pass curve dead centre. Smaller
     // margin = wider spread (the 1/5 even distribution would be margin = 0.2 W).
-    const int xoverCellW = xoverKnobs.getWidth() / 4;  // 4 equal cells spanning the full inner width
-    auto xoverTrack = xoverKnobs;
+    // Position the 4 knobs so ALL FIVE gaps (outer-left, 3 inner, outer-right) are EQUAL
+    // — that's what keeps each engraved filter curve the same distance from its
+    // neighbouring knob(s). Equal gaps also pull the knobs into a tighter central cluster
+    // (~20px closer) than the old 4-cell layout. With knob radius r and inner width W:
+    // spacing S = (W + 2r)/5 and first-centre offset d = (W - 3r)/5 give gap = (W - 8r)/5
+    // on every side. r matches the curve-glyph code (which sizes from the same cellW = W/5).
+    const float innerW  = (float) xoverKnobs.getWidth();
+    const int   cellW   = xoverKnobs.getWidth() / 5;
+    const float rotaryH = (float) xoverKnobs.getHeight() - (float) kKnobLabelH - 20.0f;
+    const float knobR   = juce::jmin((float) cellW - 8.0f, rotaryH) * 0.5f;
+    const float S       = (innerW + 2.0f * knobR) / 5.0f;
+    const float d       = (innerW - 3.0f * knobR) / 5.0f;
     for (int i = 0; i < 4; ++i)
     {
-        auto cellRect = xoverTrack.removeFromLeft(xoverCellW);
-        xoverBandDivX[i] = cellRect.getCentreX();
-        auto col = cellRect.reduced(4, 0);  // no vertical pad -> caption tight to the top line
+        const int cx = xoverKnobs.getX() + juce::roundToInt(d + (float) i * S);
+        xoverBandDivX[i] = cx;
+        auto col = juce::Rectangle<int>(cx - cellW / 2, xoverKnobs.getY(), cellW, xoverKnobs.getHeight())
+                       .reduced(4, 0);  // no vertical pad -> caption tight to the top line
         xoverLabels[i].setBounds(col.removeFromTop(kKnobLabelH));
         xoverSliders[i].setBounds(col);
     }
@@ -949,6 +1006,25 @@ void MaybeDuckAudioProcessorEditor::resized()
             bandSwitches[i].setBounds(seg);
         }
     }
+
+    // Coloured/Clean toggle: INLINE on the title row, right edge aligned to the ratio
+    // value box (= the Dynamics sidechain button's right). Left edge clears the engraved
+    // "CROSSOVER" title; the divider rule restarts after the chip (dividerStartX).
+    {
+        const int titleR = xoverArea.getX() + (int) mdLookAndFeel.groupTitleRightEdge("Crossover") + 1;
+        const int chipR  = sideBtnR;          // ratio value-box right edge
+        const int chipL  = titleR + 6;        // just clear the engraved title; chip runs to chipR
+        const int chipH  = 16;
+        const int chipY  = xoverArea.getY() + 4 + (18 - chipH) / 2;   // centred on the title (topY 4, h 18)
+        crossoverCleanButton.setBounds(chipL, chipY, chipR - chipL, chipH);
+
+        crossoverGroup.getProperties().set("dividerStartX",
+                                           (double) (chipR - xoverArea.getX() + 10));
+    }
+    // Outer filter-curve engravings: LOW curve aligns to the sidechain button's left
+    // edge, HIGH curve to the meter's right edge.
+    xoverCurveLeftX  = sideBtnL;
+    xoverCurveRightX = dynMeterR;
 
     area.removeFromTop(kGroupGap);
 
@@ -1135,6 +1211,25 @@ void MaybeDuckAudioProcessorEditor::timerCallback()
     const bool bandEnabled = (mode == 1) || (mode == 2 && !fftConvOn);
     for (int i = 0; i < 4; ++i) xoverSliders[i].setEnabled(bandEnabled);
     for (int i = 0; i < 5; ++i) bandScaleSliders[i].setEnabled(bandEnabled);
+
+    // Coloured/Clean toggle: only relevant where the crossover runs (same as the band
+    // controls). Backlight = state (Coloured -> green, Clean -> white) and the label
+    // tracks the mode. Only touch/repaint when the state changes.
+    crossoverCleanButton.setEnabled(bandEnabled);
+    {
+        const int clean = crossoverCleanButton.getToggleState() ? 1 : 0;
+        if (clean != prevCrossoverCleanState)
+        {
+            const juce::uint32 lit = clean
+                ? juce::Colours::white.getARGB()
+                : juce::Colour::fromHSV(0.34f, 0.72f, 0.95f, 1.0f).getARGB();
+            crossoverCleanButton.getProperties().set("litColour", static_cast<juce::int64>(
+                static_cast<juce::uint32>(lit)));
+            crossoverCleanButton.setButtonText(clean ? "Clean" : "Coloured");
+            crossoverCleanButton.repaint();
+            prevCrossoverCleanState = clean;
+        }
+    }
 
     // Band solo/mute switches: backlight colour follows the state (silver = normal,
     // blue = solo, red = mute); console-style band output only exists in Multiband.

@@ -140,17 +140,22 @@ public:
                                     const juce::Justification& position,
                                     juce::GroupComponent&) override;
 
+    // Right-edge x of an engraved group title (matches drawGroupComponentOutline), so a
+    // caller can place a widget immediately after the title text (e.g. an inline toggle).
+    float groupTitleRightEdge (const juce::String& title) const;
+
 private:
     // 1176-style hardware push button. `litColour` is the backlight tint when the
     // button is lit; `softProfile` = the low-relief momentary band-switch variant
     // (always backlit in `litColour`) vs the chunky latching cap (lit only when on).
     void drawPushButtonBody  (juce::Graphics&, juce::Rectangle<float> bounds,
                               bool isOn, bool isMouseOver, bool isDown, bool isEnabled,
-                              juce::Colour litColour, bool softProfile, bool alwaysLit) const;
+                              juce::Colour litColour, bool softProfile, bool alwaysLit,
+                              bool flatRelief = false) const;
     void drawPushButtonLabel (juce::Graphics&, juce::Rectangle<float> bounds,
                               const juce::String& text,
                               bool isOn, bool isMouseOver, bool isDown, bool isEnabled,
-                              bool softProfile, bool alwaysLit = false) const;
+                              bool softProfile, bool alwaysLit = false, bool flatRelief = false) const;
 
     // Pull the optional per-button styling a caller may have stashed in the
     // component properties: "softSwitch" (bool) and "litColour" (ARGB uint32).
@@ -162,7 +167,8 @@ private:
     // between base and top (front + right, top-left light). Shared by the body and
     // label draws so the legend always lands on the top face.
     struct CapGeom { juce::Rectangle<float> socket, base, top; float corner; };
-    CapGeom computeCapGeometry (juce::Rectangle<float> bounds, bool pressedLook, bool softProfile) const;
+    CapGeom computeCapGeometry (juce::Rectangle<float> bounds, bool pressedLook, bool softProfile,
+                                bool flatRelief = false) const;
 
 public:
 
