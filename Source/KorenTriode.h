@@ -143,6 +143,25 @@ public:
     int getLatencySamples() const noexcept { return latencySamples; }
 
     // -------------------------------------------------------------------------
+    // Reset ONLY the per-sample processing state (stage memories, NFB, slow
+    // envelopes) to their no-signal rest values, leaving the oversampler and ADAA
+    // LUTs intact. PultecMakeupChain calls this when it RESUMES running the tube
+    // after skipping it (settled fully-dry), so a frozen/stale state can't pop into
+    // the enable crossfade. (The standalone processBlock path keeps the state warm
+    // itself and never needs this.)
+    // -------------------------------------------------------------------------
+    void resetProcessingState() noexcept
+    {
+        for (auto& s : s1PrevIn)   s = 0.0;
+        for (auto& s : s2PrevIn)   s = 0.0;
+        for (auto& s : nfbPrevOut) s = 0.0;
+        for (auto& s : cathodeEnv) s = 0.0;
+        for (auto& s : blockEnv)   s = 0.0;
+        for (auto& s : ironFlux)   s = 0.0;
+        for (auto& s : ironHf)     s = 0.0;
+    }
+
+    // -------------------------------------------------------------------------
     // Process stereo block in-place (standalone path: own oversampler; used by
     // the unit tests and as a mono reference). When disabled, emits a
     // latency-matched dry signal so reported latency is constant.

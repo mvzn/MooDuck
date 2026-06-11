@@ -63,6 +63,7 @@ public:
         // Crossfade mixes settle to the stages' current targets (1 = dry).
         eqMix  = eq.getBypass()      ? 1.0f : 0.0f;
         satMix = triode.getEnabled() ? (1.0f - satMixAmount) : 1.0f;
+        satWasSkipping = false;   // tube state is freshly clean after prepare
 
         // ~10 ms ramp, advanced once per UPSAMPLED sample (4x host rate) so the
         // wall-clock fade matches the per-stage 10 ms fades it replaces.
@@ -108,6 +109,17 @@ public:
         const bool eqSettledDry  = (eqMix  == eqTarget  && eqTarget  == 1.0f);
         const bool satSettledDry = (satMix == satTarget && satTarget == 1.0f);
 
+        // Tube CPU skip: while the saturation is settled FULLY dry (Sat off, or Mix
+        // at 0%) its output is blended entirely away, so the per-sample loop below
+        // skips the whole tube pipeline and just forwards the EQ signal. When we
+        // RESUME running it, re-prime its per-sample state so a frozen/stale memory
+        // can't pop — the enable crossfade then masks the from-rest warmup. (The
+        // EQ/WDF is intentionally NOT skipped this way: its state discontinuity would
+        // ring on un-bypass, and it's needed whenever it isn't fully bypassed.)
+        if (! satSettledDry && satWasSkipping)
+            triode.resetProcessingState();
+        satWasSkipping = satSettledDry;
+
         // Fully bypassed + settled: emit the input delayed by the reported
         // latency (no oversampling). Keeps the reported latency constant.
         if (eqSettledDry && satSettledDry)
@@ -139,12 +151,22 @@ public:
             const double oeL = (1.0 - eqMix) * eL + eqMix * xL;
             const double oeR = (1.0 - eqMix) * eR + eqMix * xR;
 
-            // Tube saturator (+ output trim on the wet path) (+ mix/disable crossfade)
-            const double sL = triode.processOversampledSample (0, oeL) * satTrimGain;
-            const double sR = triode.processOversampledSample (1, oeR) * satTrimGain;
-            satMix = approach (satMix, satTarget);
-            uL[i] = static_cast<float> ((1.0 - satMix) * sL + satMix * oeL);
-            uR[i] = static_cast<float> ((1.0 - satMix) * sR + satMix * oeR);
+            // Tube saturator (+ output trim on the wet path) (+ mix/disable crossfade).
+            // Skipped entirely while settled fully-dry: the output is just the EQ
+            // signal, so running the pipeline would only burn CPU to be blended away.
+            if (satSettledDry)
+            {
+                uL[i] = static_cast<float> (oeL);
+                uR[i] = static_cast<float> (oeR);
+            }
+            else
+            {
+                const double sL = triode.processOversampledSample (0, oeL) * satTrimGain;
+                const double sR = triode.processOversampledSample (1, oeR) * satTrimGain;
+                satMix = approach (satMix, satTarget);
+                uL[i] = static_cast<float> ((1.0 - satMix) * sL + satMix * oeL);
+                uR[i] = static_cast<float> ((1.0 - satMix) * sR + satMix * oeR);
+            }
         }
 
         os.processSamplesDown (block);
@@ -234,6 +256,7 @@ private:
     float eqMix  = 0.0f;
     float satMix = 0.0f;
     float mixInc = 1.0f;
+    bool  satWasSkipping = false;   // tube skipped (settled fully-dry) last block -> re-prime on resume
 
     // P6 controls: parallel dry/wet amount (1 = full wet) + wet-path output trim.
     float  satMixAmount = 1.0f;
