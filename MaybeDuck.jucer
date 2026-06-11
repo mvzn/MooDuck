@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<JUCERPROJECT id="i6ngGc" name="MaybeDuck" projectType="audioplug" useAppConfig="0"
+<JUCERPROJECT id="i6ngGc" name="MaybeDuck" version="1.21" projectType="audioplug" useAppConfig="0"
               addUsingNamespaceToJuceHeader="0" jucerFormatVersion="1" pluginFormats="buildAU,buildVST3">
   <MAINGROUP id="Ma0yGF" name="MaybeDuck">
     <GROUP id="{4AE79E48-790F-936D-A2EA-D9E604833509}" name="Source">

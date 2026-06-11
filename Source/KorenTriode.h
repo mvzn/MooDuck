@@ -573,6 +573,27 @@ private:
         return lut[i0] + frac * (lut[i1] - lut[i0]);
     }
 
+    // Look up the antiderivative F, linearly EXTRAPOLATED beyond the table domain
+    // (slope = the edge curve value f(±edge), supplied via `curve`). A plain clamped
+    // lookup flat-lines F at the edge, which makes the ADAA divided difference below
+    // collapse to ~0 for any over-range excursion — that punched holes in loud peaks
+    // (the "blow-out" past ~+5 dBFS into the stage, esp. driving stage 2 out of range).
+    // Extrapolating keeps the slope = the saturated plateau, so over-range input
+    // saturates cleanly instead of tearing. In-range lookups are unchanged.
+    static double lookupAntideriv(double v,
+                                  const std::array<double, LUT_SIZE>& antideriv,
+                                  const std::array<double, LUT_SIZE>& curve) noexcept
+    {
+        if (v <= LUT_X_MIN) return antideriv[0]            + curve[0]            * (v - LUT_X_MIN);
+        if (v >= LUT_X_MAX) return antideriv[LUT_SIZE - 1] + curve[LUT_SIZE - 1] * (v - LUT_X_MAX);
+        const double dx   = (LUT_X_MAX - LUT_X_MIN) / static_cast<double>(LUT_SIZE - 1);
+        const double idx  = (v - LUT_X_MIN) / dx;
+        const int    i0   = static_cast<int>(std::floor(idx));
+        const int    i1   = std::min(i0 + 1, LUT_SIZE - 1);
+        const double frac = idx - static_cast<double>(i0);
+        return antideriv[i0] + frac * (antideriv[i1] - antideriv[i0]);
+    }
+
     // -------------------------------------------------------------------------
     // First-order ADAA for one static curve, with small-|dx| fallback to direct
     // midpoint evaluation (numerical + LUT-resolution guard).
@@ -584,11 +605,14 @@ private:
         const double dx    = xn - xPrev;
         const double lutDx = (LUT_X_MAX - LUT_X_MIN) / static_cast<double>(LUT_SIZE - 1);
         // Small |dx|: the divided difference is ill-conditioned, so fall back to the
-        // midpoint curve value — taken from the direct-curve LUT, so the hot path
-        // never re-evaluates the tube equations (log/exp/pow). This also matches the
-        // main path's edge clamping (lookupF clamps to [LUT_X_MIN, LUT_X_MAX]).
+        // midpoint curve value from the direct-curve LUT (clamped at the edges, which
+        // is correct — the curve plateaus). Main path: divided difference of the
+        // antiderivative, linearly EXTRAPOLATED past the table edges (slope = edge
+        // curve value) instead of clamped flat. Clamping collapsed this to ~0 for
+        // over-range input (loud-peak holes); extrapolation maps it to the saturated
+        // plateau. Both paths agree at the edge (both -> f(edge)).
         if (std::abs(dx) < std::max(ADAA_NUMERIC_EPS, lutDx))
             return lookupF(0.5 * (xn + xPrev), curve);
-        return (lookupF(xn, antideriv) - lookupF(xPrev, antideriv)) / dx;
+        return (lookupAntideriv(xn, antideriv, curve) - lookupAntideriv(xPrev, antideriv, curve)) / dx;
     }
 };
