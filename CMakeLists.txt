@@ -88,3 +88,45 @@ target_link_libraries(MaybeDuck
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags
 )
+
+# ---------------------------------------------------------------------------
+# Host-level regression tests. A console app that links the plugin's shared code
+# and drives the REAL MaybeDuckAudioProcessor through the host API to assert the
+# latency / PDC contract (which the headless tests/runtests.cpp can't reach,
+# since it deliberately drops juce_audio_processors / the plugin client).
+#   cmake --build build-cmake --target MaybeDuckLatencyTest
+#   ctest --test-dir build-cmake -R latency --output-on-failure
+# Disable with -DMAYBEDUCK_BUILD_TESTS=OFF.
+# ---------------------------------------------------------------------------
+option(MAYBEDUCK_BUILD_TESTS "Build MaybeDuck host-level regression tests" ON)
+if(MAYBEDUCK_BUILD_TESTS)
+    enable_testing()
+
+    juce_add_console_app(MaybeDuckLatencyTest PRODUCT_NAME "MaybeDuckLatencyTest")
+    juce_generate_juce_header(MaybeDuckLatencyTest)
+
+    target_sources(MaybeDuckLatencyTest PRIVATE tests/latency_test.cpp)
+
+    target_include_directories(MaybeDuckLatencyTest PRIVATE Source Source/vendor)
+
+    target_compile_definitions(MaybeDuckLatencyTest PRIVATE
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_VST3_CAN_REPLACE_VST2=0
+        JUCE_STRICT_REFCOUNTEDPOINTER=1)
+
+    # Link the shared-code lib (the real processor + editor objects) and the same JUCE
+    # modules the plugin uses. The module sources compile into this target; the shared-code
+    # archive is pulled on demand only for the plugin-specific objects, so there are no
+    # duplicate JUCE symbols.
+    target_link_libraries(MaybeDuckLatencyTest PRIVATE
+        MaybeDuck
+        MaybeDuckBinaryData
+        juce::juce_audio_utils
+        juce::juce_dsp
+        juce::juce_gui_extra
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags)
+
+    add_test(NAME latency COMMAND MaybeDuckLatencyTest)
+endif()

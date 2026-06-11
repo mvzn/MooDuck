@@ -55,6 +55,7 @@ MaybeDuckAudioProcessor::MaybeDuckAudioProcessor()
     pFftConv        = apvts.getRawParameterValue("fftConvolution");
     pFftConvSize    = apvts.getRawParameterValue("fftConvSize");
     pCrossoverClean = apvts.getRawParameterValue("crossoverClean");
+    pHostBypass     = apvts.getRawParameterValue("bypass");
 
     pGrOut = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("grOut"));
 
@@ -152,13 +153,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout MaybeDuckAudioProcessor::cre
     };
     auto msIntString = [](float v, int) { return juce::String(juce::roundToInt(v)) + " ms"; };
 
-    // Lookahead is stepped: 0 / 3 / 6 / 10 / 16 ms (the normal range).
+    // Lookahead is stepped: 0 / 3 / 6 / 10 / 16 / 32 / 50 ms (the normal range).
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID { "lookahead", 1 }, "Lookahead",
         makeSteppedRange(kLookaheadSteps, kNumLookaheadSteps), 0.0f,
         juce::AudioParameterFloatAttributes().withStringFromValueFunction(msIntString)));
 
-    // Xtreme Lookahead range: 50 ms … 10 s (used when the Xtreme toggle is on).
+    // Xtreme Lookahead range: 100 ms … 10 s (used when the Xtreme toggle is on).
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID { "lookaheadXtreme", 1 }, "Lookahead (Xtreme)",
         makeSteppedRange(kXtremeLookaheadSteps, kNumXtremeLookaheadSteps), 100.0f,
@@ -238,6 +239,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout MaybeDuckAudioProcessor::cre
     params.push_back(std::make_unique<juce::AudioParameterBool>(
         "crossoverClean", "Crossover Clean", false));
 
+    // Whole-plugin HOST bypass. Exposed via getBypassParameter() so the host drives it;
+    // we implement the bypass ourselves in processBlock (latency-aligned dry + crossfade)
+    // to avoid the wrapper's hard wet/dry switch (a click).
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        "bypass", "Bypass", false));
+
     // Pultec EQP-1A — passive LC filter + tube saturation stage
     // LF section: frequency index (0-4 → 20/30/40/60/100 Hz), boost and atten dB
     params.push_back(std::make_unique<juce::AudioParameterInt>(
@@ -304,11 +311,11 @@ int MaybeDuckAudioProcessor::getConvLatencySamples() const noexcept
     {
         const int mode = static_cast<int>(pSidechainMode->load());
         if (mode == 2 && pFftConv->load() > 0.5f)
-        {
-            static constexpr int sizes[] = { 512, 1024, 2048 };
-            const int idx = juce::jlimit(0, 2, static_cast<int>(pFftConvSize->load()));
-            conv = sizes[idx] / 2;
-        }
+            // CONSTANT across all FFT sizes (= the largest size's hop). The smaller sizes
+            // are padded to this same delay (see the FIFO priming), so switching size never
+            // changes the reported latency -> no mid-stream setLatencySamples -> no host
+            // buffer flush / click. Reported == actual, so PDC stays exact.
+            conv = kMaxConvFftSize / 2;
     }
 
     int look = 0;
@@ -361,6 +368,13 @@ double MaybeDuckAudioProcessor::getTailLengthSeconds() const
     return 0.0;
 }
 
+juce::AudioProcessorParameter* MaybeDuckAudioProcessor::getBypassParameter() const
+{
+    // Hand the host our bypass param so it drives it; we implement the (crossfaded,
+    // latency-aligned) bypass in processBlock instead of letting the wrapper hard-switch.
+    return apvts.getParameter("bypass");
+}
+
 int MaybeDuckAudioProcessor::getNumPrograms()
 {
     return 1;
@@ -387,6 +401,12 @@ void MaybeDuckAudioProcessor::changeProgramName(int index, const juce::String &n
 //==============================================================================
 void MaybeDuckAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
+    // Publish SR/block size up front so anything that reads the atomics during prepare
+    // (e.g. the editor calling getConvLatencySamples on the message thread) sees the
+    // current rate rather than the previous/default value.
+    currentSampleRate.store(sampleRate);
+    currentBlockSize.store(samplesPerBlock);
+
     for (int b = 0; b < numBands; ++b)
     {
         bandProcessorsL[b].reset(sampleRate);
@@ -412,9 +432,9 @@ void MaybeDuckAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
     mainBandBufL.clear(); mainBandBufR.clear();
     scBandBufL.clear();   scBandBufR.clear();
 
-    // Lookahead delay line: max 18 ms at current sample rate (slider goes 0-16 ms, +2 ms margin).
-    // Sized for the worst case (the largest Xtreme step) so the wide range can be
-    // selected at runtime without reallocating on the audio thread.
+    // Lookahead delay line: sized for the worst case (the largest Xtreme step, 10 s) so the
+    // full normal range (0-50 ms) AND the wide Xtreme range can be selected at runtime
+    // without reallocating on the audio thread.
     const double maxLookaheadMs = kXtremeLookaheadSteps[kNumXtremeLookaheadSteps - 1]; // 10 s
     const int maxLookahead = static_cast<int>(std::ceil((maxLookaheadMs * 0.001) * sampleRate)) + 1;
     lookaheadDelayL.setMaximumDelayInSamples(maxLookahead);
@@ -426,7 +446,28 @@ void MaybeDuckAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
     lookaheadDelayR.reset();
     lookaheadBufL.setSize(1, samplesPerBlock);
     lookaheadBufR.setSize(1, samplesPerBlock);
-    prevLookaheadSamples = 0;
+
+    // Host-bypass dry path: a delay long enough for the MAX reported latency (eqTriode +
+    // constant conv hop + the host-compensated NORMAL lookahead, up to 50 ms), so the
+    // bypassed dry stays latency-aligned at any sample rate. The fixed 4096-sample ctor
+    // size was too small once lookahead joined the reported latency (50 ms @ 96 kHz =
+    // 4800 smp), which clamped the tap and de-aligned the bypass crossfade — size it from
+    // the rate here instead. Xtreme lookahead is intentionally NOT included (uncompensated),
+    // so the bypass dry aligns to the host-reported latency, not the wet Xtreme delay.
+    const int bypassMaxDelay = static_cast<int>(std::ceil(0.050 * sampleRate))  // max normal lookahead
+                             + kMaxConvFftSize / 2                               // max conv hop
+                             + 2048;                                            // eqTriode + margin
+    juce::dsp::ProcessSpec drySpec { sampleRate, (juce::uint32) samplesPerBlock, 1 };
+    bypassDryDelayL.setMaximumDelayInSamples(bypassMaxDelay);
+    bypassDryDelayR.setMaximumDelayInSamples(bypassMaxDelay);
+    bypassDryDelayL.prepare(drySpec);
+    bypassDryDelayR.prepare(drySpec);
+    bypassDryDelayL.reset();
+    bypassDryDelayR.reset();
+    bypassDryBuf.setSize(2, samplesPerBlock);
+    bypassDryBuf.clear();
+    bypassMix = (pHostBypass && pHostBypass->load() > 0.5f) ? 1.0f : 0.0f;   // adopt current state, no fade
+    bypassInc = 1.0f / juce::jmax(1.0f, static_cast<float>(0.010 * sampleRate)); // ~10 ms crossfade
     // Ramp time long enough to mask big jumps (e.g. moving from 0 to 16 ms) without
     // audible group-delay smear. 100 ms glides ~0.5 ms per 5 ms — well below the
     // perceptual threshold for time-domain warping.
@@ -437,6 +478,19 @@ void MaybeDuckAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
             static_cast<int>(std::round(static_cast<double>(initLookMs) * 0.001 * sampleRate)));
         lookaheadDelaySmoothed.setCurrentAndTargetValue(static_cast<float>(initSamples));
         lookaheadPendingDelay = initSamples;
+    }
+
+    // Host-reported lookahead latency: only the NORMAL range is PDC-compensated. Xtreme is a
+    // deliberately uncompensated creative delay, so it contributes 0 here. Cached once per
+    // prepare (NOT recomputed on the audio thread) so moving the lookahead knob mid-playback
+    // never triggers a setLatencySamples() buffer-flush click — the smoothed delay tap absorbs
+    // the change; the small host-comp drift until the next prepare is inaudible at this scale.
+    {
+        const bool  xtremeAtPrepare = pXtremeLookahead && pXtremeLookahead->load() > 0.5f;
+        const float normalLookMs    = pLookahead ? pLookahead->load() : 0.0f;
+        reportedLookaheadLatency = xtremeAtPrepare ? 0
+            : juce::jlimit(0, maxLookahead,
+                           static_cast<int>(std::round(static_cast<double>(normalLookMs) * 0.001 * sampleRate)));
     }
     // Crossfade params for large lookahead jumps: ~12 ms fade each way; any change
     // bigger than ~60 ms (i.e. anything in the Xtreme range) crossfades instead of
@@ -502,10 +556,12 @@ void MaybeDuckAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
     convNewCount   = 0;
 
     const int initSizeIdx = pFftConvSize ? juce::jlimit(0, 2, (int)pFftConvSize->load()) : 1;
-    const int initHop = kSizes[initSizeIdx] / 2;
+    // Prime the output FIFO to the CONSTANT reported conv latency (= max hop) for every
+    // size, so the actual delay matches what we report regardless of the selected size.
+    const int initPrime = kMaxConvFftSize / 2;
     convOutReadPos  = 0;
-    convOutWritePos = initHop;
-    convOutCount    = initHop;
+    convOutWritePos = initPrime;
+    convOutCount    = initPrime;
     modeFadeActiveSizeIdx = initSizeIdx;
 
     // Spectral SC analysis state
@@ -513,15 +569,20 @@ void MaybeDuckAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
     std::fill(std::begin(spectralMags),   std::end(spectralMags),   0.0f);
     scSpectralHead = 0;
 
-    // Latency: report initial value based on current params.
-    // Constant part = Pultec EQ + triode 4x-oversampler group delay. Both stages
-    // hold a CONSTANT delay regardless of their bypass/enable state (each runs a
-    // latency-matched dry-path delay when off), so this contributes the same
-    // amount in every mode and can be reported once here — no mid-stream
-    // setLatencySamples churn. eqTriodeLatency caches it for the audio thread,
-    // which only re-reports when the (separately variable) FFT-conv hop changes.
+    // Latency: report initial value based on current params. Three components:
+    //  1. Pultec EQ + triode 4x-oversampler group delay (eqTriodeLatency) — constant in
+    //     every mode (both stages run a latency-matched dry delay when off).
+    //  2. NORMAL-range lookahead (reportedLookaheadLatency) — host-compensated; Xtreme is
+    //     intentionally uncompensated, so it is NOT included.
+    //  3. FFT-conv hop — only when Spectral + FFT-Conv is active.
+    // Only (3) can change between transports; (1) and (2) are cached so the audio thread
+    // re-reports nothing on a lookahead knob move. NOTE: getConvLatencySamples() is the UI
+    // readout (real delay, incl. Xtreme) and is deliberately NOT used here — the host report
+    // freezes out the uncompensated Xtreme delay.
     eqTriodeLatency = chain.getLatencySamples();
-    const int initLatency = eqTriodeLatency + getConvLatencySamples();
+    const int convAtPrepare = (pSidechainMode && static_cast<int>(pSidechainMode->load()) == 2
+                               && pFftConv && pFftConv->load() > 0.5f) ? (kMaxConvFftSize / 2) : 0;
+    const int initLatency = eqTriodeLatency + reportedLookaheadLatency + convAtPrepare;
     setLatencySamples(initLatency);
     prevLatencyReported = initLatency;
 
@@ -539,9 +600,6 @@ void MaybeDuckAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
     cpuUsagePercent.store(0.0f);
     processTimeMs.store(0.0f);
     sidechainConnected.store(false);
-
-    currentSampleRate.store(sampleRate);
-    currentBlockSize.store(samplesPerBlock);
 }
 
 MaybeDuckAudioProcessor::BandControlValues
@@ -696,19 +754,19 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
             lookaheadDelaySmoothed.setTargetValue(static_cast<float>(lookaheadSamples)); // small -> glide
         }
     }
-    prevLookaheadSamples = lookaheadSamples;
 
     // Update reported latency only when the FFT-conv hop size changes (mode/size switches
-    // happen between transports). Lookahead changes are NOT reported on the audio thread —
+    // happen between transports). Lookahead changes are NOT re-reported on the audio thread —
     // many hosts treat setLatencySamples() mid-playback as a buffer-flush event and produce
-    // an audible click. The smoothed delay tap above already absorbs the parameter glide;
-    // the small host-comp drift that results from not reporting lookahead changes is
-    // inaudible compared to the click that would otherwise occur on every knob movement.
-    // Total = constant EQ/triode oversampler delay (folded in at prepareToPlay,
-    // never changes mid-stream) + the variable FFT-conv hop. Only the hop part
-    // can change between transports; adding the constant keeps the reported
-    // total correct in every mode combination without extra churn.
-    const int newLatency = eqTriodeLatency + ((effMode == 2 && useConvActive) ? hopSize : 0);
+    // an audible click. The smoothed delay tap above already absorbs the parameter glide; the
+    // small host-comp drift until the next prepare is inaudible compared to that click.
+    // Total = constant EQ/triode oversampler delay + the host-compensated NORMAL lookahead
+    // baseline (both folded in at prepareToPlay, never change mid-stream) + the variable
+    // FFT-conv hop. Only the hop part changes between transports, so adding the two cached
+    // constants keeps the reported total correct in every mode without extra churn. (Xtreme
+    // lookahead is intentionally excluded — it is an uncompensated creative delay.)
+    const int newLatency = eqTriodeLatency + reportedLookaheadLatency
+                         + ((effMode == 2 && useConvActive) ? (kMaxConvFftSize / 2) : 0);
     if (newLatency != prevLatencyReported)
     {
         setLatencySamples(newLatency);
@@ -738,6 +796,12 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     const float* liveMainL = mainInput.getReadPointer(0);
     const float* liveMainR = isStereo ? mainInput.getReadPointer(1) : liveMainL;
 
+    // Snapshot the dry input now, before processing overwrites mainInput in place — the
+    // host-bypass crossfade at the end needs the untouched dry to blend toward.
+    juce::FloatVectorOperations::copy(bypassDryBuf.getWritePointer(0), liveMainL, numSamples);
+    if (isStereo)
+        juce::FloatVectorOperations::copy(bypassDryBuf.getWritePointer(1), liveMainR, numSamples);
+
     // With an external sidechain active the detector reads it LIVE (so it sees
     // ahead of the lookahead-delayed main). With NO external SC driving, it reads
     // the live main — self-detection, i.e. a regular compressor on the main.
@@ -748,7 +812,9 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
 
     // --- Lookahead delay: always run so toggling lookahead is glitch-free.
     // Ramped delay length + fractional-sample interpolation means parameter changes
-    // produce a smooth glide rather than a snap-click.
+    // produce a smooth glide rather than a snap-click. (JUCE's Lagrange3rd line is already
+    // bit-exact at delay 0 — coefficients collapse to c1=1 — so settled-0 lookahead is a
+    // clean passthrough with no special-casing; see tests/latency_test.cpp.)
     float* dL = lookaheadBufL.getWritePointer(0);
     float* dR = lookaheadBufR.getWritePointer(0);
     for (int n = 0; n < numSamples; ++n)
@@ -1026,8 +1092,8 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
             const bool sizeChanged = (modeFadeActiveSizeIdx != oldSizeIdx);
             if (nowConv && (! wasConv || sizeChanged))
             {
-                const int newFft = kConvSizes[modeFadeActiveSizeIdx];
-                const int newHop = newFft / 2;
+                const int newFft   = kConvSizes[modeFadeActiveSizeIdx];
+                const int primeLen = kMaxConvFftSize / 2;   // constant reported conv latency
                 std::fill(std::begin(convInRingL), std::end(convInRingL), 0.0f);
                 std::fill(std::begin(convInRingR), std::end(convInRingR), 0.0f);
                 std::fill(std::begin(convScRing),  std::end(convScRing),  0.0f);
@@ -1037,12 +1103,12 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                 std::fill(std::begin(convOutFifoR), std::end(convOutFifoR), 0.0f);
                 std::fill(std::begin(convBinGainEnv), std::end(convBinGainEnv), 1.0f);
                 convInWritePos = 0; convScWritePos = 0; convNewCount = 0;
-                convOutReadPos = 0; convOutWritePos = newHop; convOutCount = newHop;
+                convOutReadPos = 0; convOutWritePos = primeLen; convOutCount = primeLen;
                 // Starting convolution from a cleared ring has a startup transient: the
                 // first frame sees half-zero input and the OLA only settles once the ring
-                // is full (~fftSize) and the first clean frame has been emitted (+hopSize).
+                // is full (~fftSize) and the primed FIFO (constant latency) has drained.
                 // Stay muted across that whole window, then fade in on steady output.
-                modeFadeHoldSamples = newFft + newHop;
+                modeFadeHoldSamples = newFft + primeLen;
             }
             modeFadeState = 2;            // next block: fade the new path in
         }
@@ -1092,6 +1158,36 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         // EQ + tube saturator run in one shared 4x oversampling domain (single
         // up/down round-trip). Mono fallback passes nullptr for the right channel.
         chain.processBlock (outL, outR, numSamples);
+    }
+
+    // --- Click-free HOST bypass: crossfade the wet output toward a latency-aligned dry.
+    // The dry delay is fed every block (so its history is valid the instant bypass
+    // engages); the blend (bypassMix) ramps over ~10 ms so toggling never steps the
+    // output. tap = reported latency keeps the dry PDC-aligned with the wet.
+    {
+        const float byTarget = (pHostBypass && pHostBypass->load() > 0.5f) ? 1.0f : 0.0f;
+        const float tap      = (float) juce::jlimit(0, bypassDryDelayL.getMaximumDelayInSamples(),
+                                                    prevLatencyReported);
+        const float* dryL = bypassDryBuf.getReadPointer(0);
+        const float* dryR = bypassDryBuf.getReadPointer(isStereo ? 1 : 0);
+        float m = bypassMix;
+        for (int n = 0; n < numSamples; ++n)
+        {
+            bypassDryDelayL.pushSample(0, dryL[n]);
+            const float ddl = bypassDryDelayL.popSample(0, tap);
+            float ddr = ddl;
+            if (outR)
+            {
+                bypassDryDelayR.pushSample(0, dryR[n]);
+                ddr = bypassDryDelayR.popSample(0, tap);
+            }
+
+            m = (byTarget > m) ? juce::jmin(byTarget, m + bypassInc)
+                               : juce::jmax(byTarget, m - bypassInc);
+            outL[n] += m * (ddl - outL[n]);
+            if (outR) outR[n] += m * (ddr - outR[n]);
+        }
+        bypassMix = m;
     }
 
     // Post-EQ/saturation output peak — drives the Sat button's audio-reactive glow.

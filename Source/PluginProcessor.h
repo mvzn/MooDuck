@@ -49,6 +49,7 @@ public:
     bool producesMidi() const override;
     bool isMidiEffect() const override;
     double getTailLengthSeconds() const override;
+    juce::AudioProcessorParameter* getBypassParameter() const override;
 
     //==============================================================================
     int getNumPrograms() override;
@@ -131,7 +132,10 @@ public:
     int getCurrentBlockSize() const noexcept       { return currentBlockSize.load(); }
     bool isSidechainConnected() const noexcept     { return sidechainConnected.load(); }
 
-    // Latency reporting for FFT Conv mode (hopSize = fftSize/2 when active)
+    // Total ACTUAL signal delay for the UI latency readout: FFT-Conv hop (fftSize/2 when
+    // active) + the full lookahead delay (incl. Xtreme). NOTE: this is the real delay the
+    // signal sees, which is NOT the same as the host-reported latency — Xtreme lookahead is
+    // a deliberately uncompensated creative delay, so it shows here but not in setLatencySamples().
     int getConvLatencySamples() const noexcept;
 
 private:
@@ -156,7 +160,17 @@ private:
     juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Lagrange3rd> lookaheadDelayR;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> lookaheadDelaySmoothed;
     juce::AudioBuffer<float> lookaheadBufL, lookaheadBufR;
-    int prevLookaheadSamples = 0;
+
+    // --- Click-free HOST bypass (getBypassParameter): we handle bypass ourselves so we
+    // can crossfade between the processed (wet) output and a latency-aligned dry, instead
+    // of the wrapper's hard switch. The dry is delayed by the reported latency so it stays
+    // PDC-aligned; the blend (bypassMix) ramps over ~10 ms.
+    std::atomic<float>* pHostBypass = nullptr;
+    juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::None> bypassDryDelayL { 4096 };
+    juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::None> bypassDryDelayR { 4096 };
+    juce::AudioBuffer<float> bypassDryBuf;   // holds the dry input before processing overwrites it
+    float bypassMix = 0.0f;                  // 0 = active, 1 = bypassed (smoothed)
+    float bypassInc = 1.0f;                  // per-sample ramp step (set in prepareToPlay)
 
     // Lookahead change handling: SMALL changes glide the delay tap smoothly; LARGE
     // jumps (e.g. the Xtreme range, up to 10 s) would sweep the tap across seconds of
@@ -237,6 +251,7 @@ private:
 
     int   prevLatencyReported = 0;
     int   eqTriodeLatency     = 0; // constant Pultec EQ + triode oversampler delay (host-rate samples), set in prepareToPlay
+    int   reportedLookaheadLatency = 0; // host-compensated lookahead (NORMAL range only; 0 in Xtreme), cached per prepare
     float convFrameGrDb       = 0.0f; // worst-case dB reduction from last conv frame
 
     void processConvFrame (int fftSize, int sizeIdx,

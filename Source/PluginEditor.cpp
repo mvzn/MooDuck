@@ -151,14 +151,14 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
     attackSlider    .setTooltip("How fast the ducking ramps on (ms).");
     holdSlider      .setTooltip("Minimum time the gain reduction is held at its peak before release begins (ms).");
     releaseSlider   .setTooltip("How fast the ducking ramps off after the sidechain falls below threshold (ms).");
-    lookaheadSlider .setTooltip("Delays the main signal so the ducking aligns with the sidechain transient (ms). Adds host latency.");
+    lookaheadSlider .setTooltip("Delays the main signal so the ducking aligns with the sidechain transient (ms). Adds host latency (PDC-compensated in the normal range).");
     kneeSlider      .setTooltip("Width of the soft transition around the threshold (dB).");
     outputSlider    .setTooltip("Make-up gain applied after the dynamics stage (dB).");
 
     sidechainButton .setTooltip("Use the external sidechain bus as the trigger. When off, the compressor self-detects the main input (spectral mode falls back to wideband).");
     softKneeButton  .setTooltip("Smooth the curve around the threshold instead of a hard corner.");
     limiterButton   .setTooltip("Hard Duck: brick-wall ducking (" + juce::String(juce::CharPointer_UTF8("\xE2\x88\x9E")) + ":1). Every dB the sidechain exceeds the threshold removes 1 dB from the main signal. Overrides the Ratio knob, which reads " + juce::String(juce::CharPointer_UTF8("\xE2\x88\x9E")) + ":1 while engaged.");
-    xtremeLookaheadButton.setTooltip("Xtreme Lookahead: switches the Lookahead knob to a wide creative range (50 ms - 10 s) instead of the normal 0-16 ms. Adds large host latency — for offline/mix use, not tracking.");
+    xtremeLookaheadButton.setTooltip("Xtreme Lookahead: switches the Lookahead knob to a wide creative range (100 ms - 10 s) instead of the normal 0-50 ms. This large delay is NOT host-compensated (no PDC) — a deliberate creative effect for offline/mix use, not tracking.");
 
     thresholdAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, "threshold", thresholdSlider);
     ratioAttachment     = std::make_unique<SliderAttachment>(audioProcessor.apvts, "ratio", ratioSlider);
@@ -1078,7 +1078,7 @@ void MaybeDuckAudioProcessorEditor::resized()
     placeKnob(7, 3.0f, yTop);  // HF Atten
     // Atten Sel — align x with the highest crossover band knob.
     {
-        juce::Rectangle<int> col(xoverBandDivX[3] - kw / 2, yTop, kw, pultecKnobH);
+        juce::Rectangle<int> col(xoverBandDivX[3] - kw / 2 + 43.5f, yTop, kw, pultecKnobH);
         col = col.reduced(4);
         pultecLabels[6].setBounds(col.removeFromTop(kKnobLabelH));
         pultecSliders[6].setBounds(col);
