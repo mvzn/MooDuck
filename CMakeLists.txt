@@ -115,12 +115,17 @@ if(MAYBEDUCK_BUILD_TESTS)
         JUCE_VST3_CAN_REPLACE_VST2=0
         JUCE_STRICT_REFCOUNTEDPOINTER=1)
 
-    # Link the shared-code lib (the real processor + editor objects) and the same JUCE
-    # modules the plugin uses. The module sources compile into this target; the shared-code
-    # archive is pulled on demand only for the plugin-specific objects, so there are no
-    # duplicate JUCE symbols.
+    # We need the plugin's compiled objects (the real processor + editor), so we link the
+    # shared-code ARCHIVE BY FILE rather than the MaybeDuck target. Linking the target would
+    # drag in its INTERFACE definitions — including JUCE_STANDALONE_APPLICATION=
+    # JucePlugin_Build_Standalone, which collides with the JUCE_STANDALONE_APPLICATION=1 that
+    # juce_add_console_app sets (both evaluate to 1, but the differing tokens warn as a macro
+    # redefinition). Linking the file gives us the objects without the interface. The JUCE
+    # modules are compiled into THIS target via the juce:: links; the archive's own module
+    # copies are pulled on demand only for the plugin-specific objects (no duplicate symbols).
+    add_dependencies(MaybeDuckLatencyTest MaybeDuck)
     target_link_libraries(MaybeDuckLatencyTest PRIVATE
-        MaybeDuck
+        $<TARGET_FILE:MaybeDuck>
         MaybeDuckBinaryData
         juce::juce_audio_utils
         juce::juce_dsp
