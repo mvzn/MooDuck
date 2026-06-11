@@ -121,6 +121,11 @@ public:
     // -------------------------------------------------------------------------
     void setDrive(float newDrive) noexcept
     {
+        // The ADAA LUTs and stage norms depend ONLY on drive, so skip the (costly)
+        // rebuild when it hasn't moved. PluginProcessor calls this every block;
+        // without the guard both 1024-pt LUTs were rebuilt from the tube equations
+        // (log/exp/pow) every block even at steady drive — pure waste.
+        if (newDrive == drive) return;
         drive = newDrive;
         computeStageNorms();   // stage-1 normalisation tracks drive
         buildLuts();           // both LUTs depend on the saturation pipeline
@@ -203,8 +208,7 @@ public:
         const double xin = x - nfbBeta * nfbPrevOut[c];
 
         // Stage 1 — 12AX7 (asymmetric, even-rich), ADAA-wrapped.
-        const double a = adaaStep(xin, s1PrevIn[c], fLut1,
-                                  [this](double u) noexcept { return stage1F(u); });
+        const double a = adaaStep(xin, s1PrevIn[c], fLut1, fCurve1);
         s1PrevIn[c] = xin;
 
         // P3 — dynamic cathode bias on the 12AU7 stage. Track a slow rectified
@@ -229,8 +233,7 @@ public:
         const double aBlocked = aBiased - kBlockDepth * be;   // accumulated negative grid bias
 
         // Stage 2 — 12AU7 push-pull (odd-symmetric), ADAA-wrapped.
-        const double b = adaaStep(aBlocked, s2PrevIn[c], fLut2,
-                                  [this](double u) noexcept { return stage2F(u); });
+        const double b = adaaStep(aBlocked, s2PrevIn[c], fLut2, fCurve2);
         s2PrevIn[c] = aBlocked;
 
         // P5 — output-transformer iron. Flux proxy = leaky integrator (LF-weighted);
@@ -417,8 +420,13 @@ private:
     std::array<double, 2> ironHf   {};
 
     // ADAA LUTs + per-channel previous-input state, per stage.
+    //  fLut*   : antiderivative F = ∫f (the integral) — drives the main ADAA path.
+    //  fCurve* : the direct curve f itself — used by the small-|dx| fallback so it
+    //            is a table lookup instead of re-evaluating the tube equations.
     std::array<double, LUT_SIZE> fLut1 {};
     std::array<double, LUT_SIZE> fLut2 {};
+    std::array<double, LUT_SIZE> fCurve1 {};
+    std::array<double, LUT_SIZE> fCurve2 {};
     std::array<double, 2>        s1PrevIn   {};
     std::array<double, 2>        s2PrevIn   {};
     std::array<double, 2>        nfbPrevOut {};   // 1-sample-delayed output (feedback)
@@ -506,27 +514,33 @@ private:
     // -------------------------------------------------------------------------
     // Antiderivative LUT for a static curve f: F(x)=∫ f over [LUT_X_MIN, x].
     // -------------------------------------------------------------------------
+    // Build BOTH tables for a static curve in one pass: the antiderivative
+    // F(x)=∫f over [LUT_X_MIN, x] (trapezoidal) AND the direct curve f(x), so the
+    // small-|dx| ADAA fallback can look f up instead of evaluating log/exp/pow.
     template <typename Fn>
-    void buildLut(std::array<double, LUT_SIZE>& lut, Fn&& f) noexcept
+    void buildLut(std::array<double, LUT_SIZE>& antideriv,
+                  std::array<double, LUT_SIZE>& curve, Fn&& f) noexcept
     {
         const double dx = (LUT_X_MAX - LUT_X_MIN) / static_cast<double>(LUT_SIZE - 1);
         double prevF = f(LUT_X_MIN);
-        lut[0] = 0.0;
+        antideriv[0] = 0.0;
+        curve[0]     = prevF;
         double acc = 0.0;
         for (int i = 1; i < LUT_SIZE; ++i)
         {
             const double x = LUT_X_MIN + static_cast<double>(i) * dx;
             const double fx = f(x);
             acc += 0.5 * (prevF + fx) * dx;   // trapezoidal
-            lut[i] = acc;
+            antideriv[i] = acc;
+            curve[i]     = fx;
             prevF  = fx;
         }
     }
 
     void buildLuts() noexcept
     {
-        buildLut(fLut1, [this](double u) noexcept { return stage1F(u); });
-        buildLut(fLut2, [this](double u) noexcept { return stage2F(u); });
+        buildLut(fLut1, fCurve1, [this](double u) noexcept { return stage1F(u); });
+        buildLut(fLut2, fCurve2, [this](double u) noexcept { return stage2F(u); });
     }
 
     static double lookupF(double v, const std::array<double, LUT_SIZE>& lut) noexcept
@@ -544,14 +558,18 @@ private:
     // First-order ADAA for one static curve, with small-|dx| fallback to direct
     // midpoint evaluation (numerical + LUT-resolution guard).
     // -------------------------------------------------------------------------
-    template <typename Fn>
     double adaaStep(double xn, double xPrev,
-                    const std::array<double, LUT_SIZE>& lut, Fn&& f) const noexcept
+                    const std::array<double, LUT_SIZE>& antideriv,
+                    const std::array<double, LUT_SIZE>& curve) const noexcept
     {
         const double dx    = xn - xPrev;
         const double lutDx = (LUT_X_MAX - LUT_X_MIN) / static_cast<double>(LUT_SIZE - 1);
+        // Small |dx|: the divided difference is ill-conditioned, so fall back to the
+        // midpoint curve value — taken from the direct-curve LUT, so the hot path
+        // never re-evaluates the tube equations (log/exp/pow). This also matches the
+        // main path's edge clamping (lookupF clamps to [LUT_X_MIN, LUT_X_MAX]).
         if (std::abs(dx) < std::max(ADAA_NUMERIC_EPS, lutDx))
-            return f(0.5 * (xn + xPrev));
-        return (lookupF(xn, lut) - lookupF(xPrev, lut)) / dx;
+            return lookupF(0.5 * (xn + xPrev), curve);
+        return (lookupF(xn, antideriv) - lookupF(xPrev, antideriv)) / dx;
     }
 };
