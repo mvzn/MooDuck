@@ -1,11 +1,7 @@
 name: Build
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-  workflow_dispatch:
+  workflow_dispatch:   # manual only — does NOT run on push or pull_request
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
