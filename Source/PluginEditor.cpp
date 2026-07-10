@@ -741,9 +741,10 @@ void MooDuckAudioProcessorEditor::renderBackground()
     for (int i = 0; i < 4; ++i)
         mdLookAndFeel.drawScrew(g, screwCentres[i], screwR, kScrewAngles[i]);
 
-    // Small cow-contour mascot tucked left of the top-right screw, engraved in
-    // the same lit-lip + dark-groove style as the wordmark. Side view facing
-    // left; built in a 100x62 design space and scaled down to fit.
+    // Two mascots flank the top screws — the "Moo" and the "Duck" of the
+    // wordmark — engraved in the same lit-lip + dark-groove style. Each is
+    // side view facing left, built in its own design space and scaled down
+    // to fit.
     {
         juce::Path cow;
         cow.startNewSubPath (2.0f, 30.0f);                     // muzzle tip (top)
@@ -774,15 +775,34 @@ void MooDuckAudioProcessorEditor::renderBackground()
         cow.quadraticTo (85.0f, 20.0f, 84.0f, 36.0f);
         cow.quadraticTo (83.0f, 43.0f, 80.0f, 47.0f);          // tuft hint
 
-        // One mascot beside each top screw (screw edges at x±19), both looking
-        // toward the middle: the design-space cow faces left, so the right
-        // corner uses it as-is and the left corner gets a horizontal mirror.
+        // Cow faces left in its design space; mirror it to face right so the
+        // left-hand corner still looks toward the middle.
         juce::Path cowMirrored(cow);
         cowMirrored.applyTransform(juce::AffineTransform::scale(-1.0f, 1.0f));
 
+        juce::Path duck;
+        duck.startNewSubPath (3.0f, 19.0f);                    // bill tip
+        duck.quadraticTo ( 7.0f, 15.0f, 13.0f, 14.0f);         // bill top edge to face
+        duck.quadraticTo (14.0f,  4.0f, 23.0f,  4.0f);         // forehead up over the crown
+        duck.quadraticTo (32.0f,  5.0f, 33.0f, 13.0f);         // crown to back of head
+        duck.quadraticTo (33.0f, 19.0f, 41.0f, 22.0f);         // nape dip into the shoulder
+        duck.quadraticTo (55.0f, 18.0f, 70.0f, 17.0f);         // back
+        duck.quadraticTo (86.0f, 13.0f, 95.0f,  5.0f);         // tail, outer edge up to the tip
+        duck.quadraticTo (90.0f, 15.0f, 85.0f, 23.0f);         // tail, inner edge back down
+        duck.quadraticTo (89.0f, 39.0f, 70.0f, 47.0f);         // rump sweeping into the belly
+        duck.quadraticTo (48.0f, 50.0f, 28.0f, 46.0f);         // belly
+        duck.quadraticTo (13.0f, 43.0f,  9.0f, 33.0f);         // breast
+        duck.quadraticTo ( 7.0f, 26.0f, 12.0f, 21.0f);         // throat up to the chin
+        duck.quadraticTo ( 7.0f, 21.0f,  3.0f, 19.0f);         // bill bottom edge, closes at tip
+        duck.closeSubPath();
+        duck.startNewSubPath (38.0f, 26.0f);                   // folded wing, upper feather line
+        duck.quadraticTo (58.0f, 24.0f, 74.0f, 32.0f);
+        duck.startNewSubPath (44.0f, 34.0f);                   // folded wing, lower feather line
+        duck.quadraticTo (60.0f, 38.0f, 72.0f, 36.0f);
+
         const juce::PathStrokeType stroke(1.1f, juce::PathStrokeType::curved,
                                           juce::PathStrokeType::rounded);
-        auto engraveCow = [this, &g, &stroke](juce::Path& p, juce::Rectangle<float> target)
+        auto engraveMascot = [this, &g, &stroke](juce::Path& p, juce::Rectangle<float> target)
         {
             p.applyTransform(p.getTransformToScaleToFit(target, true));
             g.setColour(mdLookAndFeel.palette().dividerHighlight.withAlpha(0.55f));  // lit lower-right lip
@@ -790,8 +810,8 @@ void MooDuckAudioProcessorEditor::renderBackground()
             g.setColour(mdLookAndFeel.palette().dividerShadow.withAlpha(0.95f));     // dark carved groove
             g.strokePath(p, stroke);
         };
-        engraveCow(cow,         { area.getRight() - 56.0f, 4.0f, 30.0f, 16.0f });
-        engraveCow(cowMirrored, { area.getX()     + 26.0f, 4.0f, 30.0f, 16.0f });
+        engraveMascot(duck,        { area.getRight() - 56.0f, 7.5f, 30.0f, 16.0f });
+        engraveMascot(cowMirrored, { area.getX()     + 26.0f, 4.0f, 30.0f, 16.0f });
     }
 
     // Dynamics section reads as a rack-unit module dropped into the chassis. The
