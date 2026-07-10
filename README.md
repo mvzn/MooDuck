@@ -1,14 +1,14 @@
 # MooDuck
 
-MooDuck is a stereo ducking (sidechain compression) plugin built with [JUCE](https://juce.com), available as VST3, AU, and a standalone app.
+MooDuck is a stereo ducking (sidechain compression) plugin built with [JUCE](https://juce.com), available as VST3 and AU.
 
 ## Features
 
 - Sidechain-driven ducking with an exponential envelope follower (Peak / MS / RMS detection)
 - Compressor/expander curve with soft-knee, plus a Hard Duck (∞:1 brick-wall) mode
 - Wideband, multiband, and spectral sidechain detection modes
-- Host-compensated lookahead (0–50 ms) and an uncompensated Xtreme lookahead (100 ms–10 s) for creative delay effects
-- Post-ducking EQ (low shelf, parametric mid, high shelf)
+- Host-compensated lookahead (0–50 ms) and an uncompensated Xtreme lookahead (100 ms–10 s) for some reason
+- Post-ducking EQ: a Pultec EQP-1A emulation (passive LC filter modeled as a Wave Digital Filter), with an optional tube saturation stage modeling the EQP-1A's makeup amplifier (Norman-Koren tube model, cascaded 12AX7 + 12AU7 stages with global negative feedback)
 - Gain-reduction output parameter (`grOut`) for host automation
 - Light/dark themed UI with IN / SC / GR level metering
 
@@ -16,14 +16,47 @@ MooDuck is a stereo ducking (sidechain compression) plugin built with [JUCE](htt
 
 Requires CMake ≥ 3.22 and a C++17 compiler. JUCE 8.0.6 is fetched automatically via CMake FetchContent — no local JUCE installation needed.
 
+### Linux
+
+Install the usual JUCE build dependencies first:
+
+```bash
+sudo apt-get install libasound2-dev libfreetype-dev libfontconfig1-dev \
+    libgtk-3-dev libwebkit2gtk-4.1-dev libcurl4-openssl-dev \
+    libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev
+```
+
 ```bash
 cmake -B build-cmake
 cmake --build build-cmake --config Release
 ```
 
-The built plugin lands in `build-cmake/MooDuck_artefacts/`.
+### macOS
 
-On Linux you'll need the usual JUCE build dependencies (ALSA, FreeType, fontconfig, GTK3, X11/Xrandr/Xinerama/Xcursor, libcurl, WebKit2GTK).
+Requires the Xcode command line tools (`xcode-select --install`).
+
+```bash
+cmake -B build-cmake -G Xcode
+cmake --build build-cmake --config Release
+```
+
+### Windows
+
+Requires Visual Studio 2022 (or the Build Tools) with the "Desktop development with C++" workload.
+
+```powershell
+cmake -B build-cmake -G "Visual Studio 17 2022"
+cmake --build build-cmake --config Release
+```
+
+The built plugin lands in `build-cmake/MooDuck_artefacts/<Config>/`, and is auto-installed to the OS's plugin folder (`COPY_PLUGIN_AFTER_BUILD`). To reinstall an already-built plugin without recompiling, use the installer scripts in `scripts/`:
+
+```bash
+./scripts/install.sh          # Linux / macOS
+```
+```powershell
+.\scripts\install.ps1          # Windows
+```
 
 ### Tests
 

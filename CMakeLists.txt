@@ -38,7 +38,7 @@ juce_add_plugin(MooDuck
     BUNDLE_ID                "com.mvzn.MooDuck"
     PLUGIN_MANUFACTURER_CODE Manu
     PLUGIN_CODE              I6ng
-    FORMATS                  VST3 AU Standalone
+    FORMATS                  VST3 AU
     IS_SYNTH                 FALSE
     NEEDS_MIDI_INPUT         FALSE
     NEEDS_MIDI_OUTPUT        FALSE
