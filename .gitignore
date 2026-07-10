@@ -1,0 +1,21 @@
+# Build directories
+/build/
+/build-cmake/
+**/*.o
+**/*.a
+**/*.so
+**/*.d
+**/*.vst3/
+
+# Test runner build outputs
+/tests/build/
+/tests/runtests
+/tests/measure_sat
+
+# Runtime theme/settings file (JUCE PropertiesFile)
+MooDuck.settings
+
+# Editor / tooling
+/.vscode/
+/.claude/
+**/.stfolder/

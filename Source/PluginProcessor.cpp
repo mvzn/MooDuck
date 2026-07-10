@@ -1,0 +1,1390 @@
+/*
+  ==============================================================================
+
+    This file contains the basic framework code for a JUCE plugin processor.
+
+  ==============================================================================
+*/
+
+#include "PluginProcessor.h"
+#include "PluginEditor.h"
+
+// The Ratio/Lookahead step tables live in PluginProcessor.h as public static
+// members (single source of truth, shared with the editor's tick drawing).
+
+//==============================================================================
+MooDuckAudioProcessor::MooDuckAudioProcessor()
+#ifndef JucePlugin_PreferredChannelConfigurations
+    : AudioProcessor(BusesProperties()
+#if !JucePlugin_IsMidiEffect
+#if !JucePlugin_IsSynth
+                         .withInput("Input", juce::AudioChannelSet::stereo(), true)
+#endif
+                         .withOutput("Output", juce::AudioChannelSet::stereo(), true)
+                         .withInput("Sidechain", juce::AudioChannelSet::stereo(), false)
+#endif
+                         ),
+      apvts(*this, nullptr, "PARAMETERS", createParameterLayout())
+#else
+    : apvts(*this, nullptr, "PARAMETERS", createParameterLayout())
+#endif
+{
+    pThreshold = apvts.getRawParameterValue("threshold");
+    pRatio     = apvts.getRawParameterValue("ratio");
+    pAttack    = apvts.getRawParameterValue("attack");
+    pRelease   = apvts.getRawParameterValue("release");
+    pHold      = apvts.getRawParameterValue("hold");
+    pLookahead = apvts.getRawParameterValue("lookahead");
+    pXtremeLookahead = apvts.getRawParameterValue("xtremeLookahead");
+    pLookaheadXtreme = apvts.getRawParameterValue("lookaheadXtreme");
+    pKnee      = apvts.getRawParameterValue("knee");
+    pOutput    = apvts.getRawParameterValue("output");
+    pScEnable  = apvts.getRawParameterValue("sidechainEnable");
+    pSoftKnee  = apvts.getRawParameterValue("softKnee");
+    pLimiter   = apvts.getRawParameterValue("limiter");
+    for (int i = 0; i < StereoMultibandCrossover::numCrossoverPoints; ++i)
+        pXover[i] = apvts.getRawParameterValue("xover" + juce::String(i));
+
+    for (int b = 0; b < StereoMultibandCrossover::numBands; ++b)
+        pBandScale[b] = apvts.getRawParameterValue("bandScale" + juce::String(b));
+
+    for (int b = 0; b < StereoMultibandCrossover::numBands; ++b)
+        pBandState[b] = apvts.getRawParameterValue("bandState" + juce::String(b));
+
+    pSidechainMode  = apvts.getRawParameterValue("sidechainMode");
+    pFftConv        = apvts.getRawParameterValue("fftConvolution");
+    pFftConvSize    = apvts.getRawParameterValue("fftConvSize");
+    pCrossoverClean = apvts.getRawParameterValue("crossoverClean");
+    pHostBypass     = apvts.getRawParameterValue("bypass");
+
+    pGrOut = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("grOut"));
+
+    pPultecLfFreq      = apvts.getRawParameterValue("pultecLfFreq");
+    pPultecLfBoost     = apvts.getRawParameterValue("pultecLfBoost");
+    pPultecLfAtten     = apvts.getRawParameterValue("pultecLfAtten");
+    pPultecHfFreq      = apvts.getRawParameterValue("pultecHfFreq");
+    pPultecHfBoost     = apvts.getRawParameterValue("pultecHfBoost");
+    pPultecHfBw        = apvts.getRawParameterValue("pultecHfBw");
+    pPultecHfAttenFreq = apvts.getRawParameterValue("pultecHfAttenFreq");
+    pPultecHfAtten     = apvts.getRawParameterValue("pultecHfAtten");
+    pPultecSatEnable   = apvts.getRawParameterValue("pultecSatEnable");
+    pPultecSatDrive    = apvts.getRawParameterValue("pultecSatDrive");
+    pPultecSatMix      = apvts.getRawParameterValue("pultecSatMix");
+    pPultecSatTrim     = apvts.getRawParameterValue("pultecSatTrim");
+    pPultecBypass      = apvts.getRawParameterValue("pultecBypass");
+}
+
+MooDuckAudioProcessor::~MooDuckAudioProcessor()
+{
+}
+
+juce::AudioProcessorValueTreeState::ParameterLayout MooDuckAudioProcessor::createParameterLayout()
+{
+    std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "threshold", "Threshold", juce::NormalisableRange<float>(-60.0f, 0.0f, 0.1f), -10.0f));
+
+    juce::NormalisableRange<float> ratioRange(
+        1.0f, 60.0f,
+        // from0to1 → normalised [0,1] to step value
+        [](float, float, float v) -> float {
+            int idx = juce::roundToInt(v * static_cast<float>(kNumRatioSteps - 1));
+            return kRatioSteps[juce::jlimit(0, kNumRatioSteps - 1, idx)];
+        },
+        // to0to1 → step value to normalised [0,1]
+        [](float, float, float v) -> float {
+            int best = 0;
+            float bestDist = std::abs(v - kRatioSteps[0]);
+            for (int i = 1; i < kNumRatioSteps; ++i) {
+                float d = std::abs(v - kRatioSteps[i]);
+                if (d < bestDist) { bestDist = d; best = i; }
+            }
+            return static_cast<float>(best) / static_cast<float>(kNumRatioSteps - 1);
+        },
+        // snapToLegal → nearest step value
+        [](float, float, float v) -> float {
+            float best = kRatioSteps[0];
+            float bestDist = std::abs(v - kRatioSteps[0]);
+            for (int i = 1; i < kNumRatioSteps; ++i) {
+                float d = std::abs(v - kRatioSteps[i]);
+                if (d < bestDist) { bestDist = d; best = kRatioSteps[i]; }
+            }
+            return best;
+        });
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "ratio", 1 }, "Ratio", ratioRange, 4.0f,
+        juce::AudioParameterFloatAttributes()
+            .withStringFromValueFunction([](float v, int) {
+                if (std::abs(v - std::round(v)) < 0.01f)
+                    return juce::String((int) std::round(v)) + ":1";
+                return juce::String(v, 1) + ":1";
+            })));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "attack", "Attack", juce::NormalisableRange<float>(0.0f, 5000.0f, 0.1f, 0.5f), 10.0f));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "release", "Release", juce::NormalisableRange<float>(20.0f, 5000.0f, 1.0f, 0.5f), 100.0f));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "hold", "Hold", juce::NormalisableRange<float>(0.0f, 2000.0f, 1.0f, 0.5f), 0.0f));
+
+    // Build a NormalisableRange that snaps to an arbitrary table of step values,
+    // evenly spaced across knob travel (step i sits at normalised i/(n-1)).
+    auto makeSteppedRange = [](const float* steps, int n)
+    {
+        return juce::NormalisableRange<float>(
+            steps[0], steps[n - 1],
+            [steps, n](float, float, float v) {
+                return steps[juce::jlimit(0, n - 1, juce::roundToInt(v * (float)(n - 1)))];
+            },
+            [steps, n](float, float, float v) {
+                int best = 0; float bd = std::abs(v - steps[0]);
+                for (int i = 1; i < n; ++i) { float d = std::abs(v - steps[i]); if (d < bd) { bd = d; best = i; } }
+                return (float) best / (float)(n - 1);
+            },
+            [steps, n](float, float, float v) {
+                float best = steps[0], bd = std::abs(v - steps[0]);
+                for (int i = 1; i < n; ++i) { float d = std::abs(v - steps[i]); if (d < bd) { bd = d; best = steps[i]; } }
+                return best;
+            });
+    };
+    auto msIntString = [](float v, int) { return juce::String(juce::roundToInt(v)) + " ms"; };
+
+    // Lookahead is stepped: 0 / 3 / 6 / 10 / 16 / 32 / 50 ms (the normal range).
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "lookahead", 1 }, "Lookahead",
+        makeSteppedRange(kLookaheadSteps, kNumLookaheadSteps), 0.0f,
+        juce::AudioParameterFloatAttributes().withStringFromValueFunction(msIntString)));
+
+    // Xtreme Lookahead range: 100 ms … 10 s (used when the Xtreme toggle is on).
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID { "lookaheadXtreme", 1 }, "Lookahead (Xtreme)",
+        makeSteppedRange(kXtremeLookaheadSteps, kNumXtremeLookaheadSteps), 100.0f,
+        juce::AudioParameterFloatAttributes().withStringFromValueFunction(msIntString)));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "knee", "Knee", juce::NormalisableRange<float>(0.0f, 24.0f, 0.1f), 6.0f));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "output", "Output", juce::NormalisableRange<float>(-24.0f, 24.0f, 0.1f), 0.0f));
+
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        "sidechainEnable", "Enable Sidechain", false));
+
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        "softKnee", "Soft Knee", true));
+
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        "limiter", "Hard Duck", false));
+
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        "xtremeLookahead", "Xtreme Lookahead", false));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "xover0", "Crossover 1",
+        juce::NormalisableRange<float>(20.0f, 1000.0f, 1.0f, 0.3f), 120.0f));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "xover1", "Crossover 2",
+        juce::NormalisableRange<float>(100.0f, 4000.0f, 1.0f, 0.3f), 400.0f));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "xover2", "Crossover 3",
+        juce::NormalisableRange<float>(500.0f, 12000.0f, 1.0f, 0.3f), 2000.0f));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "xover3", "Crossover 4",
+        juce::NormalisableRange<float>(2000.0f, 20000.0f, 1.0f, 0.3f), 8000.0f));
+
+    // Per-band duck scale: additive dB offset on the computed gain-reduction amount,
+    // floored at 0 dB so a negative offset only undoes existing reduction (no boost).
+    static const char* bandScaleNames[] = { "Band 1 Scale", "Band 2 Scale", "Band 3 Scale", "Band 4 Scale", "Band 5 Scale" };
+    for (int b = 0; b < StereoMultibandCrossover::numBands; ++b)
+    {
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(
+            "bandScale" + juce::String(b),
+            bandScaleNames[b],
+            juce::NormalisableRange<float>(-12.0f, 12.0f, 0.1f),
+            0.0f));
+    }
+
+    // Per-band solo/mute (console-style on the band output, Multiband only).
+    // 0 = Normal, 1 = Solo, 2 = Mute. The editor's band switches cycle these.
+    static const char* bandStateNames[] = { "Band 1 State", "Band 2 State", "Band 3 State", "Band 4 State", "Band 5 State" };
+    for (int b = 0; b < StereoMultibandCrossover::numBands; ++b)
+    {
+        params.push_back(std::make_unique<juce::AudioParameterChoice>(
+            "bandState" + juce::String(b),
+            bandStateNames[b],
+            juce::StringArray { "Normal", "Solo", "Mute" },
+            0));
+    }
+
+    // 0 = Wideband (bypass crossover), 1 = Multiband, 2 = Spectral
+    params.push_back(std::make_unique<juce::AudioParameterInt>(
+        "sidechainMode", "Sidechain Mode", 0, 2, 1));
+
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        "fftConvolution", "FFT Convolution", false));
+
+    // 0 = 512, 1 = 1024, 2 = 2048
+    params.push_back(std::make_unique<juce::AudioParameterInt>(
+        "fftConvSize", "FFT Conv Size", 0, 2, 1));
+
+    // Crossover reconstruction: false = "coloured" (cascaded LR4, the original),
+    // true = "clean" (allpass-compensated so the bands sum to flat magnitude).
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        "crossoverClean", "Crossover Clean", false));
+
+    // Whole-plugin HOST bypass. Exposed via getBypassParameter() so the host drives it;
+    // we implement the bypass ourselves in processBlock (latency-aligned dry + crossfade)
+    // to avoid the wrapper's hard wet/dry switch (a click).
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        "bypass", "Bypass", false));
+
+    // Pultec EQP-1A — passive LC filter + tube saturation stage
+    // LF section: frequency index (0-4 → 20/30/40/60/100 Hz), boost and atten dB
+    params.push_back(std::make_unique<juce::AudioParameterInt>(
+        "pultecLfFreq",  "Pultec LF Freq",  0, 4, 4));   // default 100 Hz
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "pultecLfBoost", "Pultec LF Boost",
+        juce::NormalisableRange<float>(0.0f, 16.0f, 0.1f), 0.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "pultecLfAtten", "Pultec LF Atten",
+        juce::NormalisableRange<float>(0.0f, 16.0f, 0.1f), 0.0f));
+    // HF boost section: frequency index (0-6 → 3/4/5/8/10/12/16 kHz), boost dB, bandwidth
+    params.push_back(std::make_unique<juce::AudioParameterInt>(
+        "pultecHfFreq",  "Pultec HF Freq",  0, 6, 3));   // default 8 kHz
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "pultecHfBoost", "Pultec HF Boost",
+        juce::NormalisableRange<float>(0.0f, 16.0f, 0.1f), 0.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "pultecHfBw",    "Pultec HF Bandwidth",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.3f));  // 0=narrow, 1=wide
+    // HF cut section: atten freq index (0-2 → 5/10/20 kHz), atten dB
+    // Default: 2 (20 kHz). The CHiCut capacitor stays wired in the WDF passive
+    // network even at 0 dB atten, so a low Atten Sel position colours the baseline.
+    // 20 kHz puts the shelf above the audio band → flat init response.
+    params.push_back(std::make_unique<juce::AudioParameterInt>(
+        "pultecHfAttenFreq", "Pultec HF Atten Freq", 0, 2, 2));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "pultecHfAtten", "Pultec HF Atten",
+        juce::NormalisableRange<float>(0.0f, 14.0f, 0.1f), 0.0f));
+    // Tube saturation (two-tube EQP-1A makeup amp, 4× oversampled)
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        "pultecSatEnable", "Pultec Tube Saturation", false));
+    // Drive: scales the 12AX7 grid excursion. 1.0 = authentic EQP-1A operating
+    // point; >1 pushes harder (distortion rises faster than linearly via the NFB).
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "pultecSatDrive", "Pultec Sat Drive",
+        juce::NormalisableRange<float>(0.5f, 4.0f, 0.01f), 1.0f));
+    // Mix: parallel dry/wet for the saturation (100% = full tube, 0% = clean
+    // post-EQ). Blended in the oversampled domain against the time-aligned dry.
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "pultecSatMix", "Pultec Sat Mix",
+        juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 100.0f));
+    // Output trim: loudness-match A/B (applied to the wet/tube path, dB).
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "pultecSatTrim", "Pultec Sat Trim",
+        juce::NormalisableRange<float>(-12.0f, 12.0f, 0.1f), 0.0f));
+    // EQ bypass — when true the Pultec WDF + HF-cut biquad are skipped entirely
+    // (no oversampling overhead, pure passthrough). Saturation toggle is independent.
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        "pultecBypass", "Pultec EQ Bypass", false));
+
+    // Output-only parameter: current gain-reduction amount in dB (positive). Written from
+    // the audio thread once per block so hosts can record it as automation. Reading or
+    // editing it from the host has no effect on the DSP.
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        "grOut", "GR Output (dB)", juce::NormalisableRange<float>(0.0f, 60.0f, 0.01f), 0.0f));
+
+    return {params.begin(), params.end()};
+}
+
+int MooDuckAudioProcessor::getConvLatencySamples() const noexcept
+{
+    int conv = 0;
+    if (pSidechainMode && pFftConv && pFftConvSize)
+    {
+        const int mode = static_cast<int>(pSidechainMode->load());
+        if (mode == 2 && pFftConv->load() > 0.5f)
+            // CONSTANT across all FFT sizes (= the largest size's hop). The smaller sizes
+            // are padded to this same delay (see the FIFO priming), so switching size never
+            // changes the reported latency -> no mid-stream setLatencySamples -> no host
+            // buffer flush / click. Reported == actual, so PDC stays exact.
+            conv = kMaxConvFftSize / 2;
+    }
+
+    int look = 0;
+    if (pLookahead)
+    {
+        const double sr = juce::jmax(1.0, currentSampleRate.load());
+        const bool xtreme = pXtremeLookahead && pXtremeLookahead->load() > 0.5f;
+        const double ms = (xtreme && pLookaheadXtreme) ? static_cast<double>(*pLookaheadXtreme)
+                                                       : static_cast<double>(*pLookahead);
+        look = static_cast<int>(std::round(ms * 0.001 * sr));
+    }
+    return conv + look;
+}
+
+//==============================================================================
+const juce::String MooDuckAudioProcessor::getName() const
+{
+    return "MooDuck";
+}
+
+bool MooDuckAudioProcessor::acceptsMidi() const
+{
+#if JucePlugin_WantsMidiInput
+    return true;
+#else
+    return false;
+#endif
+}
+
+bool MooDuckAudioProcessor::producesMidi() const
+{
+#if JucePlugin_ProducesMidiOutput
+    return true;
+#else
+    return false;
+#endif
+}
+
+bool MooDuckAudioProcessor::isMidiEffect() const
+{
+#if JucePlugin_IsMidiEffect
+    return true;
+#else
+    return false;
+#endif
+}
+
+double MooDuckAudioProcessor::getTailLengthSeconds() const
+{
+    return 0.0;
+}
+
+juce::AudioProcessorParameter* MooDuckAudioProcessor::getBypassParameter() const
+{
+    // Hand the host our bypass param so it drives it; we implement the (crossfaded,
+    // latency-aligned) bypass in processBlock instead of letting the wrapper hard-switch.
+    return apvts.getParameter("bypass");
+}
+
+int MooDuckAudioProcessor::getNumPrograms()
+{
+    return 1;
+}
+
+int MooDuckAudioProcessor::getCurrentProgram()
+{
+    return 0;
+}
+
+void MooDuckAudioProcessor::setCurrentProgram(int index)
+{
+}
+
+const juce::String MooDuckAudioProcessor::getProgramName(int index)
+{
+    return {};
+}
+
+void MooDuckAudioProcessor::changeProgramName(int index, const juce::String &newName)
+{
+}
+
+//==============================================================================
+void MooDuckAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
+{
+    // Publish SR/block size up front so anything that reads the atomics during prepare
+    // (e.g. the editor calling getConvLatencySamples on the message thread) sees the
+    // current rate rather than the previous/default value.
+    currentSampleRate.store(sampleRate);
+    currentBlockSize.store(samplesPerBlock);
+
+    for (int b = 0; b < numBands; ++b)
+    {
+        bandProcessorsL[b].reset(sampleRate);
+        bandProcessorsR[b].reset(sampleRate);
+    }
+
+    widebandProcessorL.reset(sampleRate);
+    widebandProcessorR.reset(sampleRate);
+
+    crossover.prepare(sampleRate);
+
+    for (int i = 0; i < StereoMultibandCrossover::numCrossoverPoints; ++i)
+        crossover.setCrossoverFrequencyImmediate(i, static_cast<double>(*pXover[i]));
+
+    // Main band buffers need numBands channels; mainBandBufL[0] is reused as conv-mode input
+    // temp buffer to avoid in-place aliasing with mainInput.
+    mainBandBufL.setSize(numBands, samplesPerBlock);
+    mainBandBufR.setSize(numBands, samplesPerBlock);
+    scBandBufL.setSize(numBands, samplesPerBlock);
+    scBandBufR.setSize(numBands, samplesPerBlock);
+    // setSize leaves contents undefined; the crossover fully overwrites these
+    // before they are read, but clear so a re-prepare never carries stale audio.
+    mainBandBufL.clear(); mainBandBufR.clear();
+    scBandBufL.clear();   scBandBufR.clear();
+
+    // Lookahead delay line: sized for the worst case (the largest Xtreme step, 10 s) so the
+    // full normal range (0-50 ms) AND the wide Xtreme range can be selected at runtime
+    // without reallocating on the audio thread.
+    const double maxLookaheadMs = kXtremeLookaheadSteps[kNumXtremeLookaheadSteps - 1]; // 10 s
+    const int maxLookahead = static_cast<int>(std::ceil((maxLookaheadMs * 0.001) * sampleRate)) + 1;
+    lookaheadDelayL.setMaximumDelayInSamples(maxLookahead);
+    lookaheadDelayR.setMaximumDelayInSamples(maxLookahead);
+    juce::dsp::ProcessSpec lookSpec { sampleRate, (juce::uint32) samplesPerBlock, 1 };
+    lookaheadDelayL.prepare(lookSpec);
+    lookaheadDelayR.prepare(lookSpec);
+    lookaheadDelayL.reset();
+    lookaheadDelayR.reset();
+    lookaheadBufL.setSize(1, samplesPerBlock);
+    lookaheadBufR.setSize(1, samplesPerBlock);
+
+    // Host-bypass dry path: a delay long enough for the MAX reported latency (eqTriode +
+    // constant conv hop + the host-compensated NORMAL lookahead, up to 50 ms), so the
+    // bypassed dry stays latency-aligned at any sample rate. The fixed 4096-sample ctor
+    // size was too small once lookahead joined the reported latency (50 ms @ 96 kHz =
+    // 4800 smp), which clamped the tap and de-aligned the bypass crossfade — size it from
+    // the rate here instead. Xtreme lookahead is intentionally NOT included (uncompensated),
+    // so the bypass dry aligns to the host-reported latency, not the wet Xtreme delay.
+    const int bypassMaxDelay = static_cast<int>(std::ceil(0.050 * sampleRate))  // max normal lookahead
+                             + kMaxConvFftSize / 2                               // max conv hop
+                             + 2048;                                            // eqTriode + margin
+    juce::dsp::ProcessSpec drySpec { sampleRate, (juce::uint32) samplesPerBlock, 1 };
+    bypassDryDelayL.setMaximumDelayInSamples(bypassMaxDelay);
+    bypassDryDelayR.setMaximumDelayInSamples(bypassMaxDelay);
+    bypassDryDelayL.prepare(drySpec);
+    bypassDryDelayR.prepare(drySpec);
+    bypassDryDelayL.reset();
+    bypassDryDelayR.reset();
+    bypassDryBuf.setSize(2, samplesPerBlock);
+    bypassDryBuf.clear();
+    bypassMix = (pHostBypass && pHostBypass->load() > 0.5f) ? 1.0f : 0.0f;   // adopt current state, no fade
+    bypassInc = 1.0f / juce::jmax(1.0f, static_cast<float>(0.010 * sampleRate)); // ~10 ms crossfade
+    // Ramp time long enough to mask big jumps (e.g. moving from 0 to 16 ms) without
+    // audible group-delay smear. 100 ms glides ~0.5 ms per 5 ms — well below the
+    // perceptual threshold for time-domain warping.
+    lookaheadDelaySmoothed.reset(sampleRate, 0.100);
+    {
+        const float initLookMs = pLookahead ? pLookahead->load() : 0.0f;
+        const int   initSamples = juce::jlimit(0, maxLookahead,
+            static_cast<int>(std::round(static_cast<double>(initLookMs) * 0.001 * sampleRate)));
+        lookaheadDelaySmoothed.setCurrentAndTargetValue(static_cast<float>(initSamples));
+        lookaheadPendingDelay = initSamples;
+    }
+
+    // Host-reported lookahead latency: only the NORMAL range is PDC-compensated. Xtreme is a
+    // deliberately uncompensated creative delay, so it contributes 0 here. Cached once per
+    // prepare (NOT recomputed on the audio thread) so moving the lookahead knob mid-playback
+    // never triggers a setLatencySamples() buffer-flush click — the smoothed delay tap absorbs
+    // the change; the small host-comp drift until the next prepare is inaudible at this scale.
+    {
+        const bool  xtremeAtPrepare = pXtremeLookahead && pXtremeLookahead->load() > 0.5f;
+        const float normalLookMs    = pLookahead ? pLookahead->load() : 0.0f;
+        reportedLookaheadLatency = xtremeAtPrepare ? 0
+            : juce::jlimit(0, maxLookahead,
+                           static_cast<int>(std::round(static_cast<double>(normalLookMs) * 0.001 * sampleRate)));
+    }
+    // Crossfade params for large lookahead jumps: ~12 ms fade each way; any change
+    // bigger than ~60 ms (i.e. anything in the Xtreme range) crossfades instead of
+    // gliding, so the delay tap never sweeps audibly across seconds of buffer.
+    lookaheadFadeGain      = 1.0f;
+    lookaheadFadeState     = 0;
+    lookaheadFadeInc       = 1.0f / juce::jmax(1.0f, static_cast<float>(0.012 * sampleRate));
+    lookaheadBigJumpThresh = static_cast<int>(std::round(0.060 * sampleRate));
+
+    // Mode crossfade: ~5 ms each way. Re-adopt the target path on the next block (no
+    // fade on the first block / after a re-prepare).
+    modeFadeActiveEffMode  = -1;
+    modeFadeActiveUseConv  = false;
+    modeFadeGain           = 1.0f;
+    modeFadeState          = 0;
+    modeFadeInc            = 1.0f / juce::jmax(1.0f, static_cast<float>(0.005 * sampleRate));
+    modeFadeHoldSamples    = 0;
+
+    // Pultec EQP-1A WDF filter + tube saturation.
+    // pultec/triode.prepare() set up each stage's internal state (WDF coeffs,
+    // ADAA LUT, etc.); chain.prepare() owns the single shared 4x oversampler the
+    // plugin path actually uses (the stages' own oversamplers stay idle here).
+    pultec.prepare(sampleRate, samplesPerBlock);
+    triode.prepare(sampleRate, samplesPerBlock);
+    chain.prepare(sampleRate, samplesPerBlock);
+
+    // FFT Conv objects — pre-allocate all three sizes (no audio-thread allocation later)
+    static constexpr int kOrders[3] = { 9, 10, 11 };
+    static constexpr int kSizes [3] = { 512, 1024, 2048 };
+    for (int i = 0; i < 3; ++i)
+    {
+        convFftObjs[i] = std::make_unique<juce::dsp::FFT>(kOrders[i]);
+        // Sidechain analysis window: plain Hann (normalise=false). Used only for the
+        // per-bin SC magnitude; reconstruction does not depend on it.
+        convWinObjs[i] = std::make_unique<juce::dsp::WindowingFunction<float>>(
+            (size_t)kSizes[i], juce::dsp::WindowingFunction<float>::hann, false);
+
+        // Main-audio analysis+synthesis window: periodic SQRT-Hann. Applied on BOTH
+        // sides; √H·√H = periodic Hann, whose 50%-hop COLA = 1, so the windowed OLA
+        // reconstructs at unity while tapering the frame edges (WOLA).
+        convSqrtHann[i].resize((size_t)kSizes[i]);
+        for (int n = 0; n < kSizes[i]; ++n)
+        {
+            const double hann = 0.5 * (1.0 - std::cos(juce::MathConstants<double>::twoPi
+                                                       * (double) n / (double) kSizes[i]));
+            convSqrtHann[i][(size_t) n] = (float) std::sqrt(hann);
+        }
+    }
+
+    // Per-bin GR envelope starts at unity (no reduction).
+    std::fill(std::begin(convBinGainEnv), std::end(convBinGainEnv), 1.0f);
+
+    // Clear all conv state and prime FIFO with hopSize zeros (= reported latency)
+    std::fill(std::begin(convInRingL), std::end(convInRingL), 0.0f);
+    std::fill(std::begin(convInRingR), std::end(convInRingR), 0.0f);
+    std::fill(std::begin(convScRing),  std::end(convScRing),  0.0f);
+    std::fill(std::begin(convOvlL),    std::end(convOvlL),    0.0f);
+    std::fill(std::begin(convOvlR),    std::end(convOvlR),    0.0f);
+    std::fill(std::begin(convOutFifoL), std::end(convOutFifoL), 0.0f);
+    std::fill(std::begin(convOutFifoR), std::end(convOutFifoR), 0.0f);
+    convInWritePos = 0;
+    convScWritePos = 0;
+    convNewCount   = 0;
+
+    const int initSizeIdx = pFftConvSize ? juce::jlimit(0, 2, (int)pFftConvSize->load()) : 1;
+    // Prime the output FIFO to the CONSTANT reported conv latency (= max hop) for every
+    // size, so the actual delay matches what we report regardless of the selected size.
+    const int initPrime = kMaxConvFftSize / 2;
+    convOutReadPos  = 0;
+    convOutWritePos = initPrime;
+    convOutCount    = initPrime;
+    modeFadeActiveSizeIdx = initSizeIdx;
+
+    // Spectral SC analysis state
+    std::fill(std::begin(scSpectralRing), std::end(scSpectralRing), 0.0f);
+    std::fill(std::begin(spectralMags),   std::end(spectralMags),   0.0f);
+    scSpectralHead = 0;
+
+    // Latency: report initial value based on current params. Three components:
+    //  1. Pultec EQ + triode 4x-oversampler group delay (eqTriodeLatency) — constant in
+    //     every mode (both stages run a latency-matched dry delay when off).
+    //  2. NORMAL-range lookahead (reportedLookaheadLatency) — host-compensated; Xtreme is
+    //     intentionally uncompensated, so it is NOT included.
+    //  3. FFT-conv hop — only when Spectral + FFT-Conv is active.
+    // Only (3) can change between transports; (1) and (2) are cached so the audio thread
+    // re-reports nothing on a lookahead knob move. NOTE: getConvLatencySamples() is the UI
+    // readout (real delay, incl. Xtreme) and is deliberately NOT used here — the host report
+    // freezes out the uncompensated Xtreme delay.
+    eqTriodeLatency = chain.getLatencySamples();
+    const int convAtPrepare = (pSidechainMode && static_cast<int>(pSidechainMode->load()) == 2
+                               && pFftConv && pFftConv->load() > 0.5f) ? (kMaxConvFftSize / 2) : 0;
+    const int initLatency = eqTriodeLatency + reportedLookaheadLatency + convAtPrepare;
+    setLatencySamples(initLatency);
+    prevLatencyReported = initLatency;
+
+    // Metering / monitoring state — reset so a re-prepare (e.g. sample-rate or
+    // block-size change) starts the meters clean rather than carrying stale dB.
+    convFrameGrDb            = 0.0f;
+    inputLevelSmoothedDb     = -100.0f;
+    sidechainLevelSmoothedDb = -100.0f;
+    outputLevelSmoothedDb    = -100.0f;
+    gainReductionSmoothedDb  = 0.0f;
+    inputLevelDb.store(-100.0f);
+    sidechainLevelDb.store(-100.0f);
+    gainReductionDb.store(0.0f);
+    gainReductionAmountDb.store(0.0f);
+    cpuUsagePercent.store(0.0f);
+    processTimeMs.store(0.0f);
+    sidechainConnected.store(false);
+}
+
+MooDuckAudioProcessor::BandControlValues
+MooDuckAudioProcessor::applyBandLink(const BandControlValues& gr, float linkAmount)
+{
+    // Placeholder for future n-band link control.
+    // Currently passes through unchanged; replace with neighbor-linking or
+    // weighted-average linking when the speech detection modulation is wired up.
+    juce::ignoreUnused(linkAmount);
+    return gr;
+}
+
+void MooDuckAudioProcessor::releaseResources()
+{
+}
+
+#ifndef JucePlugin_PreferredChannelConfigurations
+bool MooDuckAudioProcessor::isBusesLayoutSupported(const BusesLayout &layouts) const
+{
+#if JucePlugin_IsMidiEffect
+    juce::ignoreUnused(layouts);
+    return true;
+#else
+    if (layouts.getMainOutputChannelSet() != juce::AudioChannelSet::mono() && layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
+        return false;
+
+#if !JucePlugin_IsSynth
+    if (layouts.getMainOutputChannelSet() != layouts.getMainInputChannelSet())
+        return false;
+#endif
+
+    // Sidechain bus (input bus 1): must be disabled, mono, or stereo.
+    // Without this check the host can negotiate e.g. quad (4ch) for the sidechain.
+    if (layouts.inputBuses.size() > 1)
+    {
+        const auto& sc = layouts.inputBuses[1];
+        if (sc != juce::AudioChannelSet::disabled()
+         && sc != juce::AudioChannelSet::mono()
+         && sc != juce::AudioChannelSet::stereo())
+            return false;
+    }
+
+    return true;
+#endif
+}
+#endif
+
+void MooDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
+{
+    juce::ignoreUnused(midiMessages);   // no MIDI handling in this effect
+    juce::ScopedNoDenormals noDenormals;
+    auto totalNumInputChannels  = getTotalNumInputChannels();
+    auto totalNumOutputChannels = getTotalNumOutputChannels();
+
+    const auto startTime      = juce::Time::getHighResolutionTicks();
+    const auto ticksPerSecond = juce::Time::getHighResolutionTicksPerSecond();
+
+    for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
+        buffer.clear(i, 0, buffer.getNumSamples());
+
+    // --- Read dynamics parameters (atomic loads via cached pointers — no hash lookups)
+    DynamicsProcessorParameters dynParams;
+    dynParams.threshold_dB    = *pThreshold;
+    dynParams.ratio           = *pRatio;
+    dynParams.attack_ms       = *pAttack;
+    dynParams.release_ms      = *pRelease;
+    dynParams.hold_ms         = *pHold;
+    dynParams.knee_width_dB   = *pKnee;
+    dynParams.output_gain_dB  = *pOutput;
+    dynParams.enable_sc       = (*pScEnable  > 0.5f);
+    dynParams.soft_knee       = (*pSoftKnee  > 0.5f);
+    dynParams.hard_limit_gate = (*pLimiter   > 0.5f);
+    dynParams.calculation     = dynamicsProcessorType::kCompressor;
+
+    // --- Read mode params
+    const int  mode       = pSidechainMode ? juce::jlimit(0, 2, (int) pSidechainMode->load()) : 1;
+    const bool useConv    = pFftConv && (*pFftConv > 0.5f);
+    const bool cleanXover = pCrossoverClean && (*pCrossoverClean > 0.5f);
+    const int  sizeIdx    = pFftConvSize ? juce::jlimit(0, 2, (int) pFftConvSize->load()) : 1;
+    static constexpr int kConvSizes[3] = { 512, 1024, 2048 };
+    // NOTE: activeConvFftSize / hopSize are derived AFTER the mode-fade resolves the
+    // ACTIVE size below, so a size change processes (and reports latency) on the OLD
+    // size until the crossfade bottom swaps it — see modeFadeActiveSizeIdx.
+
+    // --- Bus pointers + sidechain availability (needed up here to derive the
+    //     effective mode and the reported latency before the conv/latency logic).
+    juce::AudioBuffer<float> mainInput = getBusBuffer(buffer, true, 0);
+    juce::AudioBuffer<float> scInput   = getBusBuffer(buffer, true, 1);
+
+    const bool hasSidechainBus = getBusCount(true) > 1;
+    const bool scConnected     = hasSidechainBus && scInput.getNumChannels() > 0;
+    const bool useSidechain    = dynParams.enable_sc && scConnected;
+
+    // Spectral detection is meaningless without an external sidechain to analyse.
+    // With no SC driving, fall back to wideband so the duck stage runs as a plain
+    // self-detecting compressor on the main signal (+ the Pultec EQ downstream).
+    const int targetEffMode = (! useSidechain && mode == 2) ? 0 : mode;
+
+    // --- Mode-change click suppression ------------------------------------------
+    // Switching path (Wideband/Multiband/Spectral, or FFT-Conv on/off) is a hard
+    // discontinuity (different gain/phase/latency) -> a click. We keep processing the
+    // CURRENT path and only switch once the output has faded to zero, then fade the
+    // new path back in (see the per-sample state machine after the branch dispatch).
+    if (modeFadeActiveEffMode < 0)   // first block (or post-prepare): adopt with no fade
+    {
+        modeFadeActiveEffMode = targetEffMode;
+        modeFadeActiveUseConv = useConv;
+        modeFadeActiveSizeIdx = sizeIdx;
+    }
+    // An FFT-Conv SIZE change is also a hard discontinuity (different hop + latency),
+    // so route it through the same crossfade as a path change rather than flushing
+    // the rings mid-stream. The actual size swap + ring reset happens at the fade
+    // bottom (while muted), exactly like entering FFT-Conv.
+    const bool modeChanged = (targetEffMode != modeFadeActiveEffMode)
+                          || (useConv      != modeFadeActiveUseConv)
+                          || (sizeIdx      != modeFadeActiveSizeIdx);
+    if (modeChanged && modeFadeState != 1)
+        modeFadeState = 1;                 // (re)start the fade-out toward the new path
+
+    // Everything below dispatches/reports on the ACTIVE path (lags the target until the
+    // fade bottom), so the actual swap — and its latency change — lands while muted.
+    const int  effMode           = modeFadeActiveEffMode;
+    const bool useConvActive     = modeFadeActiveUseConv;
+    const int  activeConvFftSize = kConvSizes[modeFadeActiveSizeIdx];
+    const int  hopSize           = activeConvFftSize / 2;
+
+    // --- Lookahead: clamp to allocated max, set tap, update latency report
+    const double sr = juce::jmax(1.0, getSampleRate());
+    const bool  xtremeLook  = pXtremeLookahead && pXtremeLookahead->load() > 0.5f;
+    const float lookaheadMs = (xtremeLook && pLookaheadXtreme) ? pLookaheadXtreme->load()
+                                                               : (pLookahead ? pLookahead->load() : 0.0f);
+    const int lookaheadSamples = juce::jlimit(
+        0, lookaheadDelayL.getMaximumDelayInSamples(),
+        static_cast<int>(std::round(static_cast<double>(lookaheadMs) * 0.001 * sr)));
+    // SMALL changes glide the tap (smooth, fractional-sample interpolated). LARGE
+    // jumps (Xtreme range) would sweep the tap across seconds of buffer -> warble, so
+    // they crossfade instead: the per-sample loop below fades the output out, snaps
+    // the tap silently at the bottom, then fades back in. Rapid clicks just keep the
+    // output muted (re-triggering the dip) until they settle, then snap + fade in.
+    {
+        const float curAim   = lookaheadDelaySmoothed.getTargetValue();
+        const bool  bigJump  = std::abs(static_cast<float>(lookaheadSamples) - curAim)
+                                   > static_cast<float>(lookaheadBigJumpThresh);
+        if (bigJump)
+        {
+            lookaheadPendingDelay = lookaheadSamples;
+            if (lookaheadFadeState != 1)   // (re)start the fade-out toward the new target
+                lookaheadFadeState = 1;
+        }
+        else if (lookaheadFadeState == 0)
+        {
+            lookaheadDelaySmoothed.setTargetValue(static_cast<float>(lookaheadSamples)); // small -> glide
+        }
+    }
+
+    // Update reported latency only when the FFT-conv hop size changes (mode/size switches
+    // happen between transports). Lookahead changes are NOT re-reported on the audio thread —
+    // many hosts treat setLatencySamples() mid-playback as a buffer-flush event and produce
+    // an audible click. The smoothed delay tap above already absorbs the parameter glide; the
+    // small host-comp drift until the next prepare is inaudible compared to that click.
+    // Total = constant EQ/triode oversampler delay + the host-compensated NORMAL lookahead
+    // baseline (both folded in at prepareToPlay, never change mid-stream) + the variable
+    // FFT-conv hop. Only the hop part changes between transports, so adding the two cached
+    // constants keeps the reported total correct in every mode without extra churn. (Xtreme
+    // lookahead is intentionally excluded — it is an uncompensated creative delay.)
+    const int newLatency = eqTriodeLatency + reportedLookaheadLatency
+                         + ((effMode == 2 && useConvActive) ? (kMaxConvFftSize / 2) : 0);
+    if (newLatency != prevLatencyReported)
+    {
+        setLatencySamples(newLatency);
+        prevLatencyReported = newLatency;
+    }
+
+    // Detector always reads sc_xn. With an external SC active that's the live SC
+    // bus (so lookahead aligns the delayed main to it); with none driving it is
+    // the live main (self-detection) so the stage behaves as a regular compressor.
+    DynamicsProcessorParameters dynParamsForProc = dynParams;
+    dynParamsForProc.enable_sc = true;
+    for (int b = 0; b < numBands; ++b)
+    {
+        bandProcessorsL[b].setParameters(dynParamsForProc);
+        bandProcessorsR[b].setParameters(dynParamsForProc);
+    }
+    widebandProcessorL.setParameters(dynParamsForProc);
+    widebandProcessorR.setParameters(dynParamsForProc);
+
+    // --- Update crossover frequencies (smoother advances inside processBlock)
+    for (int i = 0; i < StereoMultibandCrossover::numCrossoverPoints; ++i)
+        crossover.setCrossoverFrequency(i, static_cast<double>(*pXover[i]));
+
+    const int  numSamples = buffer.getNumSamples();
+    const bool isStereo   = mainInput.getNumChannels() > 1;
+
+    const float* liveMainL = mainInput.getReadPointer(0);
+    const float* liveMainR = isStereo ? mainInput.getReadPointer(1) : liveMainL;
+
+    // Snapshot the dry input now, before processing overwrites mainInput in place — the
+    // host-bypass crossfade at the end needs the untouched dry to blend toward.
+    juce::FloatVectorOperations::copy(bypassDryBuf.getWritePointer(0), liveMainL, numSamples);
+    if (isStereo)
+        juce::FloatVectorOperations::copy(bypassDryBuf.getWritePointer(1), liveMainR, numSamples);
+
+    // With an external sidechain active the detector reads it LIVE (so it sees
+    // ahead of the lookahead-delayed main). With NO external SC driving, it reads
+    // the live main — self-detection, i.e. a regular compressor on the main.
+    const float* scLPtr = useSidechain ? scInput.getReadPointer(0) : liveMainL;
+    const float* scRPtr = useSidechain
+                          ? (scInput.getNumChannels() > 1 ? scInput.getReadPointer(1) : scLPtr)
+                          : liveMainR;
+
+    // --- Lookahead delay: always run so toggling lookahead is glitch-free.
+    // Ramped delay length + fractional-sample interpolation means parameter changes
+    // produce a smooth glide rather than a snap-click. (JUCE's Lagrange3rd line is already
+    // bit-exact at delay 0 — coefficients collapse to c1=1 — so settled-0 lookahead is a
+    // clean passthrough with no special-casing; see tests/latency_test.cpp.)
+    float* dL = lookaheadBufL.getWritePointer(0);
+    float* dR = lookaheadBufR.getWritePointer(0);
+    for (int n = 0; n < numSamples; ++n)
+    {
+        // Lookahead crossfade state machine (large-jump handling — see above).
+        if (lookaheadFadeState == 1)            // fading out
+        {
+            lookaheadFadeGain -= lookaheadFadeInc;
+            if (lookaheadFadeGain <= 0.0f)
+            {
+                lookaheadFadeGain = 0.0f;
+                // Snap the tap silently to the latest target, then fade back in.
+                lookaheadDelaySmoothed.setCurrentAndTargetValue(static_cast<float>(lookaheadPendingDelay));
+                lookaheadFadeState = 2;
+            }
+        }
+        else if (lookaheadFadeState == 2)       // fading in
+        {
+            lookaheadFadeGain += lookaheadFadeInc;
+            if (lookaheadFadeGain >= 1.0f) { lookaheadFadeGain = 1.0f; lookaheadFadeState = 0; }
+        }
+
+        const float d = lookaheadDelaySmoothed.getNextValue();
+        lookaheadDelayL.setDelay(d);
+        lookaheadDelayL.pushSample(0, liveMainL[n]);
+        dL[n] = lookaheadDelayL.popSample(0) * lookaheadFadeGain;
+        if (isStereo)
+        {
+            lookaheadDelayR.setDelay(d);
+            lookaheadDelayR.pushSample(0, liveMainR[n]);
+            dR[n] = lookaheadDelayR.popSample(0) * lookaheadFadeGain;
+        }
+    }
+    const float* mainL = dL;
+    const float* mainR = isStereo ? dR : dL;
+
+    // --- Input / sidechain metering (pre-dynamics, on LIVE signal)
+    float blockPeakIn     = 0.0f;
+    float sidechainPeakIn = 0.0f;
+
+    for (int n = 0; n < numSamples; ++n)
+    {
+        const float mono = 0.5f * (liveMainL[n] + liveMainR[n]);
+        blockPeakIn = std::max(blockPeakIn, std::abs(mono));
+
+        if (useSidechain)
+        {
+            const float scMono = 0.5f * (scLPtr[n] + scRPtr[n]);
+            sidechainPeakIn = std::max(sidechainPeakIn, std::abs(scMono));
+        }
+    }
+
+    auto* outL = mainInput.getWritePointer(0);
+    auto* outR = isStereo ? mainInput.getWritePointer(1) : nullptr;
+
+    float grAmountDb = 0.0f;
+
+    if (effMode == 0)
+    {
+        // === WIDEBAND ===
+        // Bypass crossover, single compressor pair. mainL/outL may share storage,
+        // but we read in[n] before writing out[n], which is safe.
+        for (int n = 0; n < numSamples; ++n)
+        {
+            const double inL = static_cast<double>(mainL[n]);
+            const double inR = isStereo ? static_cast<double>(mainR[n]) : inL;
+
+            widebandProcessorL.processSidechainInputSample(static_cast<double>(scLPtr[n]));
+            widebandProcessorR.processSidechainInputSample(static_cast<double>(scRPtr[n]));
+            const double pL = widebandProcessorL.processSample(inL);
+            const double pR = widebandProcessorR.processSample(inR);
+            outL[n] = static_cast<float>(pL);
+            if (outR) outR[n] = static_cast<float>(pR);
+        }
+        grAmountDb = std::max(
+            -static_cast<float>(widebandProcessorL.getGainReductionDb()),
+            -static_cast<float>(widebandProcessorR.getGainReductionDb()));
+    }
+    else if (effMode == 1 || (effMode == 2 && !useConvActive))
+    {
+        // === MULTIBAND (mode 1) or SPECTRAL without conv (mode 2 + !useConv) ===
+        float* mbL[numBands], *mbR[numBands], *sbL[numBands], *sbR[numBands];
+        for (int b = 0; b < numBands; ++b)
+        {
+            mbL[b] = mainBandBufL.getWritePointer(b);
+            mbR[b] = mainBandBufR.getWritePointer(b);
+            sbL[b] = scBandBufL.getWritePointer(b);
+            sbR[b] = scBandBufR.getWritePointer(b);
+        }
+        crossover.processBlock(mainL, mainR, scLPtr, scRPtr, mbL, mbR, sbL, sbR, numSamples, cleanXover);
+
+        juce::FloatVectorOperations::fill(outL, 0.0f, numSamples);
+        if (outR) juce::FloatVectorOperations::fill(outR, 0.0f, numSamples);
+
+        // Spectral mode: per-band SC energy via FFT (zero-latency, look-back window).
+        // scLPtr/scRPtr alias liveMain when no external SC, so this always has valid data.
+        float perBandScLevel[numBands] = {};
+        if (effMode == 2)
+        {
+            for (int n = 0; n < numSamples; ++n)
+            {
+                scSpectralRing[scSpectralHead] = 0.5f * (scLPtr[n] + scRPtr[n]);
+                scSpectralHead = (scSpectralHead + 1) % kSpectralFftSize;
+            }
+            for (int i = 0; i < kSpectralFftSize; ++i)
+                spectralWorkBuf[i] = scSpectralRing[(scSpectralHead + i) % kSpectralFftSize];
+            std::fill(spectralWorkBuf + kSpectralFftSize,
+                      spectralWorkBuf + kSpectralFftSize * 2, 0.0f);
+            spectralWindow.multiplyWithWindowingTable(spectralWorkBuf, kSpectralFftSize);
+            spectralFft.performRealOnlyForwardTransform(spectralWorkBuf);
+
+            const float invN = 1.0f / (float) kSpectralFftSize;
+            spectralMags[0] = std::abs(spectralWorkBuf[0]) * invN;
+            for (int k = 1; k < kSpectralFftSize / 2; ++k)
+            {
+                const float re = spectralWorkBuf[2 * k];
+                const float im = spectralWorkBuf[2 * k + 1];
+                spectralMags[k] = std::sqrt(re * re + im * im) * invN;
+            }
+
+            const double sr = std::max(1.0, getSampleRate());
+            double bandEdges[numBands + 1];
+            bandEdges[0] = 20.0;
+            for (int i = 0; i < StereoMultibandCrossover::numCrossoverPoints; ++i)
+                bandEdges[i + 1] = static_cast<double>(*pXover[i]);
+            bandEdges[numBands] = sr * 0.5;
+
+            for (int b = 0; b < numBands; ++b)
+            {
+                const int kLow  = juce::jmax(1,
+                    (int) std::floor(bandEdges[b]     * (double) kSpectralFftSize / sr));
+                const int kHigh = juce::jmin(kSpectralFftSize / 2 - 1,
+                    (int) std::ceil (bandEdges[b + 1] * (double) kSpectralFftSize / sr));
+                float sumSq = 0.0f;
+                int   count = 0;
+                for (int k = kLow; k <= kHigh; ++k)
+                {
+                    sumSq += spectralMags[k] * spectralMags[k];
+                    ++count;
+                }
+                // *2 compensates for one-sided spectrum + Hann window energy loss
+                perBandScLevel[b] = count > 0 ? std::sqrt(sumSq / (float) count) * 2.0f : 0.0f;
+            }
+        }
+
+        // Console-style per-band solo/mute (Multiband bands only). bandState:
+        // 0 = Normal, 1 = Solo, 2 = Mute. A band is audible if some band is soloed
+        // -> only soloed bands; otherwise -> all non-muted bands. Inaudible bands
+        // still run their processors (detector state stays warm), but contribute
+        // zero to the summed output, so toggling causes no envelope discontinuity.
+        bool anySolo = false;
+        for (int b = 0; b < numBands; ++b)
+            if (pBandState[b] && static_cast<int>(pBandState[b]->load()) == 1) { anySolo = true; break; }
+        float bandGate[numBands];
+        for (int b = 0; b < numBands; ++b)
+        {
+            const int st = pBandState[b] ? static_cast<int>(pBandState[b]->load()) : 0;
+            const bool audible = anySolo ? (st == 1) : (st != 2);
+            bandGate[b] = audible ? 1.0f : 0.0f;
+        }
+
+        for (int b = 0; b < numBands; ++b)
+        {
+            const float offsetDb   = pBandScale[b] ? pBandScale[b]->load() : 0.0f;
+            const bool  needsScale = std::abs(offsetDb) > 0.005f;
+            const float gate       = bandGate[b];
+
+            for (int n = 0; n < numSamples; ++n)
+            {
+                if (effMode == 2)
+                {
+                    const double scVal = static_cast<double>(perBandScLevel[b]);
+                    bandProcessorsL[b].processSidechainInputSample(scVal);
+                    bandProcessorsR[b].processSidechainInputSample(scVal);
+                }
+                else
+                {
+                    bandProcessorsL[b].processSidechainInputSample(static_cast<double>(sbL[b][n]));
+                    bandProcessorsR[b].processSidechainInputSample(static_cast<double>(sbR[b][n]));
+                }
+                float pL = static_cast<float>(bandProcessorsL[b].processSample(static_cast<double>(mbL[b][n])));
+                float pR = static_cast<float>(bandProcessorsR[b].processSample(static_cast<double>(mbR[b][n])));
+
+                if (needsScale)
+                {
+                    // Re-scale the per-sample gain reduction by offsetDb (additive on duck amount, floor at 0).
+                    // ratio = 10^((new_gr_dB - old_gr_dB)/20); new_gr_dB = -max(0, -old_gr_dB + offsetDb).
+                    const float oldGrDbL = static_cast<float>(bandProcessorsL[b].getGainReductionDb());
+                    const float oldGrDbR = static_cast<float>(bandProcessorsR[b].getGainReductionDb());
+                    const float newGrDbL = -juce::jmax(0.0f, -oldGrDbL + offsetDb);
+                    const float newGrDbR = -juce::jmax(0.0f, -oldGrDbR + offsetDb);
+                    pL *= juce::dsp::FastMathApproximations::exp((newGrDbL - oldGrDbL) * 0.11512925f);
+                    pR *= juce::dsp::FastMathApproximations::exp((newGrDbR - oldGrDbR) * 0.11512925f);
+                }
+
+                outL[n] += pL * gate;
+                if (outR) outR[n] += pR * gate;
+            }
+        }
+
+        for (int b = 0; b < numBands; ++b)
+        {
+            if (bandGate[b] <= 0.0f) continue;   // muted/un-soloed bands don't drive the GR meter
+            grAmountDb = std::max(grAmountDb, -static_cast<float>(bandProcessorsL[b].getGainReductionDb()));
+            grAmountDb = std::max(grAmountDb, -static_cast<float>(bandProcessorsR[b].getGainReductionDb()));
+        }
+    }
+    else
+    {
+        // === SPECTRAL + FFT CONV (mode 2 + useConv) ===
+        // Copy input to scratch since mainInput buffer may alias output
+        float* tmpL = mainBandBufL.getWritePointer(0);
+        float* tmpR = mainBandBufR.getWritePointer(0);
+        juce::FloatVectorOperations::copy(tmpL, mainL, numSamples);
+        if (isStereo) juce::FloatVectorOperations::copy(tmpR, mainR, numSamples);
+
+        for (int n = 0; n < numSamples; ++n)
+        {
+            const float inL = tmpL[n];
+            const float inR = isStereo ? tmpR[n] : tmpL[n];
+
+            convInRingL[convInWritePos] = inL;
+            convInRingR[convInWritePos] = inR;
+            convInWritePos = (convInWritePos + 1) % activeConvFftSize;
+
+            convScRing[convScWritePos] = useSidechain
+                ? 0.5f * (scLPtr[n] + scRPtr[n])
+                : 0.0f;
+            convScWritePos = (convScWritePos + 1) % activeConvFftSize;
+
+            if (++convNewCount >= hopSize)
+            {
+                convNewCount = 0;
+                processConvFrame(activeConvFftSize, modeFadeActiveSizeIdx,
+                                 dynParams.threshold_dB, dynParams.ratio,
+                                 dynParams.attack_ms, dynParams.release_ms,
+                                 dynParams.output_gain_dB, useSidechain);
+            }
+
+            outL[n] = convOutFifoL[convOutReadPos];
+            if (outR) outR[n] = convOutFifoR[convOutReadPos];
+            convOutReadPos = (convOutReadPos + 1) % kConvOutFifoSize;
+            if (convOutCount > 0) --convOutCount;
+        }
+
+        grAmountDb = convFrameGrDb;
+    }
+
+    // --- Mode crossfade: apply the fade gain to the duck output and advance the state
+    // machine. The fade gain is applied BEFORE the EQ so the Pultec/triode never see the
+    // path-switch discontinuity. The actual path swap happens here at the fade bottom,
+    // while the output is silent, so neither the signal jump nor the latency change clicks.
+    if (modeFadeState == 1)            // fading out — still on the OLD (active) path
+    {
+        for (int n = 0; n < numSamples; ++n)
+        {
+            modeFadeGain -= modeFadeInc;
+            const float g = juce::jmax(0.0f, modeFadeGain);
+            outL[n] *= g;
+            if (outR) outR[n] *= g;
+        }
+        if (modeFadeGain <= 0.0f)
+        {
+            modeFadeGain = 0.0f;
+            const bool wasConv      = (modeFadeActiveEffMode == 2 && modeFadeActiveUseConv);
+            const int  oldSizeIdx   = modeFadeActiveSizeIdx;
+            modeFadeActiveEffMode = targetEffMode;
+            modeFadeActiveUseConv = useConv;
+            modeFadeActiveSizeIdx = sizeIdx;
+            // Clear + re-prime the conv state when we (a) enter FFT-conv from a non-conv
+            // path, or (b) change FFT size while in conv. Both need fresh rings sized to
+            // the NEW hop; the fade-in masks the priming. Done here at the fade bottom so
+            // the flush + latency change land while the output is muted (no click).
+            const bool nowConv     = (modeFadeActiveEffMode == 2 && modeFadeActiveUseConv);
+            const bool sizeChanged = (modeFadeActiveSizeIdx != oldSizeIdx);
+            if (nowConv && (! wasConv || sizeChanged))
+            {
+                const int newFft   = kConvSizes[modeFadeActiveSizeIdx];
+                const int primeLen = kMaxConvFftSize / 2;   // constant reported conv latency
+                std::fill(std::begin(convInRingL), std::end(convInRingL), 0.0f);
+                std::fill(std::begin(convInRingR), std::end(convInRingR), 0.0f);
+                std::fill(std::begin(convScRing),  std::end(convScRing),  0.0f);
+                std::fill(std::begin(convOvlL),    std::end(convOvlL),    0.0f);
+                std::fill(std::begin(convOvlR),    std::end(convOvlR),    0.0f);
+                std::fill(std::begin(convOutFifoL), std::end(convOutFifoL), 0.0f);
+                std::fill(std::begin(convOutFifoR), std::end(convOutFifoR), 0.0f);
+                std::fill(std::begin(convBinGainEnv), std::end(convBinGainEnv), 1.0f);
+                convInWritePos = 0; convScWritePos = 0; convNewCount = 0;
+                convOutReadPos = 0; convOutWritePos = primeLen; convOutCount = primeLen;
+                // Starting convolution from a cleared ring has a startup transient: the
+                // first frame sees half-zero input and the OLA only settles once the ring
+                // is full (~fftSize) and the primed FIFO (constant latency) has drained.
+                // Stay muted across that whole window, then fade in on steady output.
+                modeFadeHoldSamples = newFft + primeLen;
+            }
+            modeFadeState = 2;            // next block: fade the new path in
+        }
+    }
+    else if (modeFadeState == 2)       // fading in — on the NEW (active) path
+    {
+        for (int n = 0; n < numSamples; ++n)
+        {
+            if (modeFadeHoldSamples > 0)   // muted hold (conv priming latency)
+            {
+                --modeFadeHoldSamples;
+                outL[n] = 0.0f;
+                if (outR) outR[n] = 0.0f;
+                continue;
+            }
+            modeFadeGain += modeFadeInc;
+            const float g = juce::jmin(1.0f, modeFadeGain);
+            outL[n] *= g;
+            if (outR) outR[n] *= g;
+        }
+        if (modeFadeHoldSamples == 0 && modeFadeGain >= 1.0f) { modeFadeGain = 1.0f; modeFadeState = 0; }
+    }
+
+    // --- Pultec EQP-1A (WDF passive filter + Koren 12AX7 tube saturation)
+    {
+        const bool eqBypass = pPultecBypass && pPultecBypass->load() > 0.5f;
+        pultec.setBypass (eqBypass);
+        pultec.setLfFreqIndex      (pPultecLfFreq      ? static_cast<int> (pPultecLfFreq->load())      : 4);
+        pultec.setLfBoostDb        (pPultecLfBoost     ? pPultecLfBoost->load()                        : 0.0f);
+        pultec.setLfAttenDb        (pPultecLfAtten     ? pPultecLfAtten->load()                        : 0.0f);
+        pultec.setHfFreqIndex      (pPultecHfFreq      ? static_cast<int> (pPultecHfFreq->load())      : 3);
+        pultec.setHfBoostDb        (pPultecHfBoost     ? pPultecHfBoost->load()                        : 0.0f);
+        pultec.setHfBandwidth      (pPultecHfBw        ? pPultecHfBw->load()                           : 0.3f);
+        pultec.setHfAttenFreqIndex (pPultecHfAttenFreq ? static_cast<int> (pPultecHfAttenFreq->load()) : 1);
+        pultec.setHfAttenDb        (pPultecHfAtten     ? pPultecHfAtten->load()                        : 0.0f);
+
+        const bool satEnabled = pPultecSatEnable && pPultecSatEnable->load() > 0.5f;
+        triode.setEnabled (satEnabled);
+
+        // P6 controls: Drive (12AX7 grid excursion), Mix (parallel dry/wet),
+        // Output trim (loudness-match the wet path).
+        triode.setDrive (pPultecSatDrive ? pPultecSatDrive->load() : 1.0f);
+        chain.setSatMix  (pPultecSatMix  ? pPultecSatMix->load() * 0.01f : 1.0f);   // %->0..1
+        chain.setSatTrimGain (juce::Decibels::decibelsToGain (
+                                  pPultecSatTrim ? pPultecSatTrim->load() : 0.0f));
+
+        // EQ + tube saturator run in one shared 4x oversampling domain (single
+        // up/down round-trip). Mono fallback passes nullptr for the right channel.
+        chain.processBlock (outL, outR, numSamples);
+    }
+
+    // --- Click-free HOST bypass: crossfade the wet output toward a latency-aligned dry.
+    // The dry delay is fed every block (so its history is valid the instant bypass
+    // engages); the blend (bypassMix) ramps over ~10 ms so toggling never steps the
+    // output. tap = reported latency keeps the dry PDC-aligned with the wet.
+    {
+        const float byTarget = (pHostBypass && pHostBypass->load() > 0.5f) ? 1.0f : 0.0f;
+        const float tap      = (float) juce::jlimit(0, bypassDryDelayL.getMaximumDelayInSamples(),
+                                                    prevLatencyReported);
+        const float* dryL = bypassDryBuf.getReadPointer(0);
+        const float* dryR = bypassDryBuf.getReadPointer(isStereo ? 1 : 0);
+        float m = bypassMix;
+        for (int n = 0; n < numSamples; ++n)
+        {
+            bypassDryDelayL.pushSample(0, dryL[n]);
+            const float ddl = bypassDryDelayL.popSample(0, tap);
+            float ddr = ddl;
+            if (outR)
+            {
+                bypassDryDelayR.pushSample(0, dryR[n]);
+                ddr = bypassDryDelayR.popSample(0, tap);
+            }
+
+            m = (byTarget > m) ? juce::jmin(byTarget, m + bypassInc)
+                               : juce::jmax(byTarget, m - bypassInc);
+            outL[n] += m * (ddl - outL[n]);
+            if (outR) outR[n] += m * (ddr - outR[n]);
+        }
+        bypassMix = m;
+    }
+
+    // Post-EQ/saturation output peak — drives the Sat button's audio-reactive glow.
+    {
+        float outPeak = 0.0f;
+        for (int n = 0; n < numSamples; ++n)
+        {
+            outPeak = juce::jmax(outPeak, std::abs(outL[n]));
+            if (outR) outPeak = juce::jmax(outPeak, std::abs(outR[n]));
+        }
+        const float outDb = outPeak > 0.000001f ? juce::Decibels::gainToDecibels(outPeak) : -100.0f;
+        outputLevelSmoothedDb = juce::jmax(outDb, outputLevelSmoothedDb - 0.8f);
+        outputLevelDb.store(outputLevelSmoothedDb);
+    }
+
+    // Absolute-dB peaks for the meter strips: IN follows the main input,
+    // SC follows the external sidechain (empty when no sidechain is routed).
+    const float mainInDb = blockPeakIn > 0.000001f
+                           ? juce::Decibels::gainToDecibels(blockPeakIn)
+                           : -100.0f;
+    const float scInDb   = (useSidechain && sidechainPeakIn > 0.000001f)
+                           ? juce::Decibels::gainToDecibels(sidechainPeakIn)
+                           : -100.0f;
+
+    inputLevelSmoothedDb     = juce::jmax(mainInDb, inputLevelSmoothedDb - 0.8f);
+    sidechainLevelSmoothedDb = juce::jmax(scInDb,   sidechainLevelSmoothedDb - 0.8f);
+    gainReductionSmoothedDb  = juce::jmax(grAmountDb, gainReductionSmoothedDb - 0.35f);
+
+    gainReductionDb.store(-grAmountDb);
+    gainReductionAmountDb.store(gainReductionSmoothedDb);
+    inputLevelDb.store(inputLevelSmoothedDb);
+    sidechainLevelDb.store(sidechainLevelSmoothedDb);
+
+    // Surface the GR amount to the host as a recordable parameter. Skip the notify when
+    // the value hasn't moved by at least 0.05 dB so steady-state doesn't spam listeners.
+    if (pGrOut != nullptr)
+    {
+        const float reported = pGrOut->get();
+        const float desired  = juce::jlimit(0.0f, 60.0f, grAmountDb);
+        if (std::abs(reported - desired) > 0.05f)
+            pGrOut->setValueNotifyingHost(pGrOut->convertTo0to1(desired));
+    }
+
+    const auto   endTime         = juce::Time::getHighResolutionTicks();
+    const double elapsedMs       = 1000.0 * static_cast<double>(endTime - startTime) / static_cast<double>(ticksPerSecond);
+    const double blockDurationMs = 1000.0 * static_cast<double>(numSamples) / std::max(1.0, getSampleRate());
+
+    processTimeMs.store(static_cast<float>(elapsedMs));
+    cpuUsagePercent.store(blockDurationMs > 0.0
+        ? static_cast<float>(100.0 * elapsedMs / blockDurationMs)
+        : 0.0f);
+
+    currentBlockSize.store(numSamples);
+    sidechainConnected.store(scConnected);
+}
+
+void MooDuckAudioProcessor::processConvFrame(int fftSize, int sizeIdx,
+                                                double thresholdDb, double ratio,
+                                                double attackMs, double releaseMs,
+                                                double outGainDb, bool useSidechain)
+{
+    const int hopSize = fftSize / 2;
+    const int numBins = fftSize / 2;                   // bins 0..numBins (incl. Nyquist)
+    auto&        fft  = *convFftObjs[sizeIdx];
+    auto&        scWin = *convWinObjs[sizeIdx];         // Hann — sidechain analysis
+    const float* aWin = convSqrtHann[sizeIdx].data();   // sqrt-Hann — main analysis + synthesis
+
+    // Assemble frames from ring buffers (oldest → newest)
+    for (int i = 0; i < fftSize; ++i) convWorkL[i]  = convInRingL[(convInWritePos + i) % fftSize];
+    for (int i = 0; i < fftSize; ++i) convWorkR[i]  = convInRingR[(convInWritePos + i) % fftSize];
+    for (int i = 0; i < fftSize; ++i) convScWork[i] = convScRing [(convScWritePos + i) % fftSize];
+    std::fill(convWorkL  + fftSize, convWorkL  + 2 * fftSize, 0.0f);
+    std::fill(convWorkR  + fftSize, convWorkR  + 2 * fftSize, 0.0f);
+    std::fill(convScWork + fftSize, convScWork + 2 * fftSize, 0.0f);
+
+    // Main = sqrt-Hann (analysis half of the WOLA pair); sidechain = Hann (detect only).
+    for (int i = 0; i < fftSize; ++i) { convWorkL[i] *= aWin[i]; convWorkR[i] *= aWin[i]; }
+    scWin.multiplyWithWindowingTable(convScWork, static_cast<size_t>(fftSize));
+
+    fft.performRealOnlyForwardTransform(convWorkL);
+    fft.performRealOnlyForwardTransform(convWorkR);
+    fft.performRealOnlyForwardTransform(convScWork);
+
+    const float invN      = 1.0f / (float) fftSize;
+    // SC magnitude calibration: *2 (≈ 1/Hann coherent gain) so a 0 dBFS tone reads ~1.0,
+    // matching the no-conv spectral path's scaling so the Threshold means the same thing.
+    const float scCal     = 2.0f;
+    const float threshLin = juce::Decibels::decibelsToGain(static_cast<float>(thresholdDb));
+    const float invRatio  = 1.0f / static_cast<float>(juce::jmax(0.001, ratio));
+    const float outGain   = juce::Decibels::decibelsToGain(static_cast<float>(outGainDb));
+
+    // Per-bin gain is smoothed across frames (frame rate = sr/hop) with the attack/release
+    // coefficients, so the spectral duck has real timing AND the mask can't jump per frame
+    // (kills the "birdies"/musical noise of a static mask).
+    const double sr        = std::max(1.0, getSampleRate());
+    const double frameRate = sr / (double) hopSize;
+    auto coeff = [frameRate](double ms) -> float
+    {
+        const double frames = std::max(1.0e-4, ms * 0.001) * frameRate;   // time constant in frames
+        return (float) std::exp(-1.0 / frames);
+    };
+    const float aCoeff = coeff(attackMs);
+    const float rCoeff = coeff(releaseMs);
+
+    auto targetGain = [&](float scMag) -> float
+    {
+        if (! useSidechain || scMag <= threshLin) return 1.0f;
+        const float overDb = juce::Decibels::gainToDecibels(scMag / threshLin);
+        return juce::Decibels::decibelsToGain((invRatio - 1.0f) * overDb);   // <= 1
+    };
+
+    float worstGainDb = 0.0f;
+
+    // Per bin: SC magnitude -> target gain -> attack/release smoothing -> apply to L & R.
+    // DC (bin 0) and Nyquist (bin N/2) are real-only; in JUCE's interleaved layout DC sits
+    // at [0] and Nyquist at [fftSize] (NOT [1] — [1] is DC's imaginary part, ~0).
+    for (int k = 0; k <= numBins; ++k)
+    {
+        int re, im;
+        if      (k == 0)       { re = 0;       im = -1; }   // DC      (real)
+        else if (k == numBins) { re = fftSize; im = -1; }   // Nyquist (real)
+        else                   { re = 2 * k;   im = 2 * k + 1; }
+
+        const float scMag = (im < 0)
+            ? std::abs(convScWork[re]) * invN * scCal
+            : std::sqrt(convScWork[re] * convScWork[re] + convScWork[im] * convScWork[im]) * invN * scCal;
+
+        const float tg  = targetGain(scMag);
+        float&      env = convBinGainEnv[k];
+        const float c   = (tg < env) ? aCoeff : rCoeff;     // gain falling = attack, rising = release
+        env = tg + c * (env - tg);
+
+        convWorkL[re] *= env; if (im >= 0) convWorkL[im] *= env;
+        convWorkR[re] *= env; if (im >= 0) convWorkR[im] *= env;
+
+        const float grDb = juce::Decibels::gainToDecibels(juce::jmax(1.0e-4f, env));
+        if (grDb < worstGainDb) worstGainDb = grDb;
+    }
+
+    fft.performRealOnlyInverseTransform(convWorkL);
+    fft.performRealOnlyInverseTransform(convWorkR);
+
+    // Synthesis window (sqrt-Hann, the other half of the WOLA pair) + output makeup gain.
+    for (int i = 0; i < fftSize; ++i)
+    {
+        const float w = aWin[i] * outGain;
+        convWorkL[i] *= w;
+        convWorkR[i] *= w;
+    }
+
+    // OLA: emit first half + saved overlap, save second half as next overlap.
+    for (int i = 0; i < hopSize; ++i)
+    {
+        convOutFifoL[convOutWritePos] = convWorkL[i] + convOvlL[i];
+        convOutFifoR[convOutWritePos] = convWorkR[i] + convOvlR[i];
+        convOutWritePos = (convOutWritePos + 1) % kConvOutFifoSize;
+        if (convOutCount < kConvOutFifoSize) ++convOutCount;
+    }
+    for (int i = 0; i < hopSize; ++i)
+    {
+        convOvlL[i] = convWorkL[hopSize + i];
+        convOvlR[i] = convWorkR[hopSize + i];
+    }
+
+    convFrameGrDb = -worstGainDb;
+}
+
+//==============================================================================
+bool MooDuckAudioProcessor::hasEditor() const
+{
+    return true;
+}
+
+juce::AudioProcessorEditor *MooDuckAudioProcessor::createEditor()
+{
+    return new MooDuckAudioProcessorEditor(*this);
+}
+
+//==============================================================================
+void MooDuckAudioProcessor::getStateInformation(juce::MemoryBlock &destData)
+{
+    auto state = apvts.copyState();
+    std::unique_ptr<juce::XmlElement> xml(state.createXml());
+    copyXmlToBinary(*xml, destData);
+}
+
+void MooDuckAudioProcessor::setStateInformation(const void *data, int sizeInBytes)
+{
+    std::unique_ptr<juce::XmlElement> xmlState(getXmlFromBinary(data, sizeInBytes));
+
+    if (xmlState != nullptr)
+        if (xmlState->hasTagName(apvts.state.getType()))
+            apvts.replaceState(juce::ValueTree::fromXml(*xmlState));
+}
+
+//==============================================================================
+juce::AudioProcessor *JUCE_CALLTYPE createPluginFilter()
+{
+    return new MooDuckAudioProcessor();
+}
