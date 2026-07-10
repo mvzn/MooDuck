@@ -11,34 +11,64 @@
 #include "ThemeState.h"
 
 // ============================ HOW TO RE-LAYOUT ==============================
-// These are the global layout knobs. The window opens at kWindowW x kWindowH
-// (and that ratio is locked in the constructor via setFixedAspectRatio, so the
-// window only ever scales proportionally). kOuterMargin is the dead border
-// around everything; kGroupGap is the vertical space between sections;
-// kGroupTitleH is the height reserved for each section's engraved title row.
-// Per-section heights (knob-row heights etc.) live as local constexprs inside
-// resized() — see that method to resize or reorder individual sections.
+// These are the global layout knobs. kOuterMargin is the dead border around
+// everything; kGroupGap is the vertical space between sections; kGroupTitleH
+// is the height reserved for each section's engraved title row. The section
+// HEIGHT constants live here too, so kWindowH is summed from them at compile
+// time — resize (or add) a section and the window follows automatically.
+// Widths and x-layout constants stay local to resized().
 // ===========================================================================
 namespace {
-    // >>> PLUGIN WINDOW SIZE <<< — the UI is fixed-size (resizing is disabled in the
-    // constructor). The sections below are fixed pixels summing to ~605 tall plus
-    // margins; keep kWindowH comfortably above that so nothing crowds the bottom.
-    // To change the overall size, retune the section heights too.
-    constexpr int kWindowW       = 820;
-    constexpr int kWindowH       = 847;   // wordmark band + dyn/xover/EQ/sat racks (EQ bottom row dropped)
     constexpr int kOuterMargin   = 22;
     constexpr int kGroupGap      = 4;    // breathing room between sections (tight -> groups sit up near the wordmark)
     constexpr int kGroupTitleH   = 22;
     constexpr int kKnobLabelH    = 18;   // height of the caption above every knob
 
+    // --- Per-section heights (top-to-bottom screen order) -------------------
+    constexpr int kTopPad        = 10;   // chassis strip above the wordmark band
+    constexpr int kWordmarkH     = 6;    // engraved wordmark band (~cap height, clips empty ascent/descent)
+    constexpr int kWordmarkGap   = 1;    // tiny gap so the caps don't touch the Modes title
+
+    constexpr int modeTopPad     = 0;    // gap under the Modes group title (buttons were cramped to it)
+    constexpr int modeBotPad     = 4;    // gap below the mode buttons (matches the top)
+    constexpr int modeBtnH       = 36;   // main mode-button height
+    constexpr int modeGroupH     = kGroupTitleH + modeTopPad + modeBtnH + modeBotPad;
+
+    constexpr int dynamicsKnobsH  = 100; // knob-row height (knobs are width-limited by the 8-col split, so this just sets the row's vertical air)
+    constexpr int dynamicsToggleH = 50;  // toggle-row slot -> vertical position of the toggle buttons
+    constexpr int dynamicsGroupH  = kGroupTitleH + dynamicsKnobsH + dynamicsToggleH;
+
+    constexpr int xoverRowH    = 96;     // knob-row height
+    constexpr int xoverBandH   = 28;     // band-switch row under the knobs (solo/mute switches)
+    constexpr int xoverBandGap = 6;      // gap pushing the band switches down, away from the freq knobs
+    constexpr int xoverGroupH  = kGroupTitleH + xoverRowH + xoverBandGap + xoverBandH + 4;
+
+    constexpr int pultecHdrH    = 14;    // engraved "LOW/HIGH FREQUENCY" sub-header row
+    constexpr int pultecKnobH   = 96;    // per-knob block height (caption + knob)
+    constexpr int pultecStagger = 76;    // bottom row drops so its CAPTIONS line up with the top knobs' value boxes
+    constexpr int pultecGroupH  = kGroupTitleH + pultecHdrH + pultecKnobH + pultecStagger + 6;  // bottom pad matches the other racks
+
+    constexpr int satRowH   = 118;       // taller row -> bigger saturation knobs
+    constexpr int satGroupH = kGroupTitleH + satRowH + 6;
+
+    // >>> PLUGIN WINDOW SIZE <<< — the UI is fixed-size (resizing is disabled in
+    // the constructor). Height = the full section stack + the bottom margin (the
+    // bottom strip with the latency readout / version text lives inside the margin).
+    constexpr int kWindowW = 820;
+    constexpr int kWindowH = kTopPad + kWordmarkH + kWordmarkGap
+                           + modeGroupH + dynamicsGroupH + xoverGroupH
+                           + pultecGroupH + satGroupH
+                           + 4 * kGroupGap        // gaps between the five sections
+                           + kOuterMargin;
+
     juce::Colour groupTextColour = juce::Colours::lightgrey;
 }
 
 //==============================================================================
-MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProcessor& p)
+MooDuckAudioProcessorEditor::MooDuckAudioProcessorEditor (MooDuckAudioProcessor& p)
     : AudioProcessorEditor (&p), audioProcessor (p)
 {
-    // setLookAndFeel installs our custom MaybeDuckLookAndFeel on this editor and
+    // setLookAndFeel installs our custom MooDuckLookAndFeel on this editor and
     // every child below it — that's what makes the knobs/buttons/labels render
     // with the brushed-metal style instead of JUCE's stock grey widgets.
     setLookAndFeel(&mdLookAndFeel);
@@ -122,8 +152,8 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
     // Ratio and Lookahead are stepped — give them a tick at each step position
     // (where the dot lands) instead of the uniform Moog graduation. The counts come
     // straight from the processor's step tables, so they can never fall out of sync.
-    ratioSlider.getProperties().set("stepTicks", MaybeDuckAudioProcessor::kNumRatioSteps);
-    lookaheadSlider.getProperties().set("stepTicks", MaybeDuckAudioProcessor::kNumLookaheadSteps);
+    ratioSlider.getProperties().set("stepTicks", MooDuckAudioProcessor::kNumRatioSteps);
+    lookaheadSlider.getProperties().set("stepTicks", MooDuckAudioProcessor::kNumLookaheadSteps);
 
     setupLabel(thresholdLabel, "Threshold");
     setupLabel(ratioLabel,     "Ratio");
@@ -321,7 +351,7 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
     setupGroup(pultecGroup, "Post PulEQ");
     setupGroup(pultecSatGroup, "Saturation");
 
-    // Top "MaybeDuck" wordmark hotspot: tooltip + triple-click theme toggle.
+    // Top "MooDuck" wordmark hotspot: tooltip + triple-click theme toggle.
     wordmarkHotspot.setTooltip("Triple-click to toggle light / dark theme");
     wordmarkHotspot.onMouseDown = [this](const juce::MouseEvent& e)
     {
@@ -333,6 +363,10 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
         }
     };
     addAndMakeVisible(wordmarkHotspot);
+
+    // Ctrl+Shift+S saves a screenshot (see keyPressed / saveScreenshot). The
+    // editor needs key focus for the shortcut to reach it.
+    setWantsKeyboardFocus(true);
 
     // Real EQP-1A front-panel terminology: LF Sel / LF Boost / LF Atten / HF Sel /
     // HF Boost / Bandwidth / Atten Sel / HF Atten. Avoids the prior "HF Atten Hz"
@@ -395,7 +429,7 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
     pultecBypassButton.setButtonText("Bypass");
     pultecBypassButton.setTooltip("Bypass the Pultec EQ entirely (pure passthrough — no oversampling, no WDF).");
     pultecBypassButton.getProperties().set("softSwitch", true);
-    pultecBypassButton.getProperties().set("litColour", static_cast<juce::int64>(MaybeDuckLookAndFeel::kBandMute)); // red when bypassed
+    pultecBypassButton.getProperties().set("litColour", static_cast<juce::int64>(MooDuckLookAndFeel::kBandMute)); // red when bypassed
     addAndMakeVisible(pultecBypassButton);
     pultecBypassAttachment = std::make_unique<ButtonAttachment>(
         audioProcessor.apvts, "pultecBypass", pultecBypassButton);
@@ -453,14 +487,14 @@ MaybeDuckAudioProcessorEditor::MaybeDuckAudioProcessorEditor (MaybeDuckAudioProc
     applyTheme();
 }
 
-MaybeDuckAudioProcessorEditor::~MaybeDuckAudioProcessorEditor()
+MooDuckAudioProcessorEditor::~MooDuckAudioProcessorEditor()
 {
     audioProcessor.apvts.removeParameterListener("limiter", this);
     audioProcessor.apvts.removeParameterListener("xtremeLookahead", this);
     setLookAndFeel(nullptr);
 }
 
-void MaybeDuckAudioProcessorEditor::parameterChanged(const juce::String& paramID, float newValue)
+void MooDuckAudioProcessorEditor::parameterChanged(const juce::String& paramID, float newValue)
 {
     // Hop to the message thread — parameter listeners may fire from the audio
     // thread, and we touch component state below.
@@ -471,7 +505,7 @@ void MaybeDuckAudioProcessorEditor::parameterChanged(const juce::String& paramID
         juce::MessageManager::callAsync([this, on] { applyXtremeLookaheadLock(on); });
 }
 
-void MaybeDuckAudioProcessorEditor::applyLimiterRatioLock(bool limiterOn)
+void MooDuckAudioProcessorEditor::applyLimiterRatioLock(bool limiterOn)
 {
     auto* ratioParam = audioProcessor.apvts.getParameter("ratio");
     if (ratioParam == nullptr)
@@ -501,7 +535,7 @@ void MaybeDuckAudioProcessorEditor::applyLimiterRatioLock(bool limiterOn)
     ratioSlider.updateText();
 }
 
-void MaybeDuckAudioProcessorEditor::applyXtremeLookaheadLock(bool xtremeOn)
+void MooDuckAudioProcessorEditor::applyXtremeLookaheadLock(bool xtremeOn)
 {
     // Xtreme swaps the knob between the normal and wide lookahead PARAMS, so the
     // knob stays a live selector in both — its range, value, value-box text and
@@ -513,12 +547,12 @@ void MaybeDuckAudioProcessorEditor::applyXtremeLookaheadLock(bool xtremeOn)
         lookaheadSlider);
 
     lookaheadSlider.getProperties().set("stepTicks",
-        xtremeOn ? MaybeDuckAudioProcessor::kNumXtremeLookaheadSteps
-                 : MaybeDuckAudioProcessor::kNumLookaheadSteps);
+        xtremeOn ? MooDuckAudioProcessor::kNumXtremeLookaheadSteps
+                 : MooDuckAudioProcessor::kNumLookaheadSteps);
     lookaheadSlider.repaint();
 }
 
-void MaybeDuckAudioProcessorEditor::setModeFromButton(int idx)
+void MooDuckAudioProcessorEditor::setModeFromButton(int idx)
 {
     if (auto* p = audioProcessor.apvts.getParameter("sidechainMode"))
     {
@@ -528,7 +562,7 @@ void MaybeDuckAudioProcessorEditor::setModeFromButton(int idx)
     }
 }
 
-void MaybeDuckAudioProcessorEditor::setConvSizeFromButton(int idx)
+void MooDuckAudioProcessorEditor::setConvSizeFromButton(int idx)
 {
     if (auto* p = audioProcessor.apvts.getParameter("fftConvSize"))
     {
@@ -538,7 +572,7 @@ void MaybeDuckAudioProcessorEditor::setConvSizeFromButton(int idx)
     }
 }
 
-void MaybeDuckAudioProcessorEditor::styleValueBox (juce::Slider& s)
+void MooDuckAudioProcessorEditor::styleValueBox (juce::Slider& s)
 {
     // Per-slider because JUCE bakes the value-box colours at setTextBoxStyle time
     // (before the slider is parented to our LookAndFeel), so the LAF default alone
@@ -550,7 +584,7 @@ void MaybeDuckAudioProcessorEditor::styleValueBox (juce::Slider& s)
     s.setColour(juce::Slider::textBoxHighlightColourId,  p.accentAmber.withAlpha(0.35f));
 }
 
-void MaybeDuckAudioProcessorEditor::applyTheme()
+void MooDuckAudioProcessorEditor::applyTheme()
 {
     // Push the persisted dark/light state into the LookAndFeel (also re-applies its
     // colour IDs + regenerates the brushed grain), then re-style every slider's
@@ -566,7 +600,38 @@ void MaybeDuckAudioProcessorEditor::applyTheme()
     repaint();
 }
 
-void MaybeDuckAudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
+void MooDuckAudioProcessorEditor::saveScreenshot()
+{
+    // Capture at 2x logical resolution (crisp enough for the website even on a
+    // 1x screen).
+    const auto snap = createComponentSnapshot(getLocalBounds(), true, 2.0f);
+
+    auto dir = juce::File::getSpecialLocation(juce::File::userPicturesDirectory);
+    if (! dir.isDirectory())
+        dir = juce::File::getSpecialLocation(juce::File::userHomeDirectory);
+    const auto file = dir.getNonexistentChildFile(
+        "MooDuck-" + juce::Time::getCurrentTime().formatted("%Y%m%d-%H%M%S"), ".png");
+
+    if (auto stream = file.createOutputStream())
+    {
+        stream->setPosition(0);
+        stream->truncate();
+        juce::PNGImageFormat().writeImageToStream(snap, *stream);
+    }
+}
+
+bool MooDuckAudioProcessorEditor::keyPressed (const juce::KeyPress& key)
+{
+    if (key == juce::KeyPress('s', juce::ModifierKeys::ctrlModifier
+                                     | juce::ModifierKeys::shiftModifier, 0))
+    {
+        saveScreenshot();
+        return true;
+    }
+    return juce::AudioProcessorEditor::keyPressed(key);
+}
+
+void MooDuckAudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
 {
     // Triple-click the wordmark to flip dark/light (process-wide, persisted).
     if (e.getNumberOfClicks() == 3 && wordmarkBounds.contains(e.getPosition()))
@@ -579,7 +644,7 @@ void MaybeDuckAudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
     juce::AudioProcessorEditor::mouseDown(e);
 }
 
-void MaybeDuckAudioProcessorEditor::cycleBandState(int band)
+void MooDuckAudioProcessorEditor::cycleBandState(int band)
 {
     // Advance the band's 3-state choice: Normal(0) -> Solo(1) -> Mute(2) -> Normal.
     if (auto* p = audioProcessor.apvts.getParameter("bandState" + juce::String(band)))
@@ -597,9 +662,9 @@ void MaybeDuckAudioProcessorEditor::cycleBandState(int band)
 // the four corner screws, and the engraved wordmark. The interactive widgets
 // (knobs, buttons, meters) paint themselves on top via the LookAndFeel; you do
 // NOT draw them here. Add static artwork (logos, panel labels, lines) in this
-// method. The actual textures live in MaybeDuckLookAndFeel.cpp (drawBrushedChassis,
+// method. The actual textures live in MooDuckLookAndFeel.cpp (drawBrushedChassis,
 // drawScrew, drawEngravedText), so tweak their look there; tweak placement here.
-void MaybeDuckAudioProcessorEditor::paint (juce::Graphics& g)
+void MooDuckAudioProcessorEditor::paint (juce::Graphics& g)
 {
     // The static background is cached and painting is just a blit (so the cheap,
     // frequently-repainting child widgets don't force the expensive chassis/grain
@@ -627,9 +692,9 @@ void MaybeDuckAudioProcessorEditor::paint (juce::Graphics& g)
         const auto wm = topWordmarkBounds.toFloat();
         g.setFont(juce::Font(mdLookAndFeel.getMediumTypeface()).withHeight(18.0f).withExtraKerningFactor(0.14f));
         g.setColour(mdLookAndFeel.palette().dividerHighlight.withAlpha(0.55f));  // lit lower-right lip
-        g.drawText("MAYBEDUCK", wm.translated(0.8f, 1.0f), juce::Justification::centred, false);
+        g.drawText("MOODUCK", wm.translated(0.8f, 1.0f), juce::Justification::centred, false);
         g.setColour(mdLookAndFeel.palette().dividerShadow.withAlpha(0.95f));     // dark carved groove
-        g.drawText("MAYBEDUCK", wm, juce::Justification::centred, false);
+        g.drawText("MOODUCK", wm, juce::Justification::centred, false);
     }
     wordmarkBounds = topWordmarkBounds.expanded(2.0f);   // triple-click theme-flip hot-spot
 
@@ -648,7 +713,7 @@ void MaybeDuckAudioProcessorEditor::paint (juce::Graphics& g)
                                        juce::Justification::centred, hdr);
 }
 
-void MaybeDuckAudioProcessorEditor::renderBackground()
+void MooDuckAudioProcessorEditor::renderBackground()
 {
     const int w = getWidth(), h = getHeight();
     if (w <= 0 || h <= 0)
@@ -675,6 +740,59 @@ void MaybeDuckAudioProcessorEditor::renderBackground()
     };
     for (int i = 0; i < 4; ++i)
         mdLookAndFeel.drawScrew(g, screwCentres[i], screwR, kScrewAngles[i]);
+
+    // Small cow-contour mascot tucked left of the top-right screw, engraved in
+    // the same lit-lip + dark-groove style as the wordmark. Side view facing
+    // left; built in a 100x62 design space and scaled down to fit.
+    {
+        juce::Path cow;
+        cow.startNewSubPath (2.0f, 30.0f);                     // muzzle tip (top)
+        cow.quadraticTo ( 2.0f, 20.0f,  8.0f, 12.0f);          // face up to the poll
+        cow.quadraticTo (10.0f,  7.0f, 15.0f, 11.0f);          // ear
+        cow.quadraticTo (18.0f, 15.0f, 22.0f, 16.0f);          // neck dip behind the ear
+        cow.quadraticTo (28.0f,  8.0f, 38.0f,  9.0f);          // up to the withers
+        cow.quadraticTo (52.0f,  6.0f, 64.0f,  8.0f);          // back
+        cow.quadraticTo (76.0f,  6.0f, 79.0f, 13.0f);          // hip -> rump
+        cow.quadraticTo (81.0f, 17.0f, 79.0f, 22.0f);          // rump into hind leg
+        cow.lineTo (78.0f, 42.0f);                             // hind leg, back edge
+        cow.lineTo (78.0f, 57.0f);
+        cow.lineTo (73.0f, 57.0f);                             // hoof
+        cow.lineTo (73.0f, 42.0f);                             // hind leg, front edge
+        cow.lineTo (71.0f, 36.0f);                             // groin
+        cow.quadraticTo (68.0f, 44.0f, 63.0f, 40.0f);          // udder, rear teat
+        cow.quadraticTo (60.0f, 44.0f, 57.0f, 39.0f);          // udder, front teat
+        cow.quadraticTo (45.0f, 42.0f, 33.0f, 38.0f);          // belly
+        cow.lineTo (31.0f, 42.0f);                             // front leg, back edge
+        cow.lineTo (31.0f, 57.0f);
+        cow.lineTo (26.0f, 57.0f);                             // hoof
+        cow.lineTo (26.0f, 42.0f);                             // front leg, front edge
+        cow.lineTo (24.0f, 32.0f);                             // chest
+        cow.quadraticTo (20.0f, 33.0f, 13.0f, 35.0f);          // throat / jaw
+        cow.quadraticTo ( 4.0f, 36.0f,  2.0f, 30.0f);          // muzzle (bottom), closes shape
+        cow.closeSubPath();
+        cow.startNewSubPath (79.0f, 15.0f);                    // tail
+        cow.quadraticTo (85.0f, 20.0f, 84.0f, 36.0f);
+        cow.quadraticTo (83.0f, 43.0f, 80.0f, 47.0f);          // tuft hint
+
+        // One mascot beside each top screw (screw edges at x±19), both looking
+        // toward the middle: the design-space cow faces left, so the right
+        // corner uses it as-is and the left corner gets a horizontal mirror.
+        juce::Path cowMirrored(cow);
+        cowMirrored.applyTransform(juce::AffineTransform::scale(-1.0f, 1.0f));
+
+        const juce::PathStrokeType stroke(1.1f, juce::PathStrokeType::curved,
+                                          juce::PathStrokeType::rounded);
+        auto engraveCow = [this, &g, &stroke](juce::Path& p, juce::Rectangle<float> target)
+        {
+            p.applyTransform(p.getTransformToScaleToFit(target, true));
+            g.setColour(mdLookAndFeel.palette().dividerHighlight.withAlpha(0.55f));  // lit lower-right lip
+            g.strokePath(p, stroke, juce::AffineTransform::translation(0.6f, 0.8f));
+            g.setColour(mdLookAndFeel.palette().dividerShadow.withAlpha(0.95f));     // dark carved groove
+            g.strokePath(p, stroke);
+        };
+        engraveCow(cow,         { area.getRight() - 56.0f, 4.0f, 30.0f, 16.0f });
+        engraveCow(cowMirrored, { area.getX()     + 26.0f, 4.0f, 30.0f, 16.0f });
+    }
 
     // Dynamics section reads as a rack-unit module dropped into the chassis. The
     // module spans the FULL plugin width (mounting rails at the case sides), with
@@ -819,18 +937,18 @@ void MaybeDuckAudioProcessorEditor::renderBackground()
 // reorder sections on screen, reorder these blocks. To make a section taller,
 // bump its local *GroupH / *RowH constant. Each section: claim its rectangle,
 // inset it, drop the title row, then lay knobs left-to-right inside what's left.
-void MaybeDuckAudioProcessorEditor::resized()
+void MooDuckAudioProcessorEditor::resized()
 {
     auto winBounds = getLocalBounds();
-    juce::Rectangle<int> area(winBounds.getX() + kOuterMargin, winBounds.getY() + 10,
+    juce::Rectangle<int> area(winBounds.getX() + kOuterMargin, winBounds.getY() + kTopPad,
                               winBounds.getWidth() - 2 * kOuterMargin,
-                              winBounds.getHeight() - 10 - kOuterMargin);
-    // Engraved "MaybeDuck" wordmark. The band tightly frames the caps (the empty
+                              winBounds.getHeight() - kTopPad - kOuterMargin);
+    // Engraved "MooDuck" wordmark. The band tightly frames the caps (the empty
     // ascent/descent of the font is clipped), so there's no descent gap left under
     // the text before the Modes group. No extra gap below.
-    topWordmarkBounds = area.removeFromTop(6);      // ~cap height: frames the caps, clips empty ascent/descent
+    topWordmarkBounds = area.removeFromTop(kWordmarkH);
     wordmarkHotspot.setBounds(topWordmarkBounds);    // tooltip + triple-click theme toggle
-    area.removeFromTop(1);                           // tiny gap so the caps don't touch the Modes title
+    area.removeFromTop(kWordmarkGap);
 
     // --- Sidechain Mode group: ONE row --------------------------------------
     // Vertical layout is pad-driven: [title][modeTopPad][button row][modeBotPad],
@@ -838,15 +956,13 @@ void MaybeDuckAudioProcessorEditor::resized()
     // Mode-select buttons hug the left; the smaller FFT-conv toggle + size buttons
     // hug the right (shown only in Spectral mode — see timerCallback) and read as
     // secondary. The latency readout sits at the editor's bottom-left, not here.
-    constexpr int modeTopPad     = 0;   // gap under the group title (buttons were cramped to it)
-    constexpr int modeBotPad     = 4;   // gap below the buttons (matches the top)
-    constexpr int modeBtnH       = 36;  // main mode-button height
+    // (Heights modeTopPad/modeBotPad/modeBtnH/modeGroupH live in the namespace
+    // block up top — they feed kWindowH.)
     constexpr int convBtnH       = 30;  // conv controls height -> shorter so they read as secondary
     constexpr int modeBtnW       = 112; // mode-select button width
     constexpr int convBtnW       = 120; // "FFT Conv" toggle button width
     constexpr int convSizeW      = 84;  // buffer-size button width (wider so 1024/2048 aren't cramped)
     constexpr int convRightInset = 0;   // right edge lines up with the highest crossover knob's right edge
-    constexpr int modeGroupH     = kGroupTitleH + modeTopPad + modeBtnH + modeBotPad;
     auto modeArea = area.removeFromTop(modeGroupH);
     modeGroup.setBounds(modeArea);
 
@@ -878,10 +994,7 @@ void MaybeDuckAudioProcessorEditor::resized()
     int sideBtnL = 0, sideBtnR = 0, dynMeterR = 0;
 
     // --- Dynamics group: 8-knob row + toggles row, GR meter on the right ---
-    constexpr int dynamicsKnobsH  = 100;  // knob-row height (knobs are width-limited by the 8-col split, so this just sets the row's vertical air)
-    constexpr int dynamicsToggleH = 50;   // toggle-row slot  -> vertical position of the toggle buttons
-    constexpr int dynamicsGroupH  = kGroupTitleH + dynamicsKnobsH + dynamicsToggleH;
-
+    // (Heights dynamicsKnobsH/dynamicsToggleH/dynamicsGroupH live up top.)
     auto dynamicsArea = area.removeFromTop(dynamicsGroupH);
     dynamicsGroup.setBounds(dynamicsArea);
     rackBoundsDyn = dynamicsArea;
@@ -941,11 +1054,8 @@ void MaybeDuckAudioProcessorEditor::resized()
 
     // --- Crossover group: 4 knobs + engraved 5-band ruler. The Coloured/Clean toggle
     // sits INLINE on the title row (after "CROSSOVER"), so no dedicated row is reserved
-    // and the rack keeps its original (shorter) height.
-    constexpr int xoverRowH    = 96;  // knob-row height
-    constexpr int xoverBandH   = 28;  // band-switch row under the knobs (solo/mute switches)
-    constexpr int xoverBandGap = 6;   // gap pushing the band switches down, away from the freq knobs
-    constexpr int xoverGroupH  = kGroupTitleH + xoverRowH + xoverBandGap + xoverBandH + 4;
+    // and the rack keeps its original (shorter) height. (Heights xoverRowH/
+    // xoverBandH/xoverBandGap/xoverGroupH live up top.)
     auto xoverArea = area.removeFromTop(xoverGroupH);
     crossoverGroup.setBounds(xoverArea);
     rackBoundsXover = xoverArea;
@@ -1035,10 +1145,7 @@ void MaybeDuckAudioProcessorEditor::resized()
     // --- Pultec EQP-1A rack: authentic faceplate split into a LOW FREQUENCY group
     // (LF Sel · Boost · Atten) and a HIGH FREQUENCY group (HF Sel · Boost · Bandwidth
     // · Atten Sel · Atten), with the Bypass/Sat toggles stacked at the right.
-    constexpr int pultecHdrH    = 14;  // engraved "LOW/HIGH FREQUENCY" sub-header row
-    constexpr int pultecKnobH   = 96;  // per-knob block height (caption + knob)
-    constexpr int pultecStagger = 76;  // bottom row drops so its CAPTIONS line up with the top knobs' value boxes
-    constexpr int pultecGroupH  = kGroupTitleH + pultecHdrH + pultecKnobH + pultecStagger + 6;  // bottom pad matches the other racks
+    // (Heights pultecHdrH/pultecKnobH/pultecStagger/pultecGroupH live up top.)
     auto pultecArea = area.removeFromTop(pultecGroupH);
     pultecGroup.setBounds(pultecArea);
     rackBoundsEq = pultecArea;
@@ -1107,8 +1214,7 @@ void MaybeDuckAudioProcessorEditor::resized()
     // --- Tube Saturation: its OWN rack-unit group, with a DARKER faceplate, below
     // the EQ. Drive / Mix / Trim knobs (spread) + the Sat enable button at the right.
     area.removeFromTop(kGroupGap);
-    constexpr int satRowH   = 118;  // taller row -> bigger saturation knobs
-    constexpr int satGroupH = kGroupTitleH + satRowH + 6;
+    // (Heights satRowH/satGroupH live up top.)
     auto satArea = area.removeFromTop(satGroupH);
     pultecSatGroup.setBounds(satArea);
     rackBoundsSat = satArea;
@@ -1147,7 +1253,7 @@ void MaybeDuckAudioProcessorEditor::resized()
     backgroundDirty = true;
 }
 
-void MaybeDuckAudioProcessorEditor::timerCallback()
+void MooDuckAudioProcessorEditor::timerCallback()
 {
     // Detect a theme flip from another editor instance (or a fresh load) and apply.
     if (ThemeState::get().generation() != lastThemeGen)
@@ -1242,8 +1348,8 @@ void MaybeDuckAudioProcessorEditor::timerCallback()
         if (st == prevBandState[i] && bandEnabled == prevBandEnabled)
             continue;
 
-        const juce::uint32 lit = (st == 1) ? MaybeDuckLookAndFeel::kBandSolo
-                               : (st == 2) ? MaybeDuckLookAndFeel::kBandMute
+        const juce::uint32 lit = (st == 1) ? MooDuckLookAndFeel::kBandSolo
+                               : (st == 2) ? MooDuckLookAndFeel::kBandMute
                                            : 0xffCBD0D4 /* cool silver = normal/active */;
         bandSwitches[i].getProperties().set("litColour", static_cast<juce::int64>(lit));
         bandSwitches[i].setEnabled(bandEnabled);   // Multiband + Spectral (FFT-Conv off)

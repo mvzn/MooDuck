@@ -43,7 +43,7 @@ Headers present in `processors/`:
 ### 2.1 Integration
 
 - **Header-only:** Yes. Include `include/chowdsp_wdf/chowdsp_wdf.h` and it compiles as part of the project. No linking step needed.
-- **CMake path (preferred):** `FetchContent_Declare(chowdsp_wdf GIT_REPOSITORY https://github.com/Chowdhury-DSP/chowdsp_wdf.git GIT_TAG v1.0.0)` then `target_link_libraries(MaybeDuck PRIVATE chowdsp_wdf)`. The CMakeLists.txt already uses FetchContent for JUCE, so the pattern is established.
+- **CMake path (preferred):** `FetchContent_Declare(chowdsp_wdf GIT_REPOSITORY https://github.com/Chowdhury-DSP/chowdsp_wdf.git GIT_TAG v1.0.0)` then `target_link_libraries(MooDuck PRIVATE chowdsp_wdf)`. The CMakeLists.txt already uses FetchContent for JUCE, so the pattern is established.
 - **Manual vendoring:** Copy `include/chowdsp_wdf/` into `Source/` or `ThirdParty/`, add it to include paths in the `.jucer`.
 
 ### 2.2 License
@@ -56,7 +56,7 @@ Last tagged release: v1.0.0 (December 17, 2022). Documentation regenerated Octob
 
 ### 2.4 SIMD support
 
-Optional integration with xsimd 8.0.0+. When enabled, `RtypeAdaptor` matrix multiplies use SIMD intrinsics. For scalar `double` processing (as in MaybeDuck's existing `ZVAFilter`), xsimd is not required.
+Optional integration with xsimd 8.0.0+. When enabled, `RtypeAdaptor` matrix multiplies use SIMD intrinsics. For scalar `double` processing (as in MooDuck's existing `ZVAFilter`), xsimd is not required.
 
 ### 2.5 JUCE 8 compatibility
 
@@ -227,7 +227,7 @@ L1 = RATIO_L1_C1 * C1
 **Complexity:** Moderate. The tree structure is established at compile time via C++ templates (`WDFSeriesT<double, decltype(r1), decltype(c1)>`). Parameter changes are handled by calling `r.setResistanceValue(newR)` on variable resistors, which triggers automatic port-resistance re-propagation up the tree.
 
 **Limitations:**
-- Stateful elements (`CapacitorT`, `InductorT`) must call `prepare(sampleRate)` before processing. This already matches the MaybeDuck plugin pattern.
+- Stateful elements (`CapacitorT`, `InductorT`) must call `prepare(sampleRate)` before processing. This already matches the MooDuck plugin pattern.
 - At 44.1 kHz, the HF boost LC resonator accuracy degrades near Nyquist — 2x oversampling restores it. The EQP-WDF-1A plugin confirms this using `juce::dsp::Oversampling`.
 - Variable resistors are updated per-parameter-change (not per-sample), so this is cheap.
 
@@ -235,7 +235,7 @@ L1 = RATIO_L1_C1 * C1
 
 ### 4b. Bilinear-transform IIR biquads
 
-**Current MaybeDuck approach.** Two `juce::dsp::IIR::Filter<float>` instances (or hand-rolled biquad) per band.
+**Current MooDuck approach.** Two `juce::dsp::IIR::Filter<float>` instances (or hand-rolled biquad) per band.
 
 **Limitations for Pultec:**
 1. Frequency warping: the analog prototype pole/zero locations are mapped nonlinearly to digital. For a 20 Hz shelf at 44.1 kHz the error is negligible, but at 10+ kHz it becomes audible.
@@ -264,7 +264,7 @@ The coefficient derivation is more involved than RBJ cookbook but produces corre
 
 ### 4d. TPT / State-Variable (Zavalishin) — existing ZVAFilter
 
-MaybeDuck already has `ZVAFilter` in `CrossoverCore.h` implementing the Zavalishin TPT SVF. This filter uses the TPT integrator:
+MooDuck already has `ZVAFilter` in `CrossoverCore.h` implementing the Zavalishin TPT SVF. This filter uses the TPT integrator:
 ```
 g = tan(π·fc/fs)          // prewarp
 alpha0 = 1 / (1 + 2R·g + g²)
@@ -585,9 +585,9 @@ inline double evenHarmonicSat(double x, double drive, double alpha) {
 | Makeup gain | Koren 12AX7 waveshaper OR linear scale | chowdsp_wdf (load-line) or hand-rolled |
 | Oversampling | 2x or 4x | `juce::dsp::Oversampling<double>` |
 
-### Integration with MaybeDuck style
+### Integration with MooDuck style
 
-MaybeDuck already uses:
+MooDuck already uses:
 - `double` precision processing throughout (`ZVAFilter::processAudioSample(double xn)`)
 - Per-parameter `calculateFilterCoeffs()` callbacks
 - `juce::SmoothedValue` for automation-safe ramping
@@ -628,13 +628,13 @@ oversampler.processSamplesDown(block);
 ### Vendoring chowdsp_wdf
 
 ```bash
-# From MaybeDuck/
+# From MooDuck/
 mkdir -p Source/ThirdParty
 cd Source/ThirdParty
 git clone --depth 1 --branch v1.0.0 https://github.com/Chowdhury-DSP/chowdsp_wdf.git
 ```
 
-Then in `MaybeDuck.jucer`, add `Source/ThirdParty/chowdsp_wdf/include` as a header search path. In CMakeLists.txt, add `include_directories(Source/ThirdParty/chowdsp_wdf/include)`.
+Then in `MooDuck.jucer`, add `Source/ThirdParty/chowdsp_wdf/include` as a header search path. In CMakeLists.txt, add `include_directories(Source/ThirdParty/chowdsp_wdf/include)`.
 
 In source files: `#include "chowdsp_wdf/chowdsp_wdf.h"`
 

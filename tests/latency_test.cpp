@@ -1,6 +1,6 @@
 // Host-level latency regression test.
 //
-// Drives the REAL MaybeDuckAudioProcessor through the juce::AudioProcessor host API and
+// Drives the REAL MooDuckAudioProcessor through the juce::AudioProcessor host API and
 // asserts the latency / PDC contract that unit-level DSP tests can't reach:
 //
 //   1. getLatencySamples() (what the host compensates) tracks the NORMAL lookahead range,
@@ -12,7 +12,7 @@
 //      Lagrange3rd smear) and lands exactly at the constant EQ/triode latency.
 //
 // Built as a console app that links the plugin's shared-code lib (see CMakeLists.txt,
-// MAYBEDUCK_BUILD_TESTS). Run via `ctest -R latency` or invoke the binary directly.
+// MOODUCK_BUILD_TESTS). Run via `ctest -R latency` or invoke the binary directly.
 
 #include "PluginProcessor.h"
 
@@ -29,21 +29,21 @@ void check (bool ok, const juce::String& label)
     else    { ++gFail; std::printf ("  [FAIL] %s\n", label.toRawUTF8()); }
 }
 
-void setParam (MaybeDuckAudioProcessor& p, const char* id, float value)
+void setParam (MooDuckAudioProcessor& p, const char* id, float value)
 {
     auto* param = p.apvts.getParameter (id);
     jassert (param != nullptr);
     param->setValueNotifyingHost (param->convertTo0to1 (value));
 }
 
-void prepare (MaybeDuckAudioProcessor& p, double sr, int block)
+void prepare (MooDuckAudioProcessor& p, double sr, int block)
 {
     p.setRateAndBufferSizeDetails (sr, block);   // so getSampleRate() is valid in processBlock
     p.prepareToPlay (sr, block);
 }
 
 // Reported latency at a given normal-range lookahead + sample rate.
-int reportedNormal (MaybeDuckAudioProcessor& p, float lookMs, double sr)
+int reportedNormal (MooDuckAudioProcessor& p, float lookMs, double sr)
 {
     setParam (p, "xtremeLookahead", 0.0f);
     setParam (p, "lookahead", lookMs);
@@ -56,7 +56,7 @@ int reportedNormal (MaybeDuckAudioProcessor& p, float lookMs, double sr)
 // oversampler has valid pre-history (an impulse at sample 0 truncates the OS filter's
 // pre-ring and reads low — a measurement artifact, not a path defect).
 struct Peak { int index; float amp; };
-Peak impulseResponse (MaybeDuckAudioProcessor& p, int N, int pos)
+Peak impulseResponse (MooDuckAudioProcessor& p, int N, int pos)
 {
     juce::AudioBuffer<float> buf (2, N);
     buf.clear();
@@ -104,10 +104,10 @@ void testDelayLineZeroIsExact()
 int main()
 {
     juce::MessageManager::getInstance();   // events only — no GUI / no X
-    std::printf ("== MaybeDuck host latency / PDC ==\n");
+    std::printf ("== MooDuck host latency / PDC ==\n");
 
     {
-        MaybeDuckAudioProcessor proc;
+        MooDuckAudioProcessor proc;
 
         // ---------------------------------------------------------------------------
         // 1. Reported latency tracks the NORMAL lookahead range, across sample rates.

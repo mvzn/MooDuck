@@ -12,7 +12,7 @@ namespace wdft
      *  An adaptable R-Type adaptor.
      *  For more information see: https://searchworks.stanford.edu/view/11891203, chapter 2
      *
-     *  Not used in MaybeDuck's EQP-1A tree (all junctions decompose to binary
+     *  Not used in MooDuck's EQP-1A tree (all junctions decompose to binary
      *  series/parallel pairs), but included for completeness.
      */
     template <typename T, int upPortIndex, typename ImpedanceCalculator, typename... PortTypes>

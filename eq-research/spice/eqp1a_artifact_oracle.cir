@@ -1,7 +1,7 @@
 * EQP-1A passive section -- ground-truth oracle for the 60 Hz HF-Boost artifact
 * ---------------------------------------------------------------------------
 * Topology = the ABSounds/WDF binary tree (EQP1A_netlist.txt), node-for-node.
-* Component values = MaybeDuck Source/PultecCore.h, flat LF + cut, HF Sel 8 kHz,
+* Component values = MooDuck Source/PultecCore.h, flat LF + cut, HF Sel 8 kHz,
 * BW 0.9.  The HF-Boost pot is modelled exactly as our WDF does: two resistors
 * RBH1 = (1-w)*12k (series) and RBH2 = w*12k (across the LC tank).
 *

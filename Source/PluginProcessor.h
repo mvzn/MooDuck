@@ -18,12 +18,12 @@
 //==============================================================================
 /**
 */
-class MaybeDuckAudioProcessor  : public juce::AudioProcessor
+class MooDuckAudioProcessor  : public juce::AudioProcessor
 {
 public:
     //==============================================================================
-    MaybeDuckAudioProcessor();
-    ~MaybeDuckAudioProcessor() override;
+    MooDuckAudioProcessor();
+    ~MooDuckAudioProcessor() override;
 
     //==============================================================================
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
@@ -283,5 +283,5 @@ private:
     float outputLevelSmoothedDb = -100.0f;
     float gainReductionSmoothedDb = 0.0f;
     //==============================================================================
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MaybeDuckAudioProcessor)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MooDuckAudioProcessor)
 };

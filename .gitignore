@@ -47,4 +47,4 @@ CLAUDE.md
 !.vscode/**
 
 # Runtime theme/settings file (PropertiesFile CWD fallback during VST3 helper scan)
-MaybeDuck.settings
+MooDuck.settings

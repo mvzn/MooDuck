@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<JUCERPROJECT id="i6ngGc" name="MaybeDuck" version="1.21" projectType="audioplug" useAppConfig="0"
-              addUsingNamespaceToJuceHeader="0" jucerFormatVersion="1" pluginFormats="buildAU,buildVST3">
-  <MAINGROUP id="Ma0yGF" name="MaybeDuck">
+<JUCERPROJECT id="i6ngGc" name="MooDuck" version="1.21" projectType="audioplug" useAppConfig="0"
+              addUsingNamespaceToJuceHeader="0" jucerFormatVersion="1" pluginFormats="buildAU,buildVST3"
+              pluginName="MooDuck" pluginDesc="MooDuck" companyName="mvzn"
+              bundleIdentifier="com.mvzn.MooDuck">
+  <MAINGROUP id="Ma0yGF" name="MooDuck">
     <GROUP id="{4AE79E48-790F-936D-A2EA-D9E604833509}" name="Source">
       <FILE id="wjYgEL" name="CrossoverCore.h" compile="0" resource="0" file="Source/CrossoverCore.h"/>
       <FILE id="fqzS2W" name="FXFunctions.h" compile="0" resource="0" file="Source/FXFunctions.h"/>
@@ -14,14 +16,20 @@
       <FILE id="uo7tsz" name="PluginEditor.cpp" compile="1" resource="0"
             file="Source/PluginEditor.cpp"/>
       <FILE id="p9yJIo" name="PluginEditor.h" compile="0" resource="0" file="Source/PluginEditor.h"/>
-      <FILE id="MdLnFc" name="MaybeDuckLookAndFeel.cpp" compile="1" resource="0"
-            file="Source/MaybeDuckLookAndFeel.cpp"/>
-      <FILE id="MdLnFh" name="MaybeDuckLookAndFeel.h" compile="0" resource="0"
-            file="Source/MaybeDuckLookAndFeel.h"/>
+      <FILE id="MdLnFc" name="MooDuckLookAndFeel.cpp" compile="1" resource="0"
+            file="Source/MooDuckLookAndFeel.cpp"/>
+      <FILE id="MdLnFh" name="MooDuckLookAndFeel.h" compile="0" resource="0"
+            file="Source/MooDuckLookAndFeel.h"/>
       <FILE id="LvMtrC" name="LevelMeterComponent.cpp" compile="1" resource="0"
             file="Source/LevelMeterComponent.cpp"/>
       <FILE id="LvMtrH" name="LevelMeterComponent.h" compile="0" resource="0"
             file="Source/LevelMeterComponent.h"/>
+      <FILE id="ThStC1" name="ThemeState.cpp" compile="1" resource="0" file="Source/ThemeState.cpp"/>
+      <FILE id="ThStH1" name="ThemeState.h" compile="0" resource="0" file="Source/ThemeState.h"/>
+      <FILE id="KorenH" name="KorenTriode.h" compile="0" resource="0" file="Source/KorenTriode.h"/>
+      <FILE id="PltcCH" name="PultecCore.h" compile="0" resource="0" file="Source/PultecCore.h"/>
+      <FILE id="PltcMH" name="PultecMakeupChain.h" compile="0" resource="0"
+            file="Source/PultecMakeupChain.h"/>
     </GROUP>
     <GROUP id="{B1F0E2C3-4A5D-6E7F-8901-23456789ABCD}" name="Resources">
       <FILE id="ttfReg" name="IBMPlexSansCondensed-Regular.ttf" compile="0"
@@ -53,8 +61,8 @@
   <EXPORTFORMATS>
     <LINUX_MAKE targetFolder="Builds/LinuxMakefile">
       <CONFIGURATIONS>
-        <CONFIGURATION isDebug="1" name="Debug" targetName="MaybeDuck"/>
-        <CONFIGURATION isDebug="0" name="Release" targetName="MaybeDuck"/>
+        <CONFIGURATION isDebug="1" name="Debug" targetName="MooDuck"/>
+        <CONFIGURATION isDebug="0" name="Release" targetName="MooDuck"/>
       </CONFIGURATIONS>
       <MODULEPATHS>
         <MODULEPATH id="juce_dsp" path="Builds/LinuxMakefile"/>

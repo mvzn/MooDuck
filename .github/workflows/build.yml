@@ -95,7 +95,7 @@ jobs:
           sccache --show-stats 2>&1 | tee -a "$LOG_FILE" || true
           echo >> "$LOG_FILE"
           echo "--- Build outputs ---" | tee -a "$LOG_FILE"
-          find build/MaybeDuck_artefacts -maxdepth 5 -type f 2>/dev/null | tee -a "$LOG_FILE" || true
+          find build/MooDuck_artefacts -maxdepth 5 -type f 2>/dev/null | tee -a "$LOG_FILE" || true
 
       - name: Upload build log
         if: always()
@@ -109,21 +109,21 @@ jobs:
       - name: Upload VST3
         uses: actions/upload-artifact@v4
         with:
-          name: MaybeDuck-${{ runner.os }}-VST3
-          path: build/MaybeDuck_artefacts/${{ matrix.build_type }}/VST3/
+          name: MooDuck-${{ runner.os }}-VST3
+          path: build/MooDuck_artefacts/${{ matrix.build_type }}/VST3/
           if-no-files-found: error
 
       - name: Upload AU (macOS)
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@v4
         with:
-          name: MaybeDuck-macOS-AU
-          path: build/MaybeDuck_artefacts/${{ matrix.build_type }}/AU/
+          name: MooDuck-macOS-AU
+          path: build/MooDuck_artefacts/${{ matrix.build_type }}/AU/
           if-no-files-found: error
 
       - name: Upload Standalone
         uses: actions/upload-artifact@v4
         with:
-          name: MaybeDuck-${{ runner.os }}-Standalone
-          path: build/MaybeDuck_artefacts/${{ matrix.build_type }}/Standalone/
+          name: MooDuck-${{ runner.os }}-Standalone
+          path: build/MooDuck_artefacts/${{ matrix.build_type }}/Standalone/
           if-no-files-found: warn

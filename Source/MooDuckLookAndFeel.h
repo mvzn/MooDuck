@@ -2,11 +2,11 @@
 
 #include <JuceHeader.h>
 
-class MaybeDuckLookAndFeel : public juce::LookAndFeel_V4
+class MooDuckLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
-    MaybeDuckLookAndFeel();
-    ~MaybeDuckLookAndFeel() override = default;
+    MooDuckLookAndFeel();
+    ~MooDuckLookAndFeel() override = default;
 
     // ============================ HOW TO RESTYLE ============================
     // PALETTE — this is the single place to change every colour in the plugin.
@@ -15,7 +15,7 @@ public:
     // e.g. 0xffE8A23E -> fully opaque, R=E8 G=A2 B=3E (the amber accent).
     // Change a constant here and everything that references it updates at once
     // (knobs, meters, buttons, engraved text all pull from these). To recolour
-    // just one widget instead, edit its draw method in MaybeDuckLookAndFeel.cpp.
+    // just one widget instead, edit its draw method in MooDuckLookAndFeel.cpp.
     //
     //   kChassis*  : the brushed-metal background gradient (top->bottom).
     //   kDivider*  : engraved section divider lines + tick highlights/shadows.
@@ -184,5 +184,5 @@ private:
     void applyPaletteColours();  // pushes palette tones into the slider value-box colour IDs
     void regenerateGrain();      // rebuilds grainImage from the active chassis tones
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MaybeDuckLookAndFeel)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MooDuckLookAndFeel)
 };

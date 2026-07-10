@@ -13,7 +13,7 @@
 // members (single source of truth, shared with the editor's tick drawing).
 
 //==============================================================================
-MaybeDuckAudioProcessor::MaybeDuckAudioProcessor()
+MooDuckAudioProcessor::MooDuckAudioProcessor()
 #ifndef JucePlugin_PreferredChannelConfigurations
     : AudioProcessor(BusesProperties()
 #if !JucePlugin_IsMidiEffect
@@ -74,11 +74,11 @@ MaybeDuckAudioProcessor::MaybeDuckAudioProcessor()
     pPultecBypass      = apvts.getRawParameterValue("pultecBypass");
 }
 
-MaybeDuckAudioProcessor::~MaybeDuckAudioProcessor()
+MooDuckAudioProcessor::~MooDuckAudioProcessor()
 {
 }
 
-juce::AudioProcessorValueTreeState::ParameterLayout MaybeDuckAudioProcessor::createParameterLayout()
+juce::AudioProcessorValueTreeState::ParameterLayout MooDuckAudioProcessor::createParameterLayout()
 {
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
 
@@ -304,7 +304,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout MaybeDuckAudioProcessor::cre
     return {params.begin(), params.end()};
 }
 
-int MaybeDuckAudioProcessor::getConvLatencySamples() const noexcept
+int MooDuckAudioProcessor::getConvLatencySamples() const noexcept
 {
     int conv = 0;
     if (pSidechainMode && pFftConv && pFftConvSize)
@@ -331,12 +331,12 @@ int MaybeDuckAudioProcessor::getConvLatencySamples() const noexcept
 }
 
 //==============================================================================
-const juce::String MaybeDuckAudioProcessor::getName() const
+const juce::String MooDuckAudioProcessor::getName() const
 {
-    return "MaybeDuck";
+    return "MooDuck";
 }
 
-bool MaybeDuckAudioProcessor::acceptsMidi() const
+bool MooDuckAudioProcessor::acceptsMidi() const
 {
 #if JucePlugin_WantsMidiInput
     return true;
@@ -345,7 +345,7 @@ bool MaybeDuckAudioProcessor::acceptsMidi() const
 #endif
 }
 
-bool MaybeDuckAudioProcessor::producesMidi() const
+bool MooDuckAudioProcessor::producesMidi() const
 {
 #if JucePlugin_ProducesMidiOutput
     return true;
@@ -354,7 +354,7 @@ bool MaybeDuckAudioProcessor::producesMidi() const
 #endif
 }
 
-bool MaybeDuckAudioProcessor::isMidiEffect() const
+bool MooDuckAudioProcessor::isMidiEffect() const
 {
 #if JucePlugin_IsMidiEffect
     return true;
@@ -363,43 +363,43 @@ bool MaybeDuckAudioProcessor::isMidiEffect() const
 #endif
 }
 
-double MaybeDuckAudioProcessor::getTailLengthSeconds() const
+double MooDuckAudioProcessor::getTailLengthSeconds() const
 {
     return 0.0;
 }
 
-juce::AudioProcessorParameter* MaybeDuckAudioProcessor::getBypassParameter() const
+juce::AudioProcessorParameter* MooDuckAudioProcessor::getBypassParameter() const
 {
     // Hand the host our bypass param so it drives it; we implement the (crossfaded,
     // latency-aligned) bypass in processBlock instead of letting the wrapper hard-switch.
     return apvts.getParameter("bypass");
 }
 
-int MaybeDuckAudioProcessor::getNumPrograms()
+int MooDuckAudioProcessor::getNumPrograms()
 {
     return 1;
 }
 
-int MaybeDuckAudioProcessor::getCurrentProgram()
+int MooDuckAudioProcessor::getCurrentProgram()
 {
     return 0;
 }
 
-void MaybeDuckAudioProcessor::setCurrentProgram(int index)
+void MooDuckAudioProcessor::setCurrentProgram(int index)
 {
 }
 
-const juce::String MaybeDuckAudioProcessor::getProgramName(int index)
+const juce::String MooDuckAudioProcessor::getProgramName(int index)
 {
     return {};
 }
 
-void MaybeDuckAudioProcessor::changeProgramName(int index, const juce::String &newName)
+void MooDuckAudioProcessor::changeProgramName(int index, const juce::String &newName)
 {
 }
 
 //==============================================================================
-void MaybeDuckAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
+void MooDuckAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     // Publish SR/block size up front so anything that reads the atomics during prepare
     // (e.g. the editor calling getConvLatencySamples on the message thread) sees the
@@ -602,8 +602,8 @@ void MaybeDuckAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
     sidechainConnected.store(false);
 }
 
-MaybeDuckAudioProcessor::BandControlValues
-MaybeDuckAudioProcessor::applyBandLink(const BandControlValues& gr, float linkAmount)
+MooDuckAudioProcessor::BandControlValues
+MooDuckAudioProcessor::applyBandLink(const BandControlValues& gr, float linkAmount)
 {
     // Placeholder for future n-band link control.
     // Currently passes through unchanged; replace with neighbor-linking or
@@ -612,12 +612,12 @@ MaybeDuckAudioProcessor::applyBandLink(const BandControlValues& gr, float linkAm
     return gr;
 }
 
-void MaybeDuckAudioProcessor::releaseResources()
+void MooDuckAudioProcessor::releaseResources()
 {
 }
 
 #ifndef JucePlugin_PreferredChannelConfigurations
-bool MaybeDuckAudioProcessor::isBusesLayoutSupported(const BusesLayout &layouts) const
+bool MooDuckAudioProcessor::isBusesLayoutSupported(const BusesLayout &layouts) const
 {
 #if JucePlugin_IsMidiEffect
     juce::ignoreUnused(layouts);
@@ -647,7 +647,7 @@ bool MaybeDuckAudioProcessor::isBusesLayoutSupported(const BusesLayout &layouts)
 }
 #endif
 
-void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
+void MooDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
 {
     juce::ignoreUnused(midiMessages);   // no MIDI handling in this effect
     juce::ScopedNoDenormals noDenormals;
@@ -1244,7 +1244,7 @@ void MaybeDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     sidechainConnected.store(scConnected);
 }
 
-void MaybeDuckAudioProcessor::processConvFrame(int fftSize, int sizeIdx,
+void MooDuckAudioProcessor::processConvFrame(int fftSize, int sizeIdx,
                                                 double thresholdDb, double ratio,
                                                 double attackMs, double releaseMs,
                                                 double outGainDb, bool useSidechain)
@@ -1356,25 +1356,25 @@ void MaybeDuckAudioProcessor::processConvFrame(int fftSize, int sizeIdx,
 }
 
 //==============================================================================
-bool MaybeDuckAudioProcessor::hasEditor() const
+bool MooDuckAudioProcessor::hasEditor() const
 {
     return true;
 }
 
-juce::AudioProcessorEditor *MaybeDuckAudioProcessor::createEditor()
+juce::AudioProcessorEditor *MooDuckAudioProcessor::createEditor()
 {
-    return new MaybeDuckAudioProcessorEditor(*this);
+    return new MooDuckAudioProcessorEditor(*this);
 }
 
 //==============================================================================
-void MaybeDuckAudioProcessor::getStateInformation(juce::MemoryBlock &destData)
+void MooDuckAudioProcessor::getStateInformation(juce::MemoryBlock &destData)
 {
     auto state = apvts.copyState();
     std::unique_ptr<juce::XmlElement> xml(state.createXml());
     copyXmlToBinary(*xml, destData);
 }
 
-void MaybeDuckAudioProcessor::setStateInformation(const void *data, int sizeInBytes)
+void MooDuckAudioProcessor::setStateInformation(const void *data, int sizeInBytes)
 {
     std::unique_ptr<juce::XmlElement> xmlState(getXmlFromBinary(data, sizeInBytes));
 
@@ -1386,5 +1386,5 @@ void MaybeDuckAudioProcessor::setStateInformation(const void *data, int sizeInBy
 //==============================================================================
 juce::AudioProcessor *JUCE_CALLTYPE createPluginFilter()
 {
-    return new MaybeDuckAudioProcessor();
+    return new MooDuckAudioProcessor();
 }

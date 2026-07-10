@@ -11,9 +11,9 @@
     flipped the theme.
 
     Persistence: PropertiesFile at the platform-appropriate per-user location
-      Linux:   ~/.config/MaybeDuck/MaybeDuck.settings
-      macOS:   ~/Library/Application Support/MaybeDuck/MaybeDuck.settings
-      Windows: %APPDATA%/MaybeDuck/MaybeDuck.settings
+      Linux:   ~/.config/MooDuck/MooDuck.settings
+      macOS:   ~/Library/Application Support/MooDuck/MooDuck.settings
+      Windows: %APPDATA%/MooDuck/MooDuck.settings
     Key: "darkMode" (bool, default false).
 
   ==============================================================================

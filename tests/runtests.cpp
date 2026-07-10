@@ -1,4 +1,4 @@
-// MaybeDuck test runner — exercises the DSP cores headless.
+// MooDuck test runner — exercises the DSP cores headless.
 //
 // Build:  make -C tests
 // Run:    ./tests/runtests
@@ -2180,7 +2180,7 @@ void test_makeup_chain_latency()
 
 int main()
 {
-    std::printf("MaybeDuck DSP tests\n");
+    std::printf("MooDuck DSP tests\n");
 
     test_dB_linear();
     test_envelope_attack();

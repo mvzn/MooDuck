@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(MaybeDuck VERSION 1.21 LANGUAGES C CXX)
+project(MooDuck VERSION 1.21 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -32,10 +32,10 @@ FetchContent_MakeAvailable(JUCE)
 # Plugin identity codes mirror Builds/LinuxMakefile output so the CMake-built
 # binary keeps the same VST3 UID / AU subtype as the local Projucer build.
 # ManufacturerCode 0x4d616e75 = 'Manu', PluginCode 0x49366e67 = 'I6ng'.
-juce_add_plugin(MaybeDuck
-    PRODUCT_NAME             "MaybeDuck"
-    COMPANY_NAME             "yourcompany"
-    BUNDLE_ID                "com.yourcompany.MaybeDuck"
+juce_add_plugin(MooDuck
+    PRODUCT_NAME             "MooDuck"
+    COMPANY_NAME             "mvzn"
+    BUNDLE_ID                "com.mvzn.MooDuck"
     PLUGIN_MANUFACTURER_CODE Manu
     PLUGIN_CODE              I6ng
     FORMATS                  VST3 AU Standalone
@@ -49,9 +49,9 @@ juce_add_plugin(MaybeDuck
     AU_MAIN_TYPE             "kAudioUnitType_Effect"
 )
 
-juce_generate_juce_header(MaybeDuck)
+juce_generate_juce_header(MooDuck)
 
-juce_add_binary_data(MaybeDuckBinaryData
+juce_add_binary_data(MooDuckBinaryData
     HEADER_NAME BinaryData.h
     NAMESPACE   BinaryData
     SOURCES
@@ -59,28 +59,28 @@ juce_add_binary_data(MaybeDuckBinaryData
         Resources/fonts/IBMPlexSansCondensed-Medium.ttf
 )
 
-target_sources(MaybeDuck PRIVATE
+target_sources(MooDuck PRIVATE
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
-    Source/MaybeDuckLookAndFeel.cpp
+    Source/MooDuckLookAndFeel.cpp
     Source/LevelMeterComponent.cpp
     Source/ThemeState.cpp
 )
 
-target_compile_definitions(MaybeDuck PRIVATE
+target_compile_definitions(MooDuck PRIVATE
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_VST3_CAN_REPLACE_VST2=0
     JUCE_STRICT_REFCOUNTEDPOINTER=1
 )
 
-target_include_directories(MaybeDuck PRIVATE
+target_include_directories(MooDuck PRIVATE
     Source/vendor
 )
 
-target_link_libraries(MaybeDuck
+target_link_libraries(MooDuck
     PRIVATE
-        MaybeDuckBinaryData
+        MooDuckBinaryData
         juce::juce_audio_utils
         juce::juce_dsp
         juce::juce_gui_extra
@@ -91,47 +91,47 @@ target_link_libraries(MaybeDuck
 
 # ---------------------------------------------------------------------------
 # Host-level regression tests. A console app that links the plugin's shared code
-# and drives the REAL MaybeDuckAudioProcessor through the host API to assert the
+# and drives the REAL MooDuckAudioProcessor through the host API to assert the
 # latency / PDC contract (which the headless tests/runtests.cpp can't reach,
 # since it deliberately drops juce_audio_processors / the plugin client).
-#   cmake --build build-cmake --target MaybeDuckLatencyTest
+#   cmake --build build-cmake --target MooDuckLatencyTest
 #   ctest --test-dir build-cmake -R latency --output-on-failure
-# Disable with -DMAYBEDUCK_BUILD_TESTS=OFF.
+# Disable with -DMOODUCK_BUILD_TESTS=OFF.
 # ---------------------------------------------------------------------------
-option(MAYBEDUCK_BUILD_TESTS "Build MaybeDuck host-level regression tests" ON)
-if(MAYBEDUCK_BUILD_TESTS)
+option(MOODUCK_BUILD_TESTS "Build MooDuck host-level regression tests" ON)
+if(MOODUCK_BUILD_TESTS)
     enable_testing()
 
-    juce_add_console_app(MaybeDuckLatencyTest PRODUCT_NAME "MaybeDuckLatencyTest")
-    juce_generate_juce_header(MaybeDuckLatencyTest)
+    juce_add_console_app(MooDuckLatencyTest PRODUCT_NAME "MooDuckLatencyTest")
+    juce_generate_juce_header(MooDuckLatencyTest)
 
-    target_sources(MaybeDuckLatencyTest PRIVATE tests/latency_test.cpp)
+    target_sources(MooDuckLatencyTest PRIVATE tests/latency_test.cpp)
 
-    target_include_directories(MaybeDuckLatencyTest PRIVATE Source Source/vendor)
+    target_include_directories(MooDuckLatencyTest PRIVATE Source Source/vendor)
 
-    target_compile_definitions(MaybeDuckLatencyTest PRIVATE
+    target_compile_definitions(MooDuckLatencyTest PRIVATE
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
         JUCE_VST3_CAN_REPLACE_VST2=0
         JUCE_STRICT_REFCOUNTEDPOINTER=1)
 
     # We need the plugin's compiled objects (the real processor + editor), so we link the
-    # shared-code ARCHIVE BY FILE rather than the MaybeDuck target. Linking the target would
+    # shared-code ARCHIVE BY FILE rather than the MooDuck target. Linking the target would
     # drag in its INTERFACE definitions — including JUCE_STANDALONE_APPLICATION=
     # JucePlugin_Build_Standalone, which collides with the JUCE_STANDALONE_APPLICATION=1 that
     # juce_add_console_app sets (both evaluate to 1, but the differing tokens warn as a macro
     # redefinition). Linking the file gives us the objects without the interface. The JUCE
     # modules are compiled into THIS target via the juce:: links; the archive's own module
     # copies are pulled on demand only for the plugin-specific objects (no duplicate symbols).
-    add_dependencies(MaybeDuckLatencyTest MaybeDuck)
-    target_link_libraries(MaybeDuckLatencyTest PRIVATE
-        $<TARGET_FILE:MaybeDuck>
-        MaybeDuckBinaryData
+    add_dependencies(MooDuckLatencyTest MooDuck)
+    target_link_libraries(MooDuckLatencyTest PRIVATE
+        $<TARGET_FILE:MooDuck>
+        MooDuckBinaryData
         juce::juce_audio_utils
         juce::juce_dsp
         juce::juce_gui_extra
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)
 
-    add_test(NAME latency COMMAND MaybeDuckLatencyTest)
+    add_test(NAME latency COMMAND MooDuckLatencyTest)
 endif()

@@ -1,10 +1,10 @@
-#include "MaybeDuckLookAndFeel.h"
+#include "MooDuckLookAndFeel.h"
 
 // ============================== THEME PALETTES ==============================
 // Light = the original brushed-nickel look; dark = a higher-contrast charcoal.
 // Field order matches the Palette struct. setDarkMode() selects between them.
 // Band/meter state colours (kBandSolo/kBandMute/kMeterClipRed) stay constant.
-const MaybeDuckLookAndFeel::Palette MaybeDuckLookAndFeel::lightPalette {
+const MooDuckLookAndFeel::Palette MooDuckLookAndFeel::lightPalette {
     juce::Colour(0xffC7BFB3), juce::Colour(0xffA8A097), juce::Colour(0xff6E6863),
     juce::Colour(0xffD0C8BC), juce::Colour(0xff5A5450),
     juce::Colour(0xff1A1A1A), juce::Colour(0xffFFFFFF), juce::Colour(0xffE8A23E), juce::Colour(0xffEFE7D7),
@@ -12,7 +12,7 @@ const MaybeDuckLookAndFeel::Palette MaybeDuckLookAndFeel::lightPalette {
     juce::Colour(0xff5A5450),  // tickColor = divider shadow (dark groove on a light panel)
     juce::Colour(0x00000000)   // knobUnderGlow: off in light mode (transparent)
 };
-const MaybeDuckLookAndFeel::Palette MaybeDuckLookAndFeel::darkPalette {
+const MooDuckLookAndFeel::Palette MooDuckLookAndFeel::darkPalette {
     juce::Colour(0xff4A4A53), juce::Colour(0xff2B2B31), juce::Colour(0xff121216),
     juce::Colour(0xff6C6C77), juce::Colour(0xff070709),
     juce::Colour(0xff0E0E10), juce::Colour(0xffFFFFFF), juce::Colour(0xffEBA94A), juce::Colour(0xffE6E1D7),
@@ -21,7 +21,7 @@ const MaybeDuckLookAndFeel::Palette MaybeDuckLookAndFeel::darkPalette {
     juce::Colour(0xffEAE6D6)   // knobUnderGlow = warm off-white "dimmed-LED" halo
 };
 
-MaybeDuckLookAndFeel::MaybeDuckLookAndFeel()
+MooDuckLookAndFeel::MooDuckLookAndFeel()
 {
     regularTypeface = juce::Typeface::createSystemTypefaceFor(
         BinaryData::IBMPlexSansCondensedRegular_ttf,
@@ -91,7 +91,7 @@ MaybeDuckLookAndFeel::MaybeDuckLookAndFeel()
     }
 }
 
-void MaybeDuckLookAndFeel::setDarkMode (bool shouldBeDark)
+void MooDuckLookAndFeel::setDarkMode (bool shouldBeDark)
 {
     dark = shouldBeDark;
     pal  = shouldBeDark ? darkPalette : lightPalette;
@@ -99,7 +99,7 @@ void MaybeDuckLookAndFeel::setDarkMode (bool shouldBeDark)
     regenerateGrain();
 }
 
-void MaybeDuckLookAndFeel::applyPaletteColours()
+void MooDuckLookAndFeel::applyPaletteColours()
 {
     // Knob value-readout box: matte plate + engraved-tone border/text from the
     // active palette (re-run on every theme switch).
@@ -109,7 +109,7 @@ void MaybeDuckLookAndFeel::applyPaletteColours()
     setColour(juce::Slider::textBoxHighlightColourId,  pal.accentAmber.withAlpha(0.35f));
 }
 
-void MaybeDuckLookAndFeel::regenerateGrain()
+void MooDuckLookAndFeel::regenerateGrain()
 {
     // 256x256 tileable brushed-grain overlay, tinted from the active chassis tones.
     grainImage = juce::Image(juce::Image::ARGB, 256, 256, true);
@@ -123,7 +123,7 @@ void MaybeDuckLookAndFeel::regenerateGrain()
         }
 }
 
-void MaybeDuckLookAndFeel::drawBrushedChassis (juce::Graphics& g, juce::Rectangle<float> area) const
+void MooDuckLookAndFeel::drawBrushedChassis (juce::Graphics& g, juce::Rectangle<float> area) const
 {
     // Vertical 3-stop gradient: highlight near top, mid in the middle, shadow at the bottom.
     juce::ColourGradient grad(
@@ -151,7 +151,7 @@ void MaybeDuckLookAndFeel::drawBrushedChassis (juce::Graphics& g, juce::Rectangl
     g.fillRect(area);
 }
 
-juce::Colour MaybeDuckLookAndFeel::chassisToneAt (float yNorm) const
+juce::Colour MooDuckLookAndFeel::chassisToneAt (float yNorm) const
 {
     // Mirrors drawBrushedChassis: highlight at top -> chassisMid at 0.55 -> shadow.
     yNorm = juce::jlimit(0.0f, 1.0f, yNorm);
@@ -160,7 +160,7 @@ juce::Colour MaybeDuckLookAndFeel::chassisToneAt (float yNorm) const
     return pal.chassisMid.interpolatedWith(pal.chassisShadow, (yNorm - 0.55f) / 0.45f);
 }
 
-void MaybeDuckLookAndFeel::drawRackInset (juce::Graphics& g, juce::Rectangle<float> area,
+void MooDuckLookAndFeel::drawRackInset (juce::Graphics& g, juce::Rectangle<float> area,
                                          juce::Colour localChassis) const
 {
     if (area.isEmpty()) return;
@@ -225,7 +225,7 @@ void MaybeDuckLookAndFeel::drawRackInset (juce::Graphics& g, juce::Rectangle<flo
     }
 }
 
-void MaybeDuckLookAndFeel::drawScrew (juce::Graphics& g, juce::Point<float> centre, float radius,
+void MooDuckLookAndFeel::drawScrew (juce::Graphics& g, juce::Point<float> centre, float radius,
                                       float slotAngleRadians) const
 {
     juce::Rectangle<float> body(centre.x - radius, centre.y - radius, radius * 2.0f, radius * 2.0f);
@@ -258,7 +258,7 @@ void MaybeDuckLookAndFeel::drawScrew (juce::Graphics& g, juce::Point<float> cent
     g.drawLine(a.x + 0.5f, a.y + 0.5f, b.x + 0.5f, b.y + 0.5f, 0.6f);
 }
 
-void MaybeDuckLookAndFeel::drawEngravedText (juce::Graphics& g, const juce::String& text,
+void MooDuckLookAndFeel::drawEngravedText (juce::Graphics& g, const juce::String& text,
                                              juce::Rectangle<float> area, juce::Justification just,
                                              juce::Font font) const
 {
@@ -277,19 +277,19 @@ void MaybeDuckLookAndFeel::drawEngravedText (juce::Graphics& g, const juce::Stri
     g.drawText(text, area, just, false);
 }
 
-void MaybeDuckLookAndFeel::applyRotaryConfiguration (juce::Slider& s) const
+void MooDuckLookAndFeel::applyRotaryConfiguration (juce::Slider& s) const
 {
     s.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
     s.setRotaryParameters(kRotaryStartAngle, kRotaryEndAngle, true);
 }
 
-void MaybeDuckLookAndFeel::applyBipolarBehavior (juce::Slider& s, double centreValue) const
+void MooDuckLookAndFeel::applyBipolarBehavior (juce::Slider& s, double centreValue) const
 {
     s.getProperties().set("bipolarCentre", centreValue);
     s.setDoubleClickReturnValue(true, centreValue);
 }
 
-juce::Colour MaybeDuckLookAndFeel::litColourFor (const juce::Button& b)
+juce::Colour MooDuckLookAndFeel::litColourFor (const juce::Button& b)
 {
     const auto& p = b.getProperties();
     if (p.contains("litColour"))
@@ -297,13 +297,13 @@ juce::Colour MaybeDuckLookAndFeel::litColourFor (const juce::Button& b)
     return juce::Colour(kAccentWhite);   // static method — use the constant, not the runtime palette
 }
 
-bool MaybeDuckLookAndFeel::isSoftSwitch (const juce::Button& b)
+bool MooDuckLookAndFeel::isSoftSwitch (const juce::Button& b)
 {
     return b.getProperties().contains("softSwitch");
 }
 
-MaybeDuckLookAndFeel::CapGeom
-MaybeDuckLookAndFeel::computeCapGeometry (juce::Rectangle<float> bounds, bool pressedLook, bool softProfile,
+MooDuckLookAndFeel::CapGeom
+MooDuckLookAndFeel::computeCapGeometry (juce::Rectangle<float> bounds, bool pressedLook, bool softProfile,
                                           bool flatRelief) const
 {
     const float corner = flatRelief ? 0.5f : (softProfile ? 2.5f : 3.5f);   // flat = near-square
@@ -327,7 +327,7 @@ MaybeDuckLookAndFeel::computeCapGeometry (juce::Rectangle<float> bounds, bool pr
     return { socket, base, top, corner };
 }
 
-void MaybeDuckLookAndFeel::drawPushButtonBody (juce::Graphics& g, juce::Rectangle<float> bounds,
+void MooDuckLookAndFeel::drawPushButtonBody (juce::Graphics& g, juce::Rectangle<float> bounds,
                                                bool isOn, bool isMouseOver, bool isDown, bool isEnabled,
                                                juce::Colour litColour, bool softProfile, bool alwaysLit,
                                                bool flatRelief) const
@@ -471,7 +471,7 @@ void MaybeDuckLookAndFeel::drawPushButtonBody (juce::Graphics& g, juce::Rectangl
     }
 }
 
-void MaybeDuckLookAndFeel::drawPushButtonLabel (juce::Graphics& g, juce::Rectangle<float> bounds,
+void MooDuckLookAndFeel::drawPushButtonLabel (juce::Graphics& g, juce::Rectangle<float> bounds,
                                                 const juce::String& text,
                                                 bool isOn, bool /*isMouseOver*/, bool isDown, bool isEnabled,
                                                 bool softProfile, bool alwaysLit, bool flatRelief) const
@@ -516,7 +516,7 @@ void MaybeDuckLookAndFeel::drawPushButtonLabel (juce::Graphics& g, juce::Rectang
     g.drawText(upper, rect.toNearestInt(), juce::Justification::centred, false);
 }
 
-void MaybeDuckLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton& b,
+void MooDuckLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton& b,
                                              bool isOver, bool isDown)
 {
     const auto bounds = b.getLocalBounds().toFloat();
@@ -528,7 +528,7 @@ void MaybeDuckLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButt
     drawPushButtonLabel(g, bounds, b.getButtonText(), isOn, isOver, isDown, b.isEnabled(), soft, alwaysLit, flatRelief);
 }
 
-void MaybeDuckLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& b,
+void MooDuckLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& b,
                                                  const juce::Colour& /*bg*/,
                                                  bool isOver, bool isDown)
 {
@@ -538,7 +538,7 @@ void MaybeDuckLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button
                        b.getProperties().contains("flatRelief"));
 }
 
-void MaybeDuckLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& b,
+void MooDuckLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& b,
                                            bool isOver, bool isDown)
 {
     drawPushButtonLabel(g, b.getLocalBounds().toFloat(),
@@ -547,7 +547,7 @@ void MaybeDuckLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& 
                         b.getProperties().contains("flatRelief"));
 }
 
-juce::Font MaybeDuckLookAndFeel::getLabelFont (juce::Label& l)
+juce::Font MooDuckLookAndFeel::getLabelFont (juce::Label& l)
 {
     // Honour the label's explicitly-set font size when set; otherwise pick a
     // sensible default for panel-label text.
@@ -558,7 +558,7 @@ juce::Font MaybeDuckLookAndFeel::getLabelFont (juce::Label& l)
     return font;
 }
 
-void MaybeDuckLookAndFeel::drawLabel (juce::Graphics& g, juce::Label& l)
+void MooDuckLookAndFeel::drawLabel (juce::Graphics& g, juce::Label& l)
 {
     g.fillAll(l.findColour(juce::Label::backgroundColourId));
 
@@ -578,7 +578,7 @@ void MaybeDuckLookAndFeel::drawLabel (juce::Graphics& g, juce::Label& l)
     g.drawRect(l.getLocalBounds());
 }
 
-void MaybeDuckLookAndFeel::drawGroupComponentOutline (juce::Graphics& g, int width, int height,
+void MooDuckLookAndFeel::drawGroupComponentOutline (juce::Graphics& g, int width, int height,
                                                      const juce::String& text,
                                                      const juce::Justification& /*position*/,
                                                      juce::GroupComponent& group)
@@ -622,7 +622,7 @@ void MaybeDuckLookAndFeel::drawGroupComponentOutline (juce::Graphics& g, int wid
     juce::ignoreUnused(height);
 }
 
-float MaybeDuckLookAndFeel::groupTitleRightEdge (const juce::String& title) const
+float MooDuckLookAndFeel::groupTitleRightEdge (const juce::String& title) const
 {
     const float padX = 8.0f;
     juce::Font font(mediumTypeface);
@@ -631,7 +631,7 @@ float MaybeDuckLookAndFeel::groupTitleRightEdge (const juce::String& title) cons
     return padX + font.getStringWidthFloat(title.toUpperCase()) + 6.0f;
 }
 
-void MaybeDuckLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height,
+void MooDuckLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height,
                                              float sliderPos,
                                              float rotaryStart, float rotaryEnd,
                                              juce::Slider& slider)

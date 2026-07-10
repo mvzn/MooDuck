@@ -10,17 +10,17 @@
 
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
-#include "MaybeDuckLookAndFeel.h"
+#include "MooDuckLookAndFeel.h"
 #include "LevelMeterComponent.h"
 
 //==============================================================================
-class MaybeDuckAudioProcessorEditor  : public juce::AudioProcessorEditor,
+class MooDuckAudioProcessorEditor  : public juce::AudioProcessorEditor,
                                        private juce::Timer,
                                        private juce::AudioProcessorValueTreeState::Listener
 {
 public:
-    MaybeDuckAudioProcessorEditor (MaybeDuckAudioProcessor&);
-    ~MaybeDuckAudioProcessorEditor() override;
+    MooDuckAudioProcessorEditor (MooDuckAudioProcessor&);
+    ~MooDuckAudioProcessorEditor() override;
 
     //==============================================================================
     void paint (juce::Graphics&) override;
@@ -33,8 +33,11 @@ public:
     // Triple-click the engraved wordmark to flip the dark/light theme (process-wide).
     void mouseDown (const juce::MouseEvent& e) override;
 
+    // Ctrl+Shift+S saves a 2x PNG screenshot of the editor (for the website).
+    bool keyPressed (const juce::KeyPress& key) override;
+
 private:
-    MaybeDuckAudioProcessor& audioProcessor;
+    MooDuckAudioProcessor& audioProcessor;
 
     // Pull the persisted dark/light state into the LookAndFeel, re-push the per-
     // slider value-box colours, and repaint. Called on load, on local toggle, and
@@ -51,7 +54,7 @@ private:
     bool backgroundDirty = true;   // rebuild the cache lazily in paint() (bounds guaranteed valid there)
 
     juce::Rectangle<int> wordmarkBounds;   // triple-click hot-spot (set in renderBackground())
-    juce::Rectangle<int> topWordmarkBounds;// engraved "MaybeDuck" strip along the top (set in resized())
+    juce::Rectangle<int> topWordmarkBounds;// engraved "MooDuck" strip along the top (set in resized())
 
     // Invisible hotspot over the top wordmark: hosts a tooltip and the triple-click
     // theme toggle (a painted string can't carry a tooltip itself).
@@ -69,6 +72,10 @@ private:
     int  prevLatSamples   = -1;
     juce::uint32 prevSatColour = 0;   // last Sat-button glow colour (audio-reactive)
 
+    // --- Screenshot (Ctrl+Shift+S): saves a 2x PNG of the editor to ~/Pictures
+    // (home-dir fallback). No UI — keeps the panel clean for website shots.
+    void saveScreenshot();
+
     // Hard Duck freezes the ratio knob and relabels its read-out ∞:1 (the DSP
     // ignores the ratio value while Hard Duck is engaged).
     void applyLimiterRatioLock(bool limiterOn);
@@ -77,7 +84,7 @@ private:
     // overrides the lookahead value while engaged).
     void applyXtremeLookaheadLock(bool xtremeOn);
 
-    MaybeDuckLookAndFeel mdLookAndFeel;
+    MooDuckLookAndFeel mdLookAndFeel;
     juce::TooltipWindow  tooltipWindow { this, 700 };
 
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
@@ -168,5 +175,5 @@ private:
     // GroupComponent bounds being valid at render time.
     juce::Rectangle<int> rackBoundsDyn, rackBoundsEq, rackBoundsSat, rackBoundsXover;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MaybeDuckAudioProcessorEditor)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MooDuckAudioProcessorEditor)
 };

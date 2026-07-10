@@ -19,7 +19,7 @@ namespace
     // kGrMaxDb for a meter that shows more dB of ducking before pegging. The
     // ballistics below control only how fast the GR readout reacts, not its scale.
     // The strip WIDTHS/positions are set in resized(); the segment COLOURS come
-    // from the palette in MaybeDuckLookAndFeel.h (kAccentWhite/Amber, kMeterClipRed).
+    // from the palette in MooDuckLookAndFeel.h (kAccentWhite/Amber, kMeterClipRed).
 
     // --- Ballistic time constants (used for the GR strip) ---------------------
     constexpr double kTimerHz       = 30.0;
@@ -109,11 +109,11 @@ void LevelMeterComponent::resized()
 }
 
 //==============================================================================
-const MaybeDuckLookAndFeel::Palette& LevelMeterComponent::pal() const
+const MooDuckLookAndFeel::Palette& LevelMeterComponent::pal() const
 {
-    if (auto* laf = dynamic_cast<MaybeDuckLookAndFeel*>(&getLookAndFeel()))
+    if (auto* laf = dynamic_cast<MooDuckLookAndFeel*>(&getLookAndFeel()))
         return laf->palette();
-    return MaybeDuckLookAndFeel::lightPalette;
+    return MooDuckLookAndFeel::lightPalette;
 }
 
 void LevelMeterComponent::paint(juce::Graphics& g)
@@ -166,11 +166,11 @@ void LevelMeterComponent::drawLevelStrip(juce::Graphics& g,
 
         juce::Colour segColour;
         if (segDb >= kStripClipDb)
-            segColour = juce::Colour(MaybeDuckLookAndFeel::kMeterClipRed);
+            segColour = juce::Colour(MooDuckLookAndFeel::kMeterClipRed);
         else if (segDb >= kStripAmberDb)
-            segColour = juce::Colour(MaybeDuckLookAndFeel::kAccentAmber);
+            segColour = juce::Colour(MooDuckLookAndFeel::kAccentAmber);
         else
-            segColour = juce::Colour(MaybeDuckLookAndFeel::kAccentWhite);
+            segColour = juce::Colour(MooDuckLookAndFeel::kAccentWhite);
 
         if (i < litCount)
         {
@@ -217,7 +217,7 @@ void LevelMeterComponent::drawGrStrip(juce::Graphics& g,
     const int litCount = juce::jlimit(0, kGrSegments,
                                       (int) std::round(norm * kGrSegments));
 
-    const juce::Colour amber(MaybeDuckLookAndFeel::kAccentAmber);
+    const juce::Colour amber(MooDuckLookAndFeel::kAccentAmber);
 
     for (int i = 0; i < kGrSegments; ++i)
     {

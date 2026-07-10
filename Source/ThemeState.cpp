@@ -19,10 +19,10 @@ ThemeState& ThemeState::get()
 ThemeState::ThemeState()
 {
     juce::PropertiesFile::Options opts;
-    opts.applicationName     = "MaybeDuck";
+    opts.applicationName     = "MooDuck";
     opts.filenameSuffix      = "settings";
     opts.osxLibrarySubFolder = "Application Support";
-    opts.folderName          = "MaybeDuck";
+    opts.folderName          = "MooDuck";
     opts.commonToAllUsers    = false;
 
     // Make sure the parent directory exists; otherwise juce::PropertiesFile can
