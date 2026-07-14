@@ -145,6 +145,11 @@ private:
     DynamicsProcessor bandProcessorsR[numBands];
     StereoMultibandCrossover crossover;
 
+    // Per-band solo/mute gate, ramped (~8 ms) so toggling Normal/Solo/Mute never
+    // steps a band's contribution (the hard 0/1 switch used to click).
+    float bandGateSmooth[numBands] = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
+    float bandGateInc = 1.0f;   // per-sample ramp step (set in prepareToPlay)
+
     juce::AudioBuffer<float> mainBandBufL, mainBandBufR;
     juce::AudioBuffer<float> scBandBufL,   scBandBufR;
 

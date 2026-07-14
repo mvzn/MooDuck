@@ -468,6 +468,19 @@ void MooDuckAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock
     bypassDryBuf.clear();
     bypassMix = (pHostBypass && pHostBypass->load() > 0.5f) ? 1.0f : 0.0f;   // adopt current state, no fade
     bypassInc = 1.0f / juce::jmax(1.0f, static_cast<float>(0.010 * sampleRate)); // ~10 ms crossfade
+
+    // Band solo/mute gate ramp (~8 ms); adopt current states with no fade.
+    bandGateInc = 1.0f / juce::jmax(1.0f, static_cast<float>(0.008 * sampleRate));
+    {
+        bool anySoloAtPrepare = false;
+        for (int b = 0; b < numBands; ++b)
+            if (pBandState[b] && static_cast<int>(pBandState[b]->load()) == 1) { anySoloAtPrepare = true; break; }
+        for (int b = 0; b < numBands; ++b)
+        {
+            const int st = pBandState[b] ? static_cast<int>(pBandState[b]->load()) : 0;
+            bandGateSmooth[b] = (anySoloAtPrepare ? (st == 1) : (st != 2)) ? 1.0f : 0.0f;
+        }
+    }
     // Ramp time long enough to mask big jumps (e.g. moving from 0 to 16 ms) without
     // audible group-delay smear. 100 ms glides ~0.5 ms per 5 ms — well below the
     // perceptual threshold for time-domain warping.
@@ -944,10 +957,13 @@ void MooDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
 
             for (int b = 0; b < numBands; ++b)
             {
-                const int kLow  = juce::jmax(1,
+                int kLow  = juce::jmax(1,
                     (int) std::floor(bandEdges[b]     * (double) kSpectralFftSize / sr));
-                const int kHigh = juce::jmin(kSpectralFftSize / 2 - 1,
+                int kHigh = juce::jmin(kSpectralFftSize / 2 - 1,
                     (int) std::ceil (bandEdges[b + 1] * (double) kSpectralFftSize / sr));
+                // The xover params range independently; out-of-order edges would give an
+                // empty bin range and silently stop this band from ducking.
+                if (kLow > kHigh) std::swap(kLow, kHigh);
                 float sumSq = 0.0f;
                 int   count = 0;
                 for (int k = kLow; k <= kHigh; ++k)
@@ -980,7 +996,8 @@ void MooDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
         {
             const float offsetDb   = pBandScale[b] ? pBandScale[b]->load() : 0.0f;
             const bool  needsScale = std::abs(offsetDb) > 0.005f;
-            const float gate       = bandGate[b];
+            const float gateTarget = bandGate[b];
+            float       gate       = bandGateSmooth[b];
 
             for (int n = 0; n < numSamples; ++n)
             {
@@ -1010,9 +1027,13 @@ void MooDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
                     pR *= juce::dsp::FastMathApproximations::exp((newGrDbR - oldGrDbR) * 0.11512925f);
                 }
 
+                // Ramp the solo/mute gate toward its target so toggles don't click.
+                gate = (gate < gateTarget) ? juce::jmin(gateTarget, gate + bandGateInc)
+                                           : juce::jmax(gateTarget, gate - bandGateInc);
                 outL[n] += pL * gate;
                 if (outR) outR[n] += pR * gate;
             }
+            bandGateSmooth[b] = gate;
         }
 
         for (int b = 0; b < numBands; ++b)

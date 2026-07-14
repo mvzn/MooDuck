@@ -119,7 +119,9 @@ public:
 
     void calculateFilterCoeffs()
     {
-        const double fc  = params.fc;
+        // fc at or above Nyquist flips the sign of the bilinear prewarp tan()
+        // and blows up the filter — clamp regardless of what the caller asked for.
+        const double fc  = juce::jlimit(1.0, 0.49 * sampleRate, params.fc);
         const double Q   = params.Q;
         const auto   alg = params.filterAlgorithm;
 
@@ -197,12 +199,12 @@ public:
     // Call from audio thread (e.g. reading APVTS raw value at start of processBlock).
     void setCrossoverFrequency(double fc)
     {
-        smoothedFc.setTargetValue(juce::jlimit(20.0, 20000.0, fc));
+        smoothedFc.setTargetValue(clampFc(fc));
     }
 
     void setCrossoverFrequencyImmediate(double fc)
     {
-        fc = juce::jlimit(20.0, 20000.0, fc);
+        fc = clampFc(fc);
         smoothedFc.setCurrentAndTargetValue(fc);
         currentFc = fc;
         applyFrequency(fc);
@@ -229,6 +231,13 @@ public:
     }
 
 private:
+    // Ceiling tracks Nyquist so low host sample rates (< ~40 kHz) can't push a
+    // split point above fs/2, where the SVF prewarp goes unstable.
+    double clampFc(double fc) const
+    {
+        return juce::jlimit(20.0, juce::jmin(20000.0, 0.49 * sampleRate), fc);
+    }
+
     void applyFrequency(double fc)
     {
         ZVAFilterParameters lp, hp;
