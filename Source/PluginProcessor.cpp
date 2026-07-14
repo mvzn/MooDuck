@@ -531,7 +531,9 @@ void MooDuckAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock
     chain.prepare(sampleRate, samplesPerBlock);
 
     // Adopt the session's pot values instantly — the per-block glide is only
-    // for moving automation, not for session load / re-prepare.
+    // for moving automation, not for session load / re-prepare. Same for the
+    // tube Drive (synchronous LUT rebuild is fine off the audio thread).
+    triode.setDrive (pPultecSatDrive ? pPultecSatDrive->load() : 1.0f);
     pultecLfBoostSm = pPultecLfBoost ? pPultecLfBoost->load() : 0.0f;
     pultecLfAttenSm = pPultecLfAtten ? pPultecLfAtten->load() : 0.0f;
     pultecHfBoostSm = pPultecHfBoost ? pPultecHfBoost->load() : 0.0f;
@@ -1193,7 +1195,9 @@ void MooDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
 
         // P6 controls: Drive (12AX7 grid excursion), Mix (parallel dry/wet),
         // Output trim (loudness-match the wet path).
-        triode.setDrive (pPultecSatDrive ? pPultecSatDrive->load() : 1.0f);
+        // Amortized: a Drive change rebuilds the tube LUTs a bounded slice per
+        // block instead of all 2×1024 transcendental entries in one call.
+        triode.setDriveAmortized (pPultecSatDrive ? pPultecSatDrive->load() : 1.0f);
         chain.setSatMix  (pPultecSatMix  ? pPultecSatMix->load() * 0.01f : 1.0f);   // %->0..1
         chain.setSatTrimGain (juce::Decibels::decibelsToGain (
                                   pPultecSatTrim ? pPultecSatTrim->load() : 0.0f));
