@@ -530,6 +530,14 @@ void MooDuckAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock
     triode.prepare(sampleRate, samplesPerBlock);
     chain.prepare(sampleRate, samplesPerBlock);
 
+    // Adopt the session's pot values instantly — the per-block glide is only
+    // for moving automation, not for session load / re-prepare.
+    pultecLfBoostSm = pPultecLfBoost ? pPultecLfBoost->load() : 0.0f;
+    pultecLfAttenSm = pPultecLfAtten ? pPultecLfAtten->load() : 0.0f;
+    pultecHfBoostSm = pPultecHfBoost ? pPultecHfBoost->load() : 0.0f;
+    pultecHfBwSm    = pPultecHfBw    ? pPultecHfBw->load()    : 0.3f;
+    pultecHfAttenSm = pPultecHfAtten ? pPultecHfAtten->load() : 0.0f;
+
     // FFT Conv objects — pre-allocate all three sizes (no audio-thread allocation later)
     static constexpr int kOrders[3] = { 9, 10, 11 };
     static constexpr int kSizes [3] = { 512, 1024, 2048 };
@@ -1158,13 +1166,27 @@ void MooDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
         const bool eqBypass = pPultecBypass && pPultecBypass->load() > 0.5f;
         pultec.setBypass (eqBypass);
         pultec.setLfFreqIndex      (pPultecLfFreq      ? static_cast<int> (pPultecLfFreq->load())      : 4);
-        pultec.setLfBoostDb        (pPultecLfBoost     ? pPultecLfBoost->load()                        : 0.0f);
-        pultec.setLfAttenDb        (pPultecLfAtten     ? pPultecLfAtten->load()                        : 0.0f);
         pultec.setHfFreqIndex      (pPultecHfFreq      ? static_cast<int> (pPultecHfFreq->load())      : 3);
-        pultec.setHfBoostDb        (pPultecHfBoost     ? pPultecHfBoost->load()                        : 0.0f);
-        pultec.setHfBandwidth      (pPultecHfBw        ? pPultecHfBw->load()                           : 0.3f);
         pultec.setHfAttenFreqIndex (pPultecHfAttenFreq ? static_cast<int> (pPultecHfAttenFreq->load()) : 1);
-        pultec.setHfAttenDb        (pPultecHfAtten     ? pPultecHfAtten->load()                        : 0.0f);
+
+        // The continuous pots apply instantly inside PultecEQP1A, so glide the
+        // values fed to them (~30 ms one-pole, once per block) — a moving fader
+        // otherwise steps the transfer function at every block boundary (zipper).
+        // stepToward snaps close values exactly onto target so settled pots hit
+        // the setters' early-return and cost nothing.
+        const float potAlpha = 1.0f - std::exp (-static_cast<float> (numSamples)
+                                                / static_cast<float> (0.030 * getSampleRate()));
+        auto stepToward = [potAlpha] (float& v, float target) noexcept
+        {
+            v += potAlpha * (target - v);
+            if (std::abs (target - v) < 0.002f) v = target;
+            return v;
+        };
+        pultec.setLfBoostDb   (stepToward (pultecLfBoostSm, pPultecLfBoost ? pPultecLfBoost->load() : 0.0f));
+        pultec.setLfAttenDb   (stepToward (pultecLfAttenSm, pPultecLfAtten ? pPultecLfAtten->load() : 0.0f));
+        pultec.setHfBoostDb   (stepToward (pultecHfBoostSm, pPultecHfBoost ? pPultecHfBoost->load() : 0.0f));
+        pultec.setHfBandwidth (stepToward (pultecHfBwSm,    pPultecHfBw    ? pPultecHfBw->load()    : 0.3f));
+        pultec.setHfAttenDb   (stepToward (pultecHfAttenSm, pPultecHfAtten ? pPultecHfAtten->load() : 0.0f));
 
         const bool satEnabled = pPultecSatEnable && pPultecSatEnable->load() > 0.5f;
         triode.setEnabled (satEnabled);

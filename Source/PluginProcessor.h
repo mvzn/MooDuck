@@ -155,6 +155,12 @@ private:
 
     PultecEQP1A      pultec;
     KorenTriode12AX7 triode;
+
+    // Smoothed values fed to the Pultec's continuous pots (~30 ms glide, per
+    // block, in processBlock) so EQ automation doesn't zipper. Snapped to the
+    // current parameter values in prepareToPlay.
+    float pultecLfBoostSm = 0.0f, pultecLfAttenSm = 0.0f;
+    float pultecHfBoostSm = 0.0f, pultecHfBwSm = 0.3f, pultecHfAttenSm = 0.0f;
     // Runs `pultec` then `triode` in one shared 4x oversampling domain (single
     // up/down round-trip). Declared after both so its reference members bind to
     // already-constructed stages.

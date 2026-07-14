@@ -446,6 +446,10 @@ public:
     // -----------------------------------------------------------------------
     //  Parameter setters — call from audio thread only
     //  Each setter checks for change before touching the WDF tree.
+    //  NOTE: the continuous pots apply instantly; the plugin glides the values
+    //  it feeds these setters (see PluginProcessor's Pultec pot smoothing) so
+    //  moving-fader automation doesn't zipper. Offline callers (tests) get the
+    //  immediate semantics they expect.
     // -----------------------------------------------------------------------
 
     void setLfFreqIndex (int idx)
@@ -734,6 +738,12 @@ private:
 
     juce::dsp::IIR::Filter<float> hfCutL, hfCutR;
 
+    // Persistent shelf coefficients, allocated once and mutated in place by
+    // updateHfCutCoefficients() so HF Atten automation never allocates on the
+    // audio thread. Shared by both channel filters. Initialised to identity.
+    juce::dsp::IIR::Coefficients<float>::Ptr hfCutCoeffs
+        { new juce::dsp::IIR::Coefficients<float> (1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f) };
+
     // Inter-stage transformer (Triad HS-29) — one per channel.  Applied as a
     // normalised post-element on the EQ output (see InterstageXfmr docs).
     InterstageXfmr xfmrL, xfmrR;
@@ -937,10 +947,27 @@ private:
         // Use makeLowShelf to cut HF content: it attenuates frequencies above
         // the corner. "Low shelf" here means "keep the low part, cut the high"
         // — use makeHighShelf with a gain < 1 (attenuation above corner).
-        auto coeffs = juce::dsp::IIR::Coefficients<float>::makeHighShelf (
+        //
+        // Runs on the audio thread while HF Atten automation moves, so the
+        // allocating Coefficients::makeHighShelf (new + ref-count free of the
+        // old object every call) is off limits: compute with the allocation-free
+        // ArrayCoefficients and write into the one persistent Coefficients
+        // object both filters share.
+        const auto arr = juce::dsp::IIR::ArrayCoefficients<float>::makeHighShelf (
             sampleRate, fc, 0.7071f, gainLinear);
 
-        hfCutL.coefficients = coeffs;
-        hfCutR.coefficients = coeffs;
+        const float a0inv = 1.0f / arr[3];
+        float* raw = hfCutCoeffs->getRawCoefficients();   // { b0, b1, b2, a1, a2 } normalised
+        raw[0] = arr[0] * a0inv;
+        raw[1] = arr[1] * a0inv;
+        raw[2] = arr[2] * a0inv;
+        raw[3] = arr[4] * a0inv;
+        raw[4] = arr[5] * a0inv;
+
+        if (hfCutL.coefficients != hfCutCoeffs)
+        {
+            hfCutL.coefficients = hfCutCoeffs;
+            hfCutR.coefficients = hfCutCoeffs;
+        }
     }
 };
