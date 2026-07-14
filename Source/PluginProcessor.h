@@ -18,7 +18,11 @@
 //==============================================================================
 /**
 */
-class MooDuckAudioProcessor  : public juce::AudioProcessor
+// juce::Timer: 60 Hz message-thread relay of the GR meter atomic into the
+// grOut parameter — setValueNotifyingHost must not run on the audio thread
+// (host parameter-listener callbacks aren't guaranteed real-time safe).
+class MooDuckAudioProcessor  : public juce::AudioProcessor,
+                               private juce::Timer
 {
 public:
     //==============================================================================
@@ -104,6 +108,7 @@ public:
     // Read-only output parameter: GR amount in dB, written from audio thread for host
     // automation recording. Not used to drive any DSP.
     juce::AudioParameterFloat* pGrOut = nullptr;
+    void timerCallback() override;   // grOut host notify, message thread only
 
     // Pultec EQP-1A
     std::atomic<float>* pPultecLfFreq      = nullptr;  // 0-4 → 20/30/40/60/100 Hz

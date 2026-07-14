@@ -72,10 +72,28 @@ MooDuckAudioProcessor::MooDuckAudioProcessor()
     pPultecSatMix      = apvts.getRawParameterValue("pultecSatMix");
     pPultecSatTrim     = apvts.getRawParameterValue("pultecSatTrim");
     pPultecBypass      = apvts.getRawParameterValue("pultecBypass");
+
+    // grOut relay: the audio thread only writes the gainReductionDb atomic; this
+    // timer notifies the host from the message thread (see timerCallback).
+    startTimerHz(60);
 }
 
 MooDuckAudioProcessor::~MooDuckAudioProcessor()
 {
+    stopTimer();
+}
+
+void MooDuckAudioProcessor::timerCallback()
+{
+    // Surface the GR amount to the host as a recordable parameter. Skip the
+    // notify when the value hasn't moved by at least 0.05 dB so steady-state
+    // doesn't spam listeners. 60 Hz is plenty for a meter-out parameter.
+    if (pGrOut == nullptr)
+        return;
+    const float reported = pGrOut->get();
+    const float desired  = juce::jlimit(0.0f, 60.0f, -gainReductionDb.load());
+    if (std::abs(reported - desired) > 0.05f)
+        pGrOut->setValueNotifyingHost(pGrOut->convertTo0to1(desired));
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout MooDuckAudioProcessor::createParameterLayout()
@@ -1268,15 +1286,9 @@ void MooDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
     inputLevelDb.store(inputLevelSmoothedDb);
     sidechainLevelDb.store(sidechainLevelSmoothedDb);
 
-    // Surface the GR amount to the host as a recordable parameter. Skip the notify when
-    // the value hasn't moved by at least 0.05 dB so steady-state doesn't spam listeners.
-    if (pGrOut != nullptr)
-    {
-        const float reported = pGrOut->get();
-        const float desired  = juce::jlimit(0.0f, 60.0f, grAmountDb);
-        if (std::abs(reported - desired) > 0.05f)
-            pGrOut->setValueNotifyingHost(pGrOut->convertTo0to1(desired));
-    }
+    // grOut is relayed to the host from the 60 Hz message-thread timer
+    // (timerCallback) off the gainReductionDb atomic stored above —
+    // setValueNotifyingHost is not real-time safe on every host.
 
     const auto   endTime         = juce::Time::getHighResolutionTicks();
     const double elapsedMs       = 1000.0 * static_cast<double>(endTime - startTime) / static_cast<double>(ticksPerSecond);
