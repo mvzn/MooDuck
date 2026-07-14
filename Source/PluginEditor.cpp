@@ -641,6 +641,19 @@ void MooDuckAudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
         return;
     }
 
+    // Triple-click a mascot and it speaks: the cow moos, the duck quacks
+    // (a one-shot mixed into the plugin output; live playback only).
+    if (e.getNumberOfClicks() == 3 && cowBounds.contains(e.getPosition()))
+    {
+        audioProcessor.triggerEasterEgg(1);
+        return;
+    }
+    if (e.getNumberOfClicks() == 3 && duckBounds.contains(e.getPosition()))
+    {
+        audioProcessor.triggerEasterEgg(2);
+        return;
+    }
+
     juce::AudioProcessorEditor::mouseDown(e);
 }
 
@@ -810,8 +823,15 @@ void MooDuckAudioProcessorEditor::renderBackground()
             g.setColour(mdLookAndFeel.palette().dividerShadow.withAlpha(0.95f));     // dark carved groove
             g.strokePath(p, stroke);
         };
-        engraveMascot(duck,        { area.getRight() - 56.0f, 7.5f, 30.0f, 16.0f });
-        engraveMascot(cowMirrored, { area.getX()     + 26.0f, 4.0f, 30.0f, 16.0f });
+        const juce::Rectangle<float> duckRect { area.getRight() - 56.0f, 6.0f, 30.0f, 16.0f };
+        const juce::Rectangle<float> cowRect  { area.getX()     + 26.0f, 4.0f, 30.0f, 16.0f };
+        engraveMascot(duck,        duckRect);
+        engraveMascot(cowMirrored, cowRect);
+
+        // Triple-click hot-spots (moo/quack easter egg — see mouseDown). The
+        // background is drawn at (0,0), so these are already editor coordinates.
+        duckBounds = duckRect.expanded(4.0f).toNearestInt();
+        cowBounds  = cowRect .expanded(4.0f).toNearestInt();
     }
 
     // Dynamics section reads as a rack-unit module dropped into the chassis. The

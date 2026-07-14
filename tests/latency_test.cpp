@@ -203,6 +203,49 @@ int main()
                    + ") — no block-1 re-report (the stutter/gating cause)");
         }
 
+        // ---------------------------------------------------------------------------
+        // 6. Mascot easter egg (host-level contract): a trigger mixes the synthesized
+        // one-shot into the output at ~-12 dBFS peak and plays to completion; without
+        // a trigger the output stays silent; and offline (non-realtime) rendering
+        // never emits it — a moo must not be printable into a bounce.
+        // ---------------------------------------------------------------------------
+        {
+            setParam (proc, "lookahead", 0.0f);
+            prepare (proc, sr, 512);
+            juce::AudioBuffer<float> blk (2, 512);
+            juce::MidiBuffer mb2;
+
+            auto peakOver = [&] (int blocks)
+            {
+                float pk = 0.0f;
+                for (int k = 0; k < blocks; ++k)
+                {
+                    blk.clear();
+                    proc.processBlock (blk, mb2);
+                    pk = juce::jmax (pk, blk.getMagnitude (0, blk.getNumSamples()));
+                }
+                return pk;
+            };
+
+            check (peakOver (4) < 1.0e-6f, "easter egg: silent without a trigger");
+
+            proc.triggerEasterEgg (1);                    // moo (0.65 s < 70 blocks @ 48k/512)
+            const float mooDb = juce::Decibels::gainToDecibels (peakOver (70));
+            check (std::abs (mooDb + 12.0f) < 1.0f,
+                   "easter egg: moo peaks at ~-12 dBFS (got " + juce::String (mooDb, 2) + " dB)");
+            check (peakOver (4) < 1.0e-6f, "easter egg: moo ends, silence resumes");
+
+            proc.triggerEasterEgg (2);                    // quack (0.18 s < 20 blocks)
+            const float quackDb = juce::Decibels::gainToDecibels (peakOver (20));
+            check (std::abs (quackDb + 12.0f) < 1.0f,
+                   "easter egg: quack peaks at ~-12 dBFS (got " + juce::String (quackDb, 2) + " dB)");
+
+            proc.setNonRealtime (true);
+            proc.triggerEasterEgg (1);
+            check (peakOver (70) < 1.0e-6f, "easter egg: suppressed during offline render");
+            proc.setNonRealtime (false);
+        }
+
         // 4. The lookahead line itself is bit-exact at delay 0 (so settled-0 lookahead is a
         // clean passthrough — no special-casing needed in the processor).
         testDelayLineZeroIsExact();

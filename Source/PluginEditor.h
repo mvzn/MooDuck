@@ -54,6 +54,8 @@ private:
     bool backgroundDirty = true;   // rebuild the cache lazily in paint() (bounds guaranteed valid there)
 
     juce::Rectangle<int> wordmarkBounds;   // triple-click hot-spot (set in renderBackground())
+    juce::Rectangle<int> cowBounds;        // triple-click moo hot-spot (set in renderBackground())
+    juce::Rectangle<int> duckBounds;       // triple-click quack hot-spot (set in renderBackground())
     juce::Rectangle<int> topWordmarkBounds;// engraved "MooDuck" strip along the top (set in resized())
 
     // Invisible hotspot over the top wordmark: hosts a tooltip and the triple-click
