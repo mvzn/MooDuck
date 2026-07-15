@@ -709,7 +709,9 @@ void MooDuckAudioProcessorEditor::paint (juce::Graphics& g)
         g.setColour(mdLookAndFeel.palette().dividerShadow.withAlpha(0.95f));     // dark carved groove
         g.drawText("MOODUCK", wm, juce::Justification::centred, false);
     }
-    wordmarkBounds = topWordmarkBounds.expanded(2.0f);   // triple-click theme-flip hot-spot
+    // Editor-level fallback hit-region tracks the (text-width) hotspot child,
+    // not the full-width band, so it can't shadow the mascot hot-spots either.
+    wordmarkBounds = wordmarkHotspot.getBounds().expanded(2);   // triple-click theme-flip hot-spot
 
     juce::Rectangle<float> versionArea (area.getRight() - 150.0f, area.getBottom() - 17.0f, 110.0f, 12.0f);
     mdLookAndFeel.drawEngravedText(g, "v1.2", versionArea, juce::Justification::centredRight,
@@ -987,7 +989,17 @@ void MooDuckAudioProcessorEditor::resized()
     // ascent/descent of the font is clipped), so there's no descent gap left under
     // the text before the Modes group. No extra gap below.
     topWordmarkBounds = area.removeFromTop(kWordmarkH);
-    wordmarkHotspot.setBounds(topWordmarkBounds);    // tooltip + triple-click theme toggle
+    // Hotspot hugs the actual "MOODUCK" glyphs (centred in the band), NOT the
+    // full-width band — the band's corners belong to the mascot hot-spots, and a
+    // full-width child would swallow their clicks before the editor's mouseDown
+    // ever ran (the mascots then "toggled the theme").
+    {
+        const juce::Font wmFont (juce::Font(mdLookAndFeel.getMediumTypeface())
+                                     .withHeight(18.0f).withExtraKerningFactor(0.14f));
+        const int wmTextW = juce::GlyphArrangement::getStringWidthInt(wmFont, "MOODUCK");
+        wordmarkHotspot.setBounds(topWordmarkBounds.withSizeKeepingCentre(
+            wmTextW + 12, topWordmarkBounds.getHeight()));   // tooltip + triple-click theme toggle
+    }
     area.removeFromTop(kWordmarkGap);
 
     // --- Sidechain Mode group: ONE row --------------------------------------
