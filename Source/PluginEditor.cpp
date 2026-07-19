@@ -701,22 +701,39 @@ void MooDuckAudioProcessorEditor::paint (juce::Graphics& g)
     // time it's needed after resize/theme change — paint() always runs with a valid
     // layout, so the section/rack bounds are guaranteed set (unlike the constructor,
     // where a fixed-size plugin may not have had resized() called yet).
+    // The cache is rasterized at the context's PHYSICAL pixel scale (display DPI ×
+    // host zoom × the kUIScale editor transform) and blitted back into logical
+    // bounds — 1:1 on physical pixels, no resampling blur. The paint context is
+    // the one source of truth for that scale; re-render when it changes (first
+    // paint, monitor move, host zoom) — rare, so the expensive render is fine.
+    const float scale = g.getInternalContext().getPhysicalPixelScaleFactor();
+    if (std::abs(scale - backgroundScale) > 0.01f)
+    {
+        backgroundScale = scale;
+        backgroundDirty = true;
+    }
     if (backgroundDirty || ! backgroundCache.isValid()
-        || backgroundCache.getWidth() != getWidth() || backgroundCache.getHeight() != getHeight())
+        || backgroundCache.getWidth()  != juce::roundToInt(getWidth()  * backgroundScale)
+        || backgroundCache.getHeight() != juce::roundToInt(getHeight() * backgroundScale))
     {
         renderBackground();
         backgroundDirty = false;
     }
     if (backgroundCache.isValid())
-        g.drawImageAt(backgroundCache, 0, 0);
+        g.drawImage(backgroundCache, getLocalBounds().toFloat());
 
     // Engraved TEXT is drawn live (not baked into the cached image) so it stays
     // crisp on hi-DPI — a logical-res cache scaled up blurs text. These are cheap
     // (a few short strings) and get clipped to the dirty region on partial repaints.
     const auto area = getLocalBounds().toFloat();
 
+    // Each block is skipped when the dirty region doesn't touch it, so the
+    // frequent partial repaints (knob drags, meter ticks) pay for no text at all.
+    const auto clip = g.getClipBounds();
+
     // Wordmark across the TOP, carved like the crossover filter-curve engravings
     // (a dark groove with a lit lower-right lip), not the subtle group-title style.
+    if (clip.intersects(topWordmarkBounds))
     {
         const auto wm = topWordmarkBounds.toFloat();
         g.setFont(juce::Font(mdLookAndFeel.getMediumTypeface()).withHeight(18.0f).withExtraKerningFactor(0.14f));
@@ -730,18 +747,22 @@ void MooDuckAudioProcessorEditor::paint (juce::Graphics& g)
     wordmarkBounds = wordmarkHotspot.getBounds().expanded(2);   // triple-click theme-flip hot-spot
 
     juce::Rectangle<float> versionArea (area.getRight() - 150.0f, area.getBottom() - 17.0f, 110.0f, 12.0f);
-    mdLookAndFeel.drawEngravedText(g, "v1.2", versionArea, juce::Justification::centredRight,
-                                   juce::Font(mdLookAndFeel.getRegularTypeface()).withHeight(9.5f));
+    if (clip.intersects(versionArea.toNearestInt()))
+        mdLookAndFeel.drawEngravedText(g, "v1.2", versionArea, juce::Justification::centredRight,
+                                       juce::Font(mdLookAndFeel.getRegularTypeface()).withHeight(9.5f));
 
-    juce::Font hdr(mdLookAndFeel.getMediumTypeface());
-    hdr.setHeight(11.0f);
-    hdr.setExtraKerningFactor(0.12f);
-    if (! pultecLowHdr.isEmpty())
-        mdLookAndFeel.drawEngravedText(g, "LOW FREQUENCY", pultecLowHdr.toFloat(),
-                                       juce::Justification::centred, hdr);
-    if (! pultecHighHdr.isEmpty())
-        mdLookAndFeel.drawEngravedText(g, "HIGH FREQUENCY", pultecHighHdr.toFloat(),
-                                       juce::Justification::centred, hdr);
+    if (clip.intersects(pultecLowHdr) || clip.intersects(pultecHighHdr))
+    {
+        juce::Font hdr(mdLookAndFeel.getMediumTypeface());
+        hdr.setHeight(11.0f);
+        hdr.setExtraKerningFactor(0.12f);
+        if (! pultecLowHdr.isEmpty())
+            mdLookAndFeel.drawEngravedText(g, "LOW FREQUENCY", pultecLowHdr.toFloat(),
+                                           juce::Justification::centred, hdr);
+        if (! pultecHighHdr.isEmpty())
+            mdLookAndFeel.drawEngravedText(g, "HIGH FREQUENCY", pultecHighHdr.toFloat(),
+                                           juce::Justification::centred, hdr);
+    }
 }
 
 void MooDuckAudioProcessorEditor::renderBackground()
@@ -750,8 +771,15 @@ void MooDuckAudioProcessorEditor::renderBackground()
     if (w <= 0 || h <= 0)
         return;
 
-    backgroundCache = juce::Image(juce::Image::ARGB, w, h, true);
+    // Physical-pixel backing store; everything below still draws in LOGICAL
+    // coordinates through the scale transform, so all the layout maths (and the
+    // mascot hot-spot rects captured at the end) stay in editor space.
+    const float scale = backgroundScale > 0.0f ? backgroundScale : 1.0f;
+    backgroundCache = juce::Image(juce::Image::ARGB,
+                                  juce::jmax(1, juce::roundToInt(w * scale)),
+                                  juce::jmax(1, juce::roundToInt(h * scale)), true);
     juce::Graphics g(backgroundCache);
+    g.addTransform(juce::AffineTransform::scale(scale));
 
     const auto area = getLocalBounds().toFloat();
 

@@ -57,6 +57,12 @@ private:
     void renderBackground();
     juce::Image backgroundCache;
     bool backgroundDirty = true;   // rebuild the cache lazily in paint() (bounds guaranteed valid there)
+    // Physical-pixel scale the cache was rendered at (display DPI × host zoom ×
+    // the kUIScale editor transform). Captured from the paint context — the one
+    // source of truth — and 0 until the first paint. When it changes (monitor
+    // move, host zoom), paint() re-renders the cache so the blit stays 1:1 on
+    // physical pixels instead of resampling a logical-res image.
+    float backgroundScale = 0.0f;
 
     juce::Rectangle<int> wordmarkBounds;   // triple-click hot-spot (set in renderBackground())
     juce::Rectangle<int> cowBounds;        // triple-click moo hot-spot (set in renderBackground())
