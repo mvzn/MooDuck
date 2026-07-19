@@ -42,6 +42,12 @@ public:
 
     static constexpr juce::uint32 kMeterClipRed     = 0xffCC2A2A; // proper red (was orange-leaning C84030)
 
+    // --- Global UI scale: the editor draws its designed 820px-wide layout through
+    // this transform (PluginEditor::setScaleFactor), shrinking the whole window.
+    // Lives here so draw code can compensate where the shrink hurts legibility
+    // (button legends render their font 1/kUIScale bigger to hold apparent size).
+    static constexpr float kUIScale = 0.85f;
+
     // --- 1176-style push-button palette (brushed-metal face, recessed socket).
     // The face is a touch lighter than the chassis so the buttons read as raised
     // hardware caps; the socket is the dark hole they sit in.

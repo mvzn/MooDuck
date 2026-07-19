@@ -54,6 +54,9 @@ namespace {
     // >>> PLUGIN WINDOW SIZE <<< — the UI is fixed-size (resizing is disabled in
     // the constructor). Height = the full section stack + the bottom margin (the
     // bottom strip with the latency readout / version text lives inside the margin).
+    // Global UI shrink: the layout keeps its designed 820px-wide pixel grid and
+    // the editor is drawn through a MooDuckLookAndFeel::kUIScale transform (see
+    // setScaleFactor override), so the window is 15% smaller, proportions intact.
     constexpr int kWindowW = 820;
     constexpr int kWindowH = kTopPad + kWordmarkH + kWordmarkGap
                            + modeGroupH + dynamicsGroupH + xoverGroupH
@@ -476,6 +479,11 @@ MooDuckAudioProcessorEditor::MooDuckAudioProcessorEditor (MooDuckAudioProcessor&
     applyXtremeLookaheadLock(*audioProcessor.apvts.getRawParameterValue("xtremeLookahead") > 0.5f);
 
     startTimerHz(30);
+
+    // Apply the 15% shrink before the first setSize. Hosts that never call
+    // setScaleFactor (AU on macOS, standalone) still get the scaled window;
+    // hosts that do will re-enter our override and compose their DPI scale.
+    setScaleFactor(1.0f);
     setSize(kWindowW, kWindowH);
 
     // Fixed-size UI: the layout is hand-tuned to one window size, so resizing is
@@ -492,6 +500,14 @@ MooDuckAudioProcessorEditor::~MooDuckAudioProcessorEditor()
     audioProcessor.apvts.removeParameterListener("limiter", this);
     audioProcessor.apvts.removeParameterListener("xtremeLookahead", this);
     setLookAndFeel(nullptr);
+}
+
+void MooDuckAudioProcessorEditor::setScaleFactor (float newScale)
+{
+    // Fold the fixed UI shrink into whatever scale the host asks for. Routing it
+    // through the base class keeps its transform bookkeeping (and the wrapper's
+    // window-size maths, which read the transformed bounds) consistent.
+    AudioProcessorEditor::setScaleFactor (newScale * MooDuckLookAndFeel::kUIScale);
 }
 
 void MooDuckAudioProcessorEditor::parameterChanged(const juce::String& paramID, float newValue)

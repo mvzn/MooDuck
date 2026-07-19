@@ -30,6 +30,11 @@ public:
 
     void parameterChanged(const juce::String& paramID, float newValue) override;
 
+    // The whole UI renders 15% smaller than its designed pixel grid. Hosts call
+    // this with their DPI scale (and wrappers reset it on attach), so the fixed
+    // shrink must be composed here — a plain setTransform would be clobbered.
+    void setScaleFactor (float newScale) override;
+
     // Triple-click the engraved wordmark to flip the dark/light theme (process-wide).
     void mouseDown (const juce::MouseEvent& e) override;
 

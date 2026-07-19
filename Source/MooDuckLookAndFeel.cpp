@@ -486,13 +486,18 @@ void MooDuckLookAndFeel::drawPushButtonLabel (juce::Graphics& g, juce::Rectangle
     auto rect = geo.top.reduced(flatRelief ? 1.5f : 3.0f, 1.5f);
     if (flatRelief) rect.translate(0.0f, 0.8f);
 
-    const float fontSize = juce::jlimit(8.5f, 13.0f, rect.getHeight() * 0.5f);
+    // Legends compensate for the global kUIScale shrink (they'd otherwise dip
+    // below comfortable reading size), then shrink-to-fit any legend the smaller
+    // cap can no longer hold at that height.
+    const float fontSize = juce::jlimit(8.5f, 13.0f, rect.getHeight() * 0.5f) / kUIScale;
     juce::Font font(getMediumTypeface());
     font.setHeight(fontSize);
     font.setExtraKerningFactor(0.04f);
-    g.setFont(font);
 
     const auto upper = text.toUpperCase();
+    if (const float w = font.getStringWidthFloat(upper); w > rect.getWidth())
+        font.setHeight(fontSize * rect.getWidth() / w);
+    g.setFont(font);
 
     // Legend tone follows the theme: dark text engraved into the LIGHT metal cap,
     // but the palette WHITE on the darker dark-mode cap (where dark text vanishes).
