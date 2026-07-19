@@ -736,9 +736,11 @@ void MooDuckAudioProcessorEditor::paint (juce::Graphics& g)
     if (clip.intersects(topWordmarkBounds))
     {
         const auto wm = topWordmarkBounds.toFloat();
-        g.setFont(juce::Font(mdLookAndFeel.getMediumTypeface()).withHeight(18.0f).withExtraKerningFactor(0.14f));
+        g.setFont(juce::Font(mdLookAndFeel.getMediumTypeface())
+                      .withHeight(MooDuckLookAndFeel::snapFontPx(18.0f)).withExtraKerningFactor(0.14f));
         g.setColour(mdLookAndFeel.palette().dividerHighlight.withAlpha(0.55f));  // lit lower-right lip
-        g.drawText("MOODUCK", wm.translated(0.8f, 1.0f), juce::Justification::centred, false);
+        g.drawText("MOODUCK", wm.translated(MooDuckLookAndFeel::physPx(0.8f), MooDuckLookAndFeel::physPx(1.0f)),
+                   juce::Justification::centred, false);
         g.setColour(mdLookAndFeel.palette().dividerShadow.withAlpha(0.95f));     // dark carved groove
         g.drawText("MOODUCK", wm, juce::Justification::centred, false);
     }
@@ -749,12 +751,13 @@ void MooDuckAudioProcessorEditor::paint (juce::Graphics& g)
     juce::Rectangle<float> versionArea (area.getRight() - 150.0f, area.getBottom() - 17.0f, 110.0f, 12.0f);
     if (clip.intersects(versionArea.toNearestInt()))
         mdLookAndFeel.drawEngravedText(g, "v1.2", versionArea, juce::Justification::centredRight,
-                                       juce::Font(mdLookAndFeel.getRegularTypeface()).withHeight(9.5f));
+                                       juce::Font(mdLookAndFeel.getRegularTypeface())
+                                           .withHeight(MooDuckLookAndFeel::snapFontPx(9.5f)));
 
     if (clip.intersects(pultecLowHdr) || clip.intersects(pultecHighHdr))
     {
         juce::Font hdr(mdLookAndFeel.getMediumTypeface());
-        hdr.setHeight(11.0f);
+        hdr.setHeight(MooDuckLookAndFeel::snapFontPx(11.0f));
         hdr.setExtraKerningFactor(0.12f);
         if (! pultecLowHdr.isEmpty())
             mdLookAndFeel.drawEngravedText(g, "LOW FREQUENCY", pultecLowHdr.toFloat(),
@@ -859,13 +862,14 @@ void MooDuckAudioProcessorEditor::renderBackground()
         duck.startNewSubPath (44.0f, 34.0f);                   // folded wing, lower feather line
         duck.quadraticTo (60.0f, 38.0f, 72.0f, 36.0f);
 
-        const juce::PathStrokeType stroke(1.1f, juce::PathStrokeType::curved,
+        const juce::PathStrokeType stroke(MooDuckLookAndFeel::physPx(1.1f), juce::PathStrokeType::curved,
                                           juce::PathStrokeType::rounded);
         auto engraveMascot = [this, &g, &stroke](juce::Path& p, juce::Rectangle<float> target)
         {
             p.applyTransform(p.getTransformToScaleToFit(target, true));
             g.setColour(mdLookAndFeel.palette().dividerHighlight.withAlpha(0.55f));  // lit lower-right lip
-            g.strokePath(p, stroke, juce::AffineTransform::translation(0.6f, 0.8f));
+            g.strokePath(p, stroke, juce::AffineTransform::translation(MooDuckLookAndFeel::physPx(0.6f),
+                                                                       MooDuckLookAndFeel::physPx(0.8f)));
             g.setColour(mdLookAndFeel.palette().dividerShadow.withAlpha(0.95f));     // dark carved groove
             g.strokePath(p, stroke);
         };
@@ -1039,7 +1043,7 @@ void MooDuckAudioProcessorEditor::resized()
     // ever ran (the mascots then "toggled the theme").
     {
         const juce::Font wmFont (juce::Font(mdLookAndFeel.getMediumTypeface())
-                                     .withHeight(18.0f).withExtraKerningFactor(0.14f));
+                                     .withHeight(MooDuckLookAndFeel::snapFontPx(18.0f)).withExtraKerningFactor(0.14f));
         const int wmTextW = juce::GlyphArrangement::getStringWidthInt(wmFont, "MOODUCK");
         wordmarkHotspot.setBounds(topWordmarkBounds.withSizeKeepingCentre(
             wmTextW + 12, topWordmarkBounds.getHeight()));   // tooltip + triple-click theme toggle

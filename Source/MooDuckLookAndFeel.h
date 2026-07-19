@@ -48,6 +48,17 @@ public:
     // (button legends render their font 1/kUIScale bigger to hold apparent size).
     static constexpr float kUIScale = 0.85f;
 
+    // Text/hairline crispness through the kUIScale transform: geometry drawn in
+    // logical px rasterizes at ×kUIScale physical px, so sub-pixel offsets smear
+    // and fractional font sizes fuzz on 100% DPI displays.
+    // physPx(n): logical size that lands on exactly n PHYSICAL pixels.
+    // snapFontPx(h): shrink a designed font height by kUIScale, then snap the
+    // result to a whole physical pixel count (buttons instead keep full apparent
+    // size via drawPushButtonLabel's 1/kUIScale compensation).
+    static constexpr float physPx (float px) noexcept { return px / kUIScale; }
+    static float snapFontPx (float designHeight) noexcept
+        { return std::round (designHeight * kUIScale) / kUIScale; }
+
     // --- 1176-style push-button palette (brushed-metal face, recessed socket).
     // The face is a touch lighter than the chassis so the buttons read as raised
     // hardware caps; the socket is the dark hole they sit in.
