@@ -28,6 +28,7 @@ namespace {
     constexpr int kTopPad        = 10;   // chassis strip above the wordmark band
     constexpr int kWordmarkH     = 6;    // engraved wordmark band (~cap height, clips empty ascent/descent)
     constexpr int kWordmarkGap   = 1;    // tiny gap so the caps don't touch the Modes title
+    constexpr int kWordmarkNudgeY = 2;   // visual-only nudge down; doesn't consume layout space
 
     constexpr int modeTopPad     = 0;    // gap under the Modes group title (buttons were cramped to it)
     constexpr int modeBotPad     = 4;    // gap below the mode buttons (matches the top)
@@ -1036,7 +1037,9 @@ void MooDuckAudioProcessorEditor::resized()
     // Engraved "MooDuck" wordmark. The band tightly frames the caps (the empty
     // ascent/descent of the font is clipped), so there's no descent gap left under
     // the text before the Modes group. No extra gap below.
-    topWordmarkBounds = area.removeFromTop(kWordmarkH);
+    // Nudged down a couple px for visual balance — translated AFTER removeFromTop,
+    // so it doesn't eat into the space the rest of the layout claims below it.
+    topWordmarkBounds = area.removeFromTop(kWordmarkH).translated(0, kWordmarkNudgeY);
     // Hotspot hugs the actual "MOODUCK" glyphs (centred in the band), NOT the
     // full-width band — the band's corners belong to the mascot hot-spots, and a
     // full-width child would swallow their clicks before the editor's mouseDown

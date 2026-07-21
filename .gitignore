@@ -15,6 +15,9 @@
 /build/
 /build-cmake/
 
+# Downloaded CI build artifacts (Windows/macOS VST3, AU, Standalone bundles)
+/dist/
+
 # Claude Code local files and parallel-agent worktrees (the latter are GBs)
 /.claude/
 
