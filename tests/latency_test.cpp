@@ -205,7 +205,7 @@ int main()
 
         // ---------------------------------------------------------------------------
         // 6. Mascot easter egg (host-level contract): a trigger mixes the recorded
-        // one-shot into the output at ~-12 dBFS peak and plays to completion; without
+        // one-shot into the output at its loudness-matched peak and plays to completion; without
         // a trigger the output stays silent; and offline (non-realtime) rendering
         // never emits it — a moo must not be printable into a bounce.
         // ---------------------------------------------------------------------------
@@ -231,14 +231,14 @@ int main()
 
             proc.triggerEasterEgg (1);                    // moo (1.08 s < 110 blocks @ 48k/512)
             const float mooDb = juce::Decibels::gainToDecibels (peakOver (110));
-            check (std::abs (mooDb + 12.0f) < 1.0f,
-                   "easter egg: moo peaks at ~-12 dBFS (got " + juce::String (mooDb, 2) + " dB)");
+            check (std::abs (mooDb - MooDuckAudioProcessor::easterEggMooPeakDb) < 1.0f,
+                   "easter egg: moo peaks at its target (got " + juce::String (mooDb, 2) + " dB)");
             check (peakOver (4) < 1.0e-6f, "easter egg: moo ends, silence resumes");
 
             proc.triggerEasterEgg (2);                    // quack (0.36 s < 40 blocks)
             const float quackDb = juce::Decibels::gainToDecibels (peakOver (40));
-            check (std::abs (quackDb + 12.0f) < 1.0f,
-                   "easter egg: quack peaks at ~-12 dBFS (got " + juce::String (quackDb, 2) + " dB)");
+            check (std::abs (quackDb - MooDuckAudioProcessor::easterEggQuackPeakDb) < 1.0f,
+                   "easter egg: quack peaks at its target (got " + juce::String (quackDb, 2) + " dB)");
 
             proc.setNonRealtime (true);
             proc.triggerEasterEgg (1);
@@ -249,8 +249,8 @@ int main()
             prepare (proc, 44100.0, 512);
             proc.triggerEasterEgg (1);
             const float moo441Db = juce::Decibels::gainToDecibels (peakOver (110));
-            check (std::abs (moo441Db + 12.0f) < 1.0f,
-                   "easter egg: resampled moo @ 44.1k peaks at ~-12 dBFS (got " + juce::String (moo441Db, 2) + " dB)");
+            check (std::abs (moo441Db - MooDuckAudioProcessor::easterEggMooPeakDb) < 1.0f,
+                   "easter egg: resampled moo @ 44.1k peaks at its target (got " + juce::String (moo441Db, 2) + " dB)");
             check (peakOver (4) < 1.0e-6f, "easter egg: resampled moo ends, silence resumes");
             prepare (proc, sr, 512);
         }

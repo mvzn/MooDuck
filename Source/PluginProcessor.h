@@ -149,6 +149,13 @@ public:
     // host renders offline so it can never end up in a bounce.
     void triggerEasterEgg (int which) noexcept { easterEggTrigger.store (which); }
 
+    // Per-sound playback peak levels. Loudness-matched by ear-weighted analysis
+    // (A-weighted energy over each sound's active part): at equal peaks the quack
+    // read ~4.4 dB louder, since its energy sits at 0.3-2.5 kHz while the moo's
+    // is mostly below 600 Hz. Split evenly around the original -12 dBFS.
+    static constexpr float easterEggMooPeakDb   =  -9.8f;
+    static constexpr float easterEggQuackPeakDb = -14.2f;
+
 private:
     static constexpr int numBands = StereoMultibandCrossover::numBands;
 
@@ -169,7 +176,7 @@ private:
     void prepareEasterEggSounds (double sampleRate);
     juce::AudioBuffer<float> mooSrc, quackSrc;     // native rate, as decoded
     double easterEggSourceRate = 48000.0;
-    juce::AudioBuffer<float> mooBuf, quackBuf;     // session rate, -12 dBFS peak
+    juce::AudioBuffer<float> mooBuf, quackBuf;     // session rate, leveled (see above)
     std::atomic<int> easterEggTrigger { 0 };   // 0 none, 1 moo, 2 quack
     int easterEggWhich    = 1;                 // audio-thread only
     int easterEggPlayhead = -1;                // audio-thread only; -1 = idle

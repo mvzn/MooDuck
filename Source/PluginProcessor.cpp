@@ -104,11 +104,11 @@ void MooDuckAudioProcessor::loadEasterEggSounds()
     decode (BinaryData::quack_wav, BinaryData::quack_wavSize, quackSrc);
 }
 
-// Resample the decoded one-shots to the session rate and level them to -12 dBFS
-// peak. Runs at prepare time (never on the audio thread), so allocation is fine.
+// Resample the decoded one-shots to the session rate and level each to its
+// loudness-matched peak (easterEgg*PeakDb in the header). Runs at prepare time (never on the audio thread), so allocation is fine.
 void MooDuckAudioProcessor::prepareEasterEggSounds(double sr)
 {
-    const auto prepare = [this, sr](const juce::AudioBuffer<float>& src, juce::AudioBuffer<float>& dst)
+    const auto prepare = [this, sr](const juce::AudioBuffer<float>& src, juce::AudioBuffer<float>& dst, float peakDb)
     {
         const int srcLen = src.getNumSamples();
         if (srcLen == 0 || sr <= 0.0)
@@ -132,10 +132,10 @@ void MooDuckAudioProcessor::prepareEasterEggSounds(double sr)
 
         const float peak = dst.getMagnitude (0, 0, len);
         if (peak > 1.0e-9f)
-            dst.applyGain (juce::Decibels::decibelsToGain (-12.0f) / peak);
+            dst.applyGain (juce::Decibels::decibelsToGain (peakDb) / peak);
     };
-    prepare (mooSrc,   mooBuf);
-    prepare (quackSrc, quackBuf);
+    prepare (mooSrc,   mooBuf,   easterEggMooPeakDb);
+    prepare (quackSrc, quackBuf, easterEggQuackPeakDb);
 }
 
 void MooDuckAudioProcessor::timerCallback()
