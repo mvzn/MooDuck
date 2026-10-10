@@ -97,6 +97,34 @@ jobs:
           echo "--- Build outputs ---" | tee -a "$LOG_FILE"
           find build/MooDuck_artefacts -maxdepth 5 -type f 2>/dev/null | tee -a "$LOG_FILE" || true
 
+      - name: Import signing certificates (macOS)
+        if: runner.os == 'macOS'
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: scripts/ci/import-certs.sh
+
+      - name: Sign, notarize, staple, package (macOS)
+        if: runner.os == 'macOS'
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: scripts/ci/sign-macos.sh build/MooDuck_artefacts/${{ matrix.build_type }} dist
+
+      - name: Remove signing keychain (macOS)
+        if: always() && runner.os == 'macOS' && env.SIGNING_KEYCHAIN != ''
+        run: security delete-keychain "$SIGNING_KEYCHAIN" || true
+
+      - name: Upload signed macOS release (pkg + zips)
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: MooDuck-macOS-signed
+          path: dist/
+          if-no-files-found: error
+
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
@@ -120,10 +148,3 @@ jobs:
           name: MooDuck-macOS-AU
           path: build/MooDuck_artefacts/${{ matrix.build_type }}/AU/
           if-no-files-found: error
-
-      - name: Upload Standalone
-        uses: actions/upload-artifact@v4
-        with:
-          name: MooDuck-${{ runner.os }}-Standalone
-          path: build/MooDuck_artefacts/${{ matrix.build_type }}/Standalone/
-          if-no-files-found: warn
