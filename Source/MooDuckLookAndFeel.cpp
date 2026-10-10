@@ -264,13 +264,14 @@ void MooDuckLookAndFeel::drawEngravedText (juce::Graphics& g, const juce::String
 {
     g.setFont(font);
 
-    // Highlight (top-left) — fakes a 'lifted' edge.
+    // Highlight (top-left) — fakes a 'lifted' edge. Bevel offsets are designed
+    // in physical px — un-compensated they collapse sub-pixel and smear.
     g.setColour(pal.dividerHighlight.withAlpha(0.6f));
-    g.drawText(text, area.translated(-0.6f, -0.6f), just, false);
+    g.drawText(text, area.translated(-physPx(0.6f), -physPx(0.6f)), just, false);
 
     // Shadow (bottom-right) — fakes the 'recess'.
     g.setColour(pal.dividerShadow.withAlpha(0.7f));
-    g.drawText(text, area.translated(0.8f, 0.8f), just, false);
+    g.drawText(text, area.translated(physPx(0.8f), physPx(0.8f)), just, false);
 
     // Main engraved tone.
     g.setColour(pal.engravedText);
@@ -486,13 +487,18 @@ void MooDuckLookAndFeel::drawPushButtonLabel (juce::Graphics& g, juce::Rectangle
     auto rect = geo.top.reduced(flatRelief ? 1.5f : 3.0f, 1.5f);
     if (flatRelief) rect.translate(0.0f, 0.8f);
 
-    const float fontSize = juce::jlimit(8.5f, 13.0f, rect.getHeight() * 0.5f);
+    // Legends compensate for the global kUIScale shrink (they'd otherwise dip
+    // below comfortable reading size), then shrink-to-fit any legend the smaller
+    // cap can no longer hold at that height.
+    const float fontSize = juce::jlimit(8.5f, 13.0f, rect.getHeight() * 0.5f) / kUIScale;
     juce::Font font(getMediumTypeface());
     font.setHeight(fontSize);
     font.setExtraKerningFactor(0.04f);
-    g.setFont(font);
 
     const auto upper = text.toUpperCase();
+    if (const float w = font.getStringWidthFloat(upper); w > rect.getWidth())
+        font.setHeight(fontSize * rect.getWidth() / w);
+    g.setFont(font);
 
     // Legend tone follows the theme: dark text engraved into the LIGHT metal cap,
     // but the palette WHITE on the darker dark-mode cap (where dark text vanishes).
@@ -553,7 +559,7 @@ juce::Font MooDuckLookAndFeel::getLabelFont (juce::Label& l)
     // sensible default for panel-label text.
     juce::Font font(regularTypeface);
     const float requestedHeight = l.getFont().getHeight();
-    font.setHeight(requestedHeight > 0.0f ? requestedHeight : 12.0f);
+    font.setHeight(snapFontPx(requestedHeight > 0.0f ? requestedHeight : 12.0f));
     font.setExtraKerningFactor(0.04f);
     return font;
 }
@@ -590,7 +596,7 @@ void MooDuckLookAndFeel::drawGroupComponentOutline (juce::Graphics& g, int width
     const float titleHeight = 18.0f;
 
     juce::Font font(mediumTypeface);
-    font.setHeight(13.5f);
+    font.setHeight(snapFontPx(13.5f));
     font.setExtraKerningFactor(0.10f);
     g.setFont(font);
 
@@ -614,9 +620,9 @@ void MooDuckLookAndFeel::drawGroupComponentOutline (juce::Graphics& g, int width
     if (lineEndX > lineStartX + 4.0f)
     {
         g.setColour(pal.dividerShadow.withAlpha(0.7f));
-        g.drawLine(lineStartX, lineY, lineEndX, lineY, 1.0f);
+        g.drawLine(lineStartX, lineY, lineEndX, lineY, physPx(1.0f));
         g.setColour(pal.dividerHighlight.withAlpha(0.5f));
-        g.drawLine(lineStartX, lineY + 1.0f, lineEndX, lineY + 1.0f, 0.7f);
+        g.drawLine(lineStartX, lineY + physPx(1.0f), lineEndX, lineY + physPx(1.0f), physPx(0.7f));
     }
 
     juce::ignoreUnused(height);
@@ -626,7 +632,7 @@ float MooDuckLookAndFeel::groupTitleRightEdge (const juce::String& title) const
 {
     const float padX = 8.0f;
     juce::Font font(mediumTypeface);
-    font.setHeight(13.5f);
+    font.setHeight(snapFontPx(13.5f));
     font.setExtraKerningFactor(0.10f);
     return padX + font.getStringWidthFloat(title.toUpperCase()) + 6.0f;
 }

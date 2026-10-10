@@ -30,6 +30,11 @@ public:
 
     void parameterChanged(const juce::String& paramID, float newValue) override;
 
+    // The whole UI renders 15% smaller than its designed pixel grid. Hosts call
+    // this with their DPI scale (and wrappers reset it on attach), so the fixed
+    // shrink must be composed here — a plain setTransform would be clobbered.
+    void setScaleFactor (float newScale) override;
+
     // Triple-click the engraved wordmark to flip the dark/light theme (process-wide).
     void mouseDown (const juce::MouseEvent& e) override;
 
@@ -52,8 +57,16 @@ private:
     void renderBackground();
     juce::Image backgroundCache;
     bool backgroundDirty = true;   // rebuild the cache lazily in paint() (bounds guaranteed valid there)
+    // Physical-pixel scale the cache was rendered at (display DPI × host zoom ×
+    // the kUIScale editor transform). Captured from the paint context — the one
+    // source of truth — and 0 until the first paint. When it changes (monitor
+    // move, host zoom), paint() re-renders the cache so the blit stays 1:1 on
+    // physical pixels instead of resampling a logical-res image.
+    float backgroundScale = 0.0f;
 
     juce::Rectangle<int> wordmarkBounds;   // triple-click hot-spot (set in renderBackground())
+    juce::Rectangle<int> cowBounds;        // triple-click moo hot-spot (set in renderBackground())
+    juce::Rectangle<int> duckBounds;       // triple-click quack hot-spot (set in renderBackground())
     juce::Rectangle<int> topWordmarkBounds;// engraved "MooDuck" strip along the top (set in resized())
 
     // Invisible hotspot over the top wordmark: hosts a tooltip and the triple-click

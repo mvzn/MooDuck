@@ -212,6 +212,8 @@ public:
         peak_detect_dB = -200.0;
         hold_counter = 0;
         hold_samples = static_cast<int>(std::lround(std::max(0.0, m_dynamics_params.hold_ms) * fs_ * 0.001));
+        makeup_smooth       = m_dynamics_params.makeup_gain;
+        makeup_smooth_coeff = 1.0 - exp(-1.0 / (kMakeupSmoothSec * std::max(fs_, 1.0)));
         return true;
     }
 
@@ -293,7 +295,11 @@ public:
         }
 
         const double gr = computeGain(effective_detect_dB);
-        return xn * gr * m_dynamics_params.makeup_gain;
+
+        // Ramp the makeup gain toward its target so Output automation steps at
+        // block boundaries don't zipper.
+        makeup_smooth += makeup_smooth_coeff * (m_dynamics_params.makeup_gain - makeup_smooth);
+        return xn * gr * makeup_smooth;
     }
 
 protected:
@@ -305,6 +311,10 @@ protected:
     int    hold_samples   = 0;
     int    hold_counter   = 0;
     double peak_detect_dB = -200.0;
+
+    static constexpr double kMakeupSmoothSec = 0.010;
+    double makeup_smooth       = 1.0;
+    double makeup_smooth_coeff = 1.0;   // reset() computes the real coefficient
 
     inline double computeGain(double detect_dB)
     {

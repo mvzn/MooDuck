@@ -186,7 +186,7 @@ void LevelMeterComponent::drawLevelStrip(juce::Graphics& g,
 
     // Caption (IN / SC).
     g.setColour(pal().engravedText);
-    g.setFont(juce::Font(9.0f, juce::Font::bold));
+    g.setFont(juce::Font(MooDuckLookAndFeel::snapFontPx(9.0f), juce::Font::bold));
     g.drawFittedText(caption, captionArea, juce::Justification::centred, 1);
 }
 
@@ -240,6 +240,6 @@ void LevelMeterComponent::drawGrStrip(juce::Graphics& g,
 
     // Caption (GR).
     g.setColour(pal().engravedText);
-    g.setFont(juce::Font(9.0f, juce::Font::bold));
+    g.setFont(juce::Font(MooDuckLookAndFeel::snapFontPx(9.0f), juce::Font::bold));
     g.drawFittedText(caption, captionArea, juce::Justification::centred, 1);
 }

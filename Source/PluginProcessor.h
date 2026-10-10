@@ -18,7 +18,11 @@
 //==============================================================================
 /**
 */
-class MooDuckAudioProcessor  : public juce::AudioProcessor
+// juce::Timer: 60 Hz message-thread relay of the GR meter atomic into the
+// grOut parameter — setValueNotifyingHost must not run on the audio thread
+// (host parameter-listener callbacks aren't guaranteed real-time safe).
+class MooDuckAudioProcessor  : public juce::AudioProcessor,
+                               private juce::Timer
 {
 public:
     //==============================================================================
@@ -104,6 +108,7 @@ public:
     // Read-only output parameter: GR amount in dB, written from audio thread for host
     // automation recording. Not used to drive any DSP.
     juce::AudioParameterFloat* pGrOut = nullptr;
+    void timerCallback() override;   // grOut host notify, message thread only
 
     // Pultec EQP-1A
     std::atomic<float>* pPultecLfFreq      = nullptr;  // 0-4 → 20/30/40/60/100 Hz
@@ -138,6 +143,19 @@ public:
     // a deliberately uncompensated creative delay, so it shows here but not in setLatencySamples().
     int getConvLatencySamples() const noexcept;
 
+    // Easter egg: triple-clicking a mascot in the editor plays a recorded
+    // one-shot mixed into the plugin output (1 = moo, 2 = quack). A new trigger
+    // restarts playback (and a quack can cut off a moo). Suppressed while the
+    // host renders offline so it can never end up in a bounce.
+    void triggerEasterEgg (int which) noexcept { easterEggTrigger.store (which); }
+
+    // Per-sound playback peak levels. Loudness-matched by ear-weighted analysis
+    // (A-weighted energy over each sound's active part): at equal peaks the quack
+    // read ~4.4 dB louder, since its energy sits at 0.3-2.5 kHz while the moo's
+    // is mostly below 600 Hz. Split evenly around the original -12 dBFS.
+    static constexpr float easterEggMooPeakDb   =  -9.8f;
+    static constexpr float easterEggQuackPeakDb = -14.2f;
+
 private:
     static constexpr int numBands = StereoMultibandCrossover::numBands;
 
@@ -145,11 +163,35 @@ private:
     DynamicsProcessor bandProcessorsR[numBands];
     StereoMultibandCrossover crossover;
 
+    // Per-band solo/mute gate, ramped (~8 ms) so toggling Normal/Solo/Mute never
+    // steps a band's contribution (the hard 0/1 switch used to click).
+    float bandGateSmooth[numBands] = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
+    float bandGateInc = 1.0f;   // per-sample ramp step (set in prepareToPlay)
+
+    // Mascot easter-egg one-shots: recorded WAVs (Resources/sounds) decoded once
+    // in the constructor, then resampled to the session rate in prepareToPlay.
+    // The editor stores a trigger; processBlock mixes the mono buffer into both
+    // output channels.
+    void loadEasterEggSounds();
+    void prepareEasterEggSounds (double sampleRate);
+    juce::AudioBuffer<float> mooSrc, quackSrc;     // native rate, as decoded
+    double easterEggSourceRate = 48000.0;
+    juce::AudioBuffer<float> mooBuf, quackBuf;     // session rate, leveled (see above)
+    std::atomic<int> easterEggTrigger { 0 };   // 0 none, 1 moo, 2 quack
+    int easterEggWhich    = 1;                 // audio-thread only
+    int easterEggPlayhead = -1;                // audio-thread only; -1 = idle
+
     juce::AudioBuffer<float> mainBandBufL, mainBandBufR;
     juce::AudioBuffer<float> scBandBufL,   scBandBufR;
 
     PultecEQP1A      pultec;
     KorenTriode12AX7 triode;
+
+    // Smoothed values fed to the Pultec's continuous pots (~30 ms glide, per
+    // block, in processBlock) so EQ automation doesn't zipper. Snapped to the
+    // current parameter values in prepareToPlay.
+    float pultecLfBoostSm = 0.0f, pultecLfAttenSm = 0.0f;
+    float pultecHfBoostSm = 0.0f, pultecHfBwSm = 0.3f, pultecHfAttenSm = 0.0f;
     // Runs `pultec` then `triode` in one shared 4x oversampling domain (single
     // up/down round-trip). Declared after both so its reference members bind to
     // already-constructed stages.

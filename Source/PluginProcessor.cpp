@@ -72,10 +72,83 @@ MooDuckAudioProcessor::MooDuckAudioProcessor()
     pPultecSatMix      = apvts.getRawParameterValue("pultecSatMix");
     pPultecSatTrim     = apvts.getRawParameterValue("pultecSatTrim");
     pPultecBypass      = apvts.getRawParameterValue("pultecBypass");
+
+    loadEasterEggSounds();
+
+    // grOut relay: the audio thread only writes the gainReductionDb atomic; this
+    // timer notifies the host from the message thread (see timerCallback).
+    startTimerHz(60);
 }
 
 MooDuckAudioProcessor::~MooDuckAudioProcessor()
 {
+    stopTimer();
+}
+
+// Decode the two recorded mascot one-shots (mono 16-bit WAVs embedded via
+// BinaryData) once, at their native rate. Message thread, constructor time.
+void MooDuckAudioProcessor::loadEasterEggSounds()
+{
+    const auto decode = [this](const void* data, int size, juce::AudioBuffer<float>& dst)
+    {
+        juce::WavAudioFormat wav;
+        std::unique_ptr<juce::AudioFormatReader> reader (wav.createReaderFor (
+            new juce::MemoryInputStream (data, (size_t) size, false), true));
+        if (reader == nullptr)
+            return;
+        dst.setSize (1, (int) reader->lengthInSamples);
+        reader->read (&dst, 0, dst.getNumSamples(), 0, true, false);
+        easterEggSourceRate = reader->sampleRate;   // both files share one rate
+    };
+    decode (BinaryData::moo_wav,   BinaryData::moo_wavSize,   mooSrc);
+    decode (BinaryData::quack_wav, BinaryData::quack_wavSize, quackSrc);
+}
+
+// Resample the decoded one-shots to the session rate and level each to its
+// loudness-matched peak (easterEgg*PeakDb in the header). Runs at prepare time (never on the audio thread), so allocation is fine.
+void MooDuckAudioProcessor::prepareEasterEggSounds(double sr)
+{
+    const auto prepare = [this, sr](const juce::AudioBuffer<float>& src, juce::AudioBuffer<float>& dst, float peakDb)
+    {
+        const int srcLen = src.getNumSamples();
+        if (srcLen == 0 || sr <= 0.0)
+        {
+            dst.setSize (0, 0);
+            return;
+        }
+        const double ratio = easterEggSourceRate / sr;   // input samples per output sample
+        const int    len   = (int) std::floor (srcLen / ratio);
+        dst.setSize (1, len);
+        if (std::abs (ratio - 1.0) < 1.0e-9)
+            dst.copyFrom (0, 0, src, 0, 0, len);
+        else
+        {
+            // Zero-pad the tail so the windowed-sinc kernel never reads past the end.
+            juce::HeapBlock<float> padded ((size_t) srcLen + 256, true);
+            std::copy_n (src.getReadPointer (0), srcLen, padded.get());
+            juce::WindowedSincInterpolator interp;
+            interp.process (ratio, padded.get(), dst.getWritePointer (0), len);
+        }
+
+        const float peak = dst.getMagnitude (0, 0, len);
+        if (peak > 1.0e-9f)
+            dst.applyGain (juce::Decibels::decibelsToGain (peakDb) / peak);
+    };
+    prepare (mooSrc,   mooBuf,   easterEggMooPeakDb);
+    prepare (quackSrc, quackBuf, easterEggQuackPeakDb);
+}
+
+void MooDuckAudioProcessor::timerCallback()
+{
+    // Surface the GR amount to the host as a recordable parameter. Skip the
+    // notify when the value hasn't moved by at least 0.05 dB so steady-state
+    // doesn't spam listeners. 60 Hz is plenty for a meter-out parameter.
+    if (pGrOut == nullptr)
+        return;
+    const float reported = pGrOut->get();
+    const float desired  = juce::jlimit(0.0f, 60.0f, -gainReductionDb.load());
+    if (std::abs(reported - desired) > 0.05f)
+        pGrOut->setValueNotifyingHost(pGrOut->convertTo0to1(desired));
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout MooDuckAudioProcessor::createParameterLayout()
@@ -468,6 +541,25 @@ void MooDuckAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock
     bypassDryBuf.clear();
     bypassMix = (pHostBypass && pHostBypass->load() > 0.5f) ? 1.0f : 0.0f;   // adopt current state, no fade
     bypassInc = 1.0f / juce::jmax(1.0f, static_cast<float>(0.010 * sampleRate)); // ~10 ms crossfade
+
+    // Mascot easter-egg one-shots: resample to the session rate; drop any
+    // in-flight playback/trigger (stale playhead would index the new buffers).
+    prepareEasterEggSounds(sampleRate);
+    easterEggPlayhead = -1;
+    easterEggTrigger.store(0);
+
+    // Band solo/mute gate ramp (~8 ms); adopt current states with no fade.
+    bandGateInc = 1.0f / juce::jmax(1.0f, static_cast<float>(0.008 * sampleRate));
+    {
+        bool anySoloAtPrepare = false;
+        for (int b = 0; b < numBands; ++b)
+            if (pBandState[b] && static_cast<int>(pBandState[b]->load()) == 1) { anySoloAtPrepare = true; break; }
+        for (int b = 0; b < numBands; ++b)
+        {
+            const int st = pBandState[b] ? static_cast<int>(pBandState[b]->load()) : 0;
+            bandGateSmooth[b] = (anySoloAtPrepare ? (st == 1) : (st != 2)) ? 1.0f : 0.0f;
+        }
+    }
     // Ramp time long enough to mask big jumps (e.g. moving from 0 to 16 ms) without
     // audible group-delay smear. 100 ms glides ~0.5 ms per 5 ms — well below the
     // perceptual threshold for time-domain warping.
@@ -516,6 +608,16 @@ void MooDuckAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock
     pultec.prepare(sampleRate, samplesPerBlock);
     triode.prepare(sampleRate, samplesPerBlock);
     chain.prepare(sampleRate, samplesPerBlock);
+
+    // Adopt the session's pot values instantly — the per-block glide is only
+    // for moving automation, not for session load / re-prepare. Same for the
+    // tube Drive (synchronous LUT rebuild is fine off the audio thread).
+    triode.setDrive (pPultecSatDrive ? pPultecSatDrive->load() : 1.0f);
+    pultecLfBoostSm = pPultecLfBoost ? pPultecLfBoost->load() : 0.0f;
+    pultecLfAttenSm = pPultecLfAtten ? pPultecLfAtten->load() : 0.0f;
+    pultecHfBoostSm = pPultecHfBoost ? pPultecHfBoost->load() : 0.0f;
+    pultecHfBwSm    = pPultecHfBw    ? pPultecHfBw->load()    : 0.3f;
+    pultecHfAttenSm = pPultecHfAtten ? pPultecHfAtten->load() : 0.0f;
 
     // FFT Conv objects — pre-allocate all three sizes (no audio-thread allocation later)
     static constexpr int kOrders[3] = { 9, 10, 11 };
@@ -944,10 +1046,13 @@ void MooDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
 
             for (int b = 0; b < numBands; ++b)
             {
-                const int kLow  = juce::jmax(1,
+                int kLow  = juce::jmax(1,
                     (int) std::floor(bandEdges[b]     * (double) kSpectralFftSize / sr));
-                const int kHigh = juce::jmin(kSpectralFftSize / 2 - 1,
+                int kHigh = juce::jmin(kSpectralFftSize / 2 - 1,
                     (int) std::ceil (bandEdges[b + 1] * (double) kSpectralFftSize / sr));
+                // The xover params range independently; out-of-order edges would give an
+                // empty bin range and silently stop this band from ducking.
+                if (kLow > kHigh) std::swap(kLow, kHigh);
                 float sumSq = 0.0f;
                 int   count = 0;
                 for (int k = kLow; k <= kHigh; ++k)
@@ -980,7 +1085,8 @@ void MooDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
         {
             const float offsetDb   = pBandScale[b] ? pBandScale[b]->load() : 0.0f;
             const bool  needsScale = std::abs(offsetDb) > 0.005f;
-            const float gate       = bandGate[b];
+            const float gateTarget = bandGate[b];
+            float       gate       = bandGateSmooth[b];
 
             for (int n = 0; n < numSamples; ++n)
             {
@@ -1010,9 +1116,13 @@ void MooDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
                     pR *= juce::dsp::FastMathApproximations::exp((newGrDbR - oldGrDbR) * 0.11512925f);
                 }
 
+                // Ramp the solo/mute gate toward its target so toggles don't click.
+                gate = (gate < gateTarget) ? juce::jmin(gateTarget, gate + bandGateInc)
+                                           : juce::jmax(gateTarget, gate - bandGateInc);
                 outL[n] += pL * gate;
                 if (outR) outR[n] += pR * gate;
             }
+            bandGateSmooth[b] = gate;
         }
 
         for (int b = 0; b < numBands; ++b)
@@ -1137,20 +1247,36 @@ void MooDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
         const bool eqBypass = pPultecBypass && pPultecBypass->load() > 0.5f;
         pultec.setBypass (eqBypass);
         pultec.setLfFreqIndex      (pPultecLfFreq      ? static_cast<int> (pPultecLfFreq->load())      : 4);
-        pultec.setLfBoostDb        (pPultecLfBoost     ? pPultecLfBoost->load()                        : 0.0f);
-        pultec.setLfAttenDb        (pPultecLfAtten     ? pPultecLfAtten->load()                        : 0.0f);
         pultec.setHfFreqIndex      (pPultecHfFreq      ? static_cast<int> (pPultecHfFreq->load())      : 3);
-        pultec.setHfBoostDb        (pPultecHfBoost     ? pPultecHfBoost->load()                        : 0.0f);
-        pultec.setHfBandwidth      (pPultecHfBw        ? pPultecHfBw->load()                           : 0.3f);
         pultec.setHfAttenFreqIndex (pPultecHfAttenFreq ? static_cast<int> (pPultecHfAttenFreq->load()) : 1);
-        pultec.setHfAttenDb        (pPultecHfAtten     ? pPultecHfAtten->load()                        : 0.0f);
+
+        // The continuous pots apply instantly inside PultecEQP1A, so glide the
+        // values fed to them (~30 ms one-pole, once per block) — a moving fader
+        // otherwise steps the transfer function at every block boundary (zipper).
+        // stepToward snaps close values exactly onto target so settled pots hit
+        // the setters' early-return and cost nothing.
+        const float potAlpha = 1.0f - std::exp (-static_cast<float> (numSamples)
+                                                / static_cast<float> (0.030 * getSampleRate()));
+        auto stepToward = [potAlpha] (float& v, float target) noexcept
+        {
+            v += potAlpha * (target - v);
+            if (std::abs (target - v) < 0.002f) v = target;
+            return v;
+        };
+        pultec.setLfBoostDb   (stepToward (pultecLfBoostSm, pPultecLfBoost ? pPultecLfBoost->load() : 0.0f));
+        pultec.setLfAttenDb   (stepToward (pultecLfAttenSm, pPultecLfAtten ? pPultecLfAtten->load() : 0.0f));
+        pultec.setHfBoostDb   (stepToward (pultecHfBoostSm, pPultecHfBoost ? pPultecHfBoost->load() : 0.0f));
+        pultec.setHfBandwidth (stepToward (pultecHfBwSm,    pPultecHfBw    ? pPultecHfBw->load()    : 0.3f));
+        pultec.setHfAttenDb   (stepToward (pultecHfAttenSm, pPultecHfAtten ? pPultecHfAtten->load() : 0.0f));
 
         const bool satEnabled = pPultecSatEnable && pPultecSatEnable->load() > 0.5f;
         triode.setEnabled (satEnabled);
 
         // P6 controls: Drive (12AX7 grid excursion), Mix (parallel dry/wet),
         // Output trim (loudness-match the wet path).
-        triode.setDrive (pPultecSatDrive ? pPultecSatDrive->load() : 1.0f);
+        // Amortized: a Drive change rebuilds the tube LUTs a bounded slice per
+        // block instead of all 2×1024 transcendental entries in one call.
+        triode.setDriveAmortized (pPultecSatDrive ? pPultecSatDrive->load() : 1.0f);
         chain.setSatMix  (pPultecSatMix  ? pPultecSatMix->load() * 0.01f : 1.0f);   // %->0..1
         chain.setSatTrimGain (juce::Decibels::decibelsToGain (
                                   pPultecSatTrim ? pPultecSatTrim->load() : 0.0f));
@@ -1190,6 +1316,37 @@ void MooDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
         bypassMix = m;
     }
 
+    // --- Easter egg: mascot one-shot (triple-click in the editor). Added after
+    // the bypass crossfade so the cow moos even while the plugin is bypassed.
+    // Offline renders never trigger it (and any in-flight playback is cut), so a
+    // moo can't be printed into a bounce.
+    {
+        if (isNonRealtime())
+        {
+            easterEggTrigger.store(0);
+            easterEggPlayhead = -1;
+        }
+        else if (const int trig = easterEggTrigger.exchange(0); trig != 0)
+        {
+            easterEggWhich    = trig;   // a re-trigger restarts from the top
+            easterEggPlayhead = 0;
+        }
+
+        if (easterEggPlayhead >= 0)
+        {
+            const auto& buf = (easterEggWhich == 2) ? quackBuf : mooBuf;
+            const int   len = buf.getNumChannels() > 0 ? buf.getNumSamples() : 0;
+            const float* s  = len > 0 ? buf.getReadPointer(0) : nullptr;
+            for (int n = 0; n < numSamples && easterEggPlayhead < len; ++n, ++easterEggPlayhead)
+            {
+                outL[n] += s[easterEggPlayhead];
+                if (outR) outR[n] += s[easterEggPlayhead];
+            }
+            if (easterEggPlayhead >= len)
+                easterEggPlayhead = -1;
+        }
+    }
+
     // Post-EQ/saturation output peak — drives the Sat button's audio-reactive glow.
     {
         float outPeak = 0.0f;
@@ -1221,15 +1378,9 @@ void MooDuckAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
     inputLevelDb.store(inputLevelSmoothedDb);
     sidechainLevelDb.store(sidechainLevelSmoothedDb);
 
-    // Surface the GR amount to the host as a recordable parameter. Skip the notify when
-    // the value hasn't moved by at least 0.05 dB so steady-state doesn't spam listeners.
-    if (pGrOut != nullptr)
-    {
-        const float reported = pGrOut->get();
-        const float desired  = juce::jlimit(0.0f, 60.0f, grAmountDb);
-        if (std::abs(reported - desired) > 0.05f)
-            pGrOut->setValueNotifyingHost(pGrOut->convertTo0to1(desired));
-    }
+    // grOut is relayed to the host from the 60 Hz message-thread timer
+    // (timerCallback) off the gainReductionDb atomic stored above —
+    // setValueNotifyingHost is not real-time safe on every host.
 
     const auto   endTime         = juce::Time::getHighResolutionTicks();
     const double elapsedMs       = 1000.0 * static_cast<double>(endTime - startTime) / static_cast<double>(ticksPerSecond);

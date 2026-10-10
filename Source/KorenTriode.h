@@ -64,6 +64,9 @@ public:
 
         computeStageNorms();
         buildLuts();
+        pendingDrive   = drive;   // active LUTs now match `drive` exactly
+        lutDrive       = drive;
+        lutBuildActive = false;
 
         // Global NFB depth from the oracle (+1.94 dB open- vs closed-loop):
         //   1 + β = 10^(depthDb/20).  y small-signal restored to unity by makeup.
@@ -121,14 +124,33 @@ public:
     // -------------------------------------------------------------------------
     void setDrive(float newDrive) noexcept
     {
-        // The ADAA LUTs and stage norms depend ONLY on drive, so skip the (costly)
-        // rebuild when it hasn't moved. PluginProcessor calls this every block;
-        // without the guard both 1024-pt LUTs were rebuilt from the tube equations
-        // (log/exp/pow) every block even at steady drive — pure waste.
-        if (newDrive == drive) return;
-        drive = newDrive;
+        // Immediate, synchronous rebuild — offline/measurement semantics (tests
+        // rely on the new curve applying on the next sample). The audio thread
+        // uses setDriveAmortized() instead: a full rebuild of both 1024-pt LUTs
+        // from the tube equations (log/exp/pow) in one call is a CPU spike that
+        // can overrun the block budget.
+        if (newDrive == drive && ! lutBuildActive && pendingDrive == lutDrive) return;
+        drive          = newDrive;
+        pendingDrive   = newDrive;
+        lutDrive       = newDrive;
+        lutBuildActive = false;   // cancel any in-flight amortized build
         computeStageNorms();   // stage-1 normalisation tracks drive
         buildLuts();           // both LUTs depend on the saturation pipeline
+    }
+
+    // -------------------------------------------------------------------------
+    // Audio-thread drive setter: never rebuilds the LUTs in one go. Changes are
+    // built into back-buffer tables a bounded slice per call (call once per
+    // block) and swapped in atomically-for-the-audio-thread when complete, so a
+    // Drive sweep costs a small constant per block instead of spiking. The
+    // active tables always describe a single consistent drive (lutDrive); if
+    // the target moves mid-build the finished build is followed by another
+    // toward the latest value, so the final position always lands exactly.
+    // -------------------------------------------------------------------------
+    void setDriveAmortized(float newDrive) noexcept
+    {
+        pendingDrive = newDrive;
+        advanceLutRebuild(kLutEntriesPerStep);
     }
 
     // -------------------------------------------------------------------------
@@ -446,6 +468,22 @@ private:
     std::array<double, LUT_SIZE> fLut2 {};
     std::array<double, LUT_SIZE> fCurve1 {};
     std::array<double, LUT_SIZE> fCurve2 {};
+
+    // Amortized Drive-change rebuild (see setDriveAmortized/advanceLutRebuild):
+    // back-buffer tables under construction + incremental build cursor. With
+    // 2×LUT_SIZE entries at kLutEntriesPerStep per block a rebuild completes in
+    // 2*LUT_SIZE/kLutEntriesPerStep blocks (~90 ms at 512/44.1k) — fast enough
+    // to feel live, cheap enough to never spike.
+    static constexpr int kLutEntriesPerStep = 256;
+    std::array<double, LUT_SIZE> fLut1B {}, fLut2B {}, fCurve1B {}, fCurve2B {};
+    float  pendingDrive   = 1.0f;   // latest requested drive
+    float  lutDrive       = 1.0f;   // drive the ACTIVE tables represent
+    float  lutBuildDrive  = 1.0f;   // target of the in-flight build
+    bool   lutBuildActive = false;
+    int    lutBuildWhich  = 0;      // 0 = stage-1 tables, 1 = stage-2 tables
+    int    lutBuildIdx    = 0;      // next entry to fill
+    double lutBuildAcc    = 0.0;    // trapezoidal accumulator
+    double lutBuildPrevF  = 0.0;    // previous curve value (trapezoid partner)
     std::array<double, 2>        s1PrevIn   {};
     std::array<double, 2>        s2PrevIn   {};
     std::array<double, 2>        nfbPrevOut {};   // 1-sample-delayed output (feedback)
@@ -560,6 +598,69 @@ private:
     {
         buildLut(fLut1, fCurve1, [this](double u) noexcept { return stage1F(u); });
         buildLut(fLut2, fCurve2, [this](double u) noexcept { return stage2F(u); });
+    }
+
+    // -----------------------------------------------------------------------
+    // Amortized rebuild (audio-thread Drive changes): build both back-buffer
+    // tables `entries` points per call, then copy them over the active tables.
+    // The render path only ever reads the active tables, which always describe
+    // one consistent drive value (lutDrive). `drive` (read by stage1F/2F and
+    // computeStageNorms) is owned by the build while one is in flight.
+    // -----------------------------------------------------------------------
+    void advanceLutRebuild(int entries) noexcept
+    {
+        if (!lutBuildActive)
+        {
+            if (pendingDrive == lutDrive)
+                return;                     // settled — steady-state cost: one compare
+            lutBuildActive = true;
+            lutBuildDrive  = pendingDrive;
+            drive          = lutBuildDrive;
+            computeStageNorms();
+            lutBuildWhich  = 0;
+            lutBuildIdx    = 0;
+        }
+
+        const double dx = (LUT_X_MAX - LUT_X_MIN) / static_cast<double>(LUT_SIZE - 1);
+        while (entries-- > 0)
+        {
+            auto& anti  = (lutBuildWhich == 0) ? fLut1B   : fLut2B;
+            auto& curve = (lutBuildWhich == 0) ? fCurve1B : fCurve2B;
+
+            if (lutBuildIdx == 0)
+            {
+                lutBuildPrevF = (lutBuildWhich == 0) ? stage1F(LUT_X_MIN) : stage2F(LUT_X_MIN);
+                anti[0]       = 0.0;
+                curve[0]      = lutBuildPrevF;
+                lutBuildAcc   = 0.0;
+                lutBuildIdx   = 1;
+                continue;
+            }
+
+            const double x  = LUT_X_MIN + static_cast<double>(lutBuildIdx) * dx;
+            const double fx = (lutBuildWhich == 0) ? stage1F(x) : stage2F(x);
+            lutBuildAcc += 0.5 * (lutBuildPrevF + fx) * dx;   // trapezoidal
+            anti[lutBuildIdx]  = lutBuildAcc;
+            curve[lutBuildIdx] = fx;
+            lutBuildPrevF      = fx;
+
+            if (++lutBuildIdx >= LUT_SIZE)
+            {
+                if (lutBuildWhich == 0)
+                {
+                    lutBuildWhich = 1;
+                    lutBuildIdx   = 0;
+                }
+                else
+                {
+                    fLut1 = fLut1B;  fCurve1 = fCurve1B;   // adopt the new tables
+                    fLut2 = fLut2B;  fCurve2 = fCurve2B;
+                    lutDrive       = lutBuildDrive;
+                    lutBuildActive = false;
+                    return;         // a moved target starts a fresh build next call
+                }
+            }
+        }
     }
 
     static double lookupF(double v, const std::array<double, LUT_SIZE>& lut) noexcept

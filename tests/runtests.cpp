@@ -258,6 +258,113 @@ void test_crossover()
 }
 
 // =========================================================================
+// Crossover Nyquist clamp — at low sample rates a crossover point requested
+// above fs/2 used to flip the sign of the bilinear prewarp tan() and blow up
+// the LR4 stages (NaN). The clamp must keep the filters finite and the band
+// sum flat even when the user asks for fc = 20 kHz at fs = 32 kHz.
+// =========================================================================
+void test_crossover_nyquist_clamp()
+{
+    std::printf("\n== Crossover Nyquist clamp (fs = 32 kHz, fc -> 20 kHz) ==\n");
+    const double fs = 32000.0;
+
+    MonoMultibandCrossover xover;
+    xover.prepare(fs);
+    // Push every split point to the top of its UI range — the last one (20 kHz)
+    // is well above Nyquist (16 kHz) and must be clamped internally.
+    xover.setCrossoverFrequencyImmediate(0, 120.0);
+    xover.setCrossoverFrequencyImmediate(1, 400.0);
+    xover.setCrossoverFrequencyImmediate(2, 15000.0);
+    xover.setCrossoverFrequencyImmediate(3, 20000.0);
+
+    const double w = 2.0 * juce::MathConstants<double>::pi * 1000.0 / fs;
+    bool   allFinite = true;
+    double maxAbsSum = 0.0;
+    for (int n = 0; n < (int) fs; ++n)   // 1 s of a 1 kHz sine
+    {
+        const auto bands = xover.processSample(std::sin(w * n));
+        double s = 0.0;
+        for (double b : bands)
+        {
+            if (!std::isfinite(b)) allFinite = false;
+            s += b;
+        }
+        maxAbsSum = std::max(maxAbsSum, std::abs(s));
+    }
+    std::printf("  [INFO] max |sum(bands)| = %.4f\n", maxAbsSum);
+    expectTrue(allFinite,       "clamp: all band outputs stay finite with fc above Nyquist");
+    expectTrue(maxAbsSum < 2.0, "clamp: band sum stays bounded (no blow-up)");
+
+    // Also hit the smoothed-target path (setCrossoverFrequency ramps toward target).
+    xover.setCrossoverFrequency(3, 20000.0);
+    bool rampFinite = true;
+    for (int blk = 0; blk < 200; ++blk)
+    {
+        xover.advanceSmootherBlock(256);
+        for (int n = 0; n < 256; ++n)
+        {
+            const auto bands = xover.processSample(std::sin(w * n));
+            for (double b : bands)
+                if (!std::isfinite(b)) rampFinite = false;
+        }
+    }
+    expectTrue(rampFinite, "clamp: smoothed fc ramp toward 20 kHz stays finite");
+}
+
+// =========================================================================
+// Makeup gain smoothing — Output automation used to step the gain at block
+// boundaries (zipper). The gain must now ramp: no instant jump on the sample
+// after a change, and full convergence to the exact target within ~100 ms.
+// =========================================================================
+void test_makeup_gain_smoothing()
+{
+    std::printf("\n== Makeup gain smoothing ==\n");
+    const double fs = 48000.0;
+
+    DynamicsProcessor proc;
+    proc.reset(fs);
+
+    DynamicsProcessorParameters params;
+    params.threshold_dB    = -10.0;
+    params.ratio           = 4.0;
+    params.knee_width_dB   = 0.0;
+    params.soft_knee       = false;
+    params.hard_limit_gate = false;
+    params.enable_sc       = false;
+    params.attack_ms       = 0.01;
+    params.release_ms      = 0.01;
+    params.hold_ms         = 0.0;
+    params.output_gain_dB  = 0.0;
+    params.calculation     = dynamicsProcessorType::kCompressor;
+    proc.setParameters(params);
+
+    // -30 dB input: well below threshold, so GR == 1 and output tracks makeup only.
+    const double amp = dB2raw(-30.0);
+    for (int i = 0; i < 4800; ++i)
+        proc.processSample(amp);   // settle at unity makeup
+
+    // Step Output to +12 dB (attack/release unchanged -> exercises the recalc path).
+    params.output_gain_dB = 12.0;
+    params.attack_ms      = 0.02;
+    proc.setParameters(params);
+
+    const double target = dB2raw(12.0);
+    const double first  = proc.processSample(amp) / amp;
+    std::printf("  [INFO] gain 1 sample after +12 dB step = %.4f (target %.4f)\n", first, target);
+    expectTrue(first < 1.0 + 0.05 * (target - 1.0),
+        "smoothing: first sample after step moves < 5%% of the way to target (no jump)");
+
+    double last = first;
+    for (int i = 0; i < (int) std::lround(fs * 0.1); ++i)   // 100 ms
+        last = proc.processSample(amp) / amp;
+    std::printf("  [INFO] gain after 100 ms = %.4f (target %.4f)\n", last, target);
+    expectNear(last, target, target * 0.01, "smoothing: converges to +12 dB within 100 ms");
+
+    // Steady state must be exact (the ramp must not detune the calibrated output).
+    expectTrue(last > first, "smoothing: gain ramps monotonically upward");
+}
+
+// =========================================================================
 // Gain reduction curve — hard knee, no SC (detector follows input)
 // =========================================================================
 void test_gr_curve()
@@ -2186,7 +2293,9 @@ int main()
     test_envelope_attack();
     test_envelope_release();
     test_crossover();
+    test_crossover_nyquist_clamp();
     test_gr_curve();
+    test_makeup_gain_smoothing();
     test_hold_stage();
 
 #ifdef PULTEC_CORE_AVAILABLE

@@ -57,6 +57,8 @@ juce_add_binary_data(MooDuckBinaryData
     SOURCES
         Resources/fonts/IBMPlexSansCondensed-Regular.ttf
         Resources/fonts/IBMPlexSansCondensed-Medium.ttf
+        Resources/sounds/moo.wav
+        Resources/sounds/quack.wav
 )
 
 target_sources(MooDuck PRIVATE
