@@ -36,6 +36,8 @@
             resource="1" file="Resources/fonts/IBMPlexSansCondensed-Regular.ttf"/>
       <FILE id="ttfMed" name="IBMPlexSansCondensed-Medium.ttf" compile="0"
             resource="1" file="Resources/fonts/IBMPlexSansCondensed-Medium.ttf"/>
+      <FILE id="sndMoo" name="moo.wav" compile="0" resource="1" file="Resources/sounds/moo.wav"/>
+      <FILE id="sndQck" name="quack.wav" compile="0" resource="1" file="Resources/sounds/quack.wav"/>
     </GROUP>
   </MAINGROUP>
   <MODULES>

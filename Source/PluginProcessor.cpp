@@ -73,6 +73,8 @@ MooDuckAudioProcessor::MooDuckAudioProcessor()
     pPultecSatTrim     = apvts.getRawParameterValue("pultecSatTrim");
     pPultecBypass      = apvts.getRawParameterValue("pultecBypass");
 
+    loadEasterEggSounds();
+
     // grOut relay: the audio thread only writes the gainReductionDb atomic; this
     // timer notifies the host from the message thread (see timerCallback).
     startTimerHz(60);
@@ -83,81 +85,57 @@ MooDuckAudioProcessor::~MooDuckAudioProcessor()
     stopTimer();
 }
 
-// Synthesize the two mascot one-shots at the session rate. Runs at prepare
-// time (never on the audio thread), so allocation and transcendentals are fine.
-// Both are deliberately cartoonish: this is an easter egg, not a sample library.
-void MooDuckAudioProcessor::renderEasterEggSounds(double sr)
+// Decode the two recorded mascot one-shots (mono 16-bit WAVs embedded via
+// BinaryData) once, at their native rate. Message thread, constructor time.
+void MooDuckAudioProcessor::loadEasterEggSounds()
 {
-    sr = std::max(sr, 8000.0);
-    const auto normalizeTo = [](juce::AudioBuffer<float>& b, float peakDb)
+    const auto decode = [this](const void* data, int size, juce::AudioBuffer<float>& dst)
     {
-        const float peak = b.getMagnitude(0, 0, b.getNumSamples());
-        if (peak > 1.0e-9f)
-            b.applyGain(juce::Decibels::decibelsToGain(peakDb) / peak);
+        juce::WavAudioFormat wav;
+        std::unique_ptr<juce::AudioFormatReader> reader (wav.createReaderFor (
+            new juce::MemoryInputStream (data, (size_t) size, false), true));
+        if (reader == nullptr)
+            return;
+        dst.setSize (1, (int) reader->lengthInSamples);
+        reader->read (&dst, 0, dst.getNumSamples(), 0, true, false);
+        easterEggSourceRate = reader->sampleRate;   // both files share one rate
     };
-    const double twoPi = juce::MathConstants<double>::twoPi;
+    decode (BinaryData::moo_wav,   BinaryData::moo_wavSize,   mooSrc);
+    decode (BinaryData::quack_wav, BinaryData::quack_wavSize, quackSrc);
+}
 
-    // --- Moo (~0.65 s): sawtooth gliding 110 -> 75 Hz through two resonant
-    // "formant" bandpasses, slow attack, long cosine release.
+// Resample the decoded one-shots to the session rate and level them to -12 dBFS
+// peak. Runs at prepare time (never on the audio thread), so allocation is fine.
+void MooDuckAudioProcessor::prepareEasterEggSounds(double sr)
+{
+    const auto prepare = [this, sr](const juce::AudioBuffer<float>& src, juce::AudioBuffer<float>& dst)
     {
-        const int len = (int) std::lround(0.65 * sr);
-        mooBuf.setSize(1, len);
-        float* out = mooBuf.getWritePointer(0);
-
-        juce::dsp::IIR::Filter<float> formant1 (juce::dsp::IIR::Coefficients<float>::makeBandPass(sr,  400.0f, 3.0f));
-        juce::dsp::IIR::Filter<float> formant2 (juce::dsp::IIR::Coefficients<float>::makeBandPass(sr,  720.0f, 4.0f));
-
-        double phase = 0.0;
-        const double relStart = 0.37, relLen = 0.28;
-        for (int n = 0; n < len; ++n)
+        const int srcLen = src.getNumSamples();
+        if (srcLen == 0 || sr <= 0.0)
         {
-            const double t = n / sr;
-            const double f = 75.0 + 35.0 * std::exp(-4.0 * t)          // pitch glide down
-                           + 2.5 * std::sin(twoPi * 6.0 * t);          // touch of vibrato
-            phase += f / sr;
-            phase -= std::floor(phase);
-            const float saw = (float) (2.0 * phase - 1.0);
-
-            const float body = formant1.processSample(saw)
-                             + 0.7f * formant2.processSample(saw)
-                             + 0.15f * saw;
-
-            const double att = juce::jmin(1.0, t / 0.045);
-            const double rel = t < relStart ? 1.0
-                : 0.5 * (1.0 + std::cos(juce::MathConstants<double>::pi
-                                        * juce::jmin(1.0, (t - relStart) / relLen)));
-            out[n] = body * (float) (att * rel);
+            dst.setSize (0, 0);
+            return;
         }
-        normalizeTo(mooBuf, -12.0f);
-    }
-
-    // --- Quack (~0.18 s): raspy AM'd sawtooth burst through a ~1.2 kHz formant,
-    // sharp attack, fast decay.
-    {
-        const int len = (int) std::lround(0.18 * sr);
-        quackBuf.setSize(1, len);
-        float* out = quackBuf.getWritePointer(0);
-
-        juce::dsp::IIR::Filter<float> formant (juce::dsp::IIR::Coefficients<float>::makeBandPass(sr, 1200.0f, 1.5f));
-
-        double phase = 0.0;
-        for (int n = 0; n < len; ++n)
+        const double ratio = easterEggSourceRate / sr;   // input samples per output sample
+        const int    len   = (int) std::floor (srcLen / ratio);
+        dst.setSize (1, len);
+        if (std::abs (ratio - 1.0) < 1.0e-9)
+            dst.copyFrom (0, 0, src, 0, 0, len);
+        else
         {
-            const double t = n / sr;
-            const double f = 240.0 - 60.0 * (t / 0.18);                // slight downward glide
-            phase += f / sr;
-            phase -= std::floor(phase);
-            const float saw = (float) (2.0 * phase - 1.0);
-            const float am  = 0.6f + 0.4f * (float) std::sin(twoPi * 55.0 * t);   // rasp
-
-            const float body = formant.processSample(saw * am) + 0.2f * saw * am;
-
-            const double att = juce::jmin(1.0, t / 0.004);
-            const double rel = t < 0.10 ? 1.0 : juce::jmax(0.0, 1.0 - (t - 0.10) / 0.08);
-            out[n] = body * (float) (att * rel);
+            // Zero-pad the tail so the windowed-sinc kernel never reads past the end.
+            juce::HeapBlock<float> padded ((size_t) srcLen + 256, true);
+            std::copy_n (src.getReadPointer (0), srcLen, padded.get());
+            juce::WindowedSincInterpolator interp;
+            interp.process (ratio, padded.get(), dst.getWritePointer (0), len);
         }
-        normalizeTo(quackBuf, -12.0f);
-    }
+
+        const float peak = dst.getMagnitude (0, 0, len);
+        if (peak > 1.0e-9f)
+            dst.applyGain (juce::Decibels::decibelsToGain (-12.0f) / peak);
+    };
+    prepare (mooSrc,   mooBuf);
+    prepare (quackSrc, quackBuf);
 }
 
 void MooDuckAudioProcessor::timerCallback()
@@ -564,9 +542,9 @@ void MooDuckAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock
     bypassMix = (pHostBypass && pHostBypass->load() > 0.5f) ? 1.0f : 0.0f;   // adopt current state, no fade
     bypassInc = 1.0f / juce::jmax(1.0f, static_cast<float>(0.010 * sampleRate)); // ~10 ms crossfade
 
-    // Mascot easter-egg one-shots: re-render at the session rate; drop any
+    // Mascot easter-egg one-shots: resample to the session rate; drop any
     // in-flight playback/trigger (stale playhead would index the new buffers).
-    renderEasterEggSounds(sampleRate);
+    prepareEasterEggSounds(sampleRate);
     easterEggPlayhead = -1;
     easterEggTrigger.store(0);
 

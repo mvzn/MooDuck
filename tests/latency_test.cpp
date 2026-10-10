@@ -204,7 +204,7 @@ int main()
         }
 
         // ---------------------------------------------------------------------------
-        // 6. Mascot easter egg (host-level contract): a trigger mixes the synthesized
+        // 6. Mascot easter egg (host-level contract): a trigger mixes the recorded
         // one-shot into the output at ~-12 dBFS peak and plays to completion; without
         // a trigger the output stays silent; and offline (non-realtime) rendering
         // never emits it — a moo must not be printable into a bounce.
@@ -229,21 +229,30 @@ int main()
 
             check (peakOver (4) < 1.0e-6f, "easter egg: silent without a trigger");
 
-            proc.triggerEasterEgg (1);                    // moo (0.65 s < 70 blocks @ 48k/512)
-            const float mooDb = juce::Decibels::gainToDecibels (peakOver (70));
+            proc.triggerEasterEgg (1);                    // moo (1.08 s < 110 blocks @ 48k/512)
+            const float mooDb = juce::Decibels::gainToDecibels (peakOver (110));
             check (std::abs (mooDb + 12.0f) < 1.0f,
                    "easter egg: moo peaks at ~-12 dBFS (got " + juce::String (mooDb, 2) + " dB)");
             check (peakOver (4) < 1.0e-6f, "easter egg: moo ends, silence resumes");
 
-            proc.triggerEasterEgg (2);                    // quack (0.18 s < 20 blocks)
-            const float quackDb = juce::Decibels::gainToDecibels (peakOver (20));
+            proc.triggerEasterEgg (2);                    // quack (0.36 s < 40 blocks)
+            const float quackDb = juce::Decibels::gainToDecibels (peakOver (40));
             check (std::abs (quackDb + 12.0f) < 1.0f,
                    "easter egg: quack peaks at ~-12 dBFS (got " + juce::String (quackDb, 2) + " dB)");
 
             proc.setNonRealtime (true);
             proc.triggerEasterEgg (1);
-            check (peakOver (70) < 1.0e-6f, "easter egg: suppressed during offline render");
+            check (peakOver (110) < 1.0e-6f, "easter egg: suppressed during offline render");
             proc.setNonRealtime (false);
+
+            // The recordings are 48 kHz; other session rates go through the resampler.
+            prepare (proc, 44100.0, 512);
+            proc.triggerEasterEgg (1);
+            const float moo441Db = juce::Decibels::gainToDecibels (peakOver (110));
+            check (std::abs (moo441Db + 12.0f) < 1.0f,
+                   "easter egg: resampled moo @ 44.1k peaks at ~-12 dBFS (got " + juce::String (moo441Db, 2) + " dB)");
+            check (peakOver (4) < 1.0e-6f, "easter egg: resampled moo ends, silence resumes");
+            prepare (proc, sr, 512);
         }
 
         // 4. The lookahead line itself is bit-exact at delay 0 (so settled-0 lookahead is a

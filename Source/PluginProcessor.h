@@ -143,7 +143,7 @@ public:
     // a deliberately uncompensated creative delay, so it shows here but not in setLatencySamples().
     int getConvLatencySamples() const noexcept;
 
-    // Easter egg: triple-clicking a mascot in the editor plays a synthesized
+    // Easter egg: triple-clicking a mascot in the editor plays a recorded
     // one-shot mixed into the plugin output (1 = moo, 2 = quack). A new trigger
     // restarts playback (and a quack can cut off a moo). Suppressed while the
     // host renders offline so it can never end up in a bounce.
@@ -161,11 +161,15 @@ private:
     float bandGateSmooth[numBands] = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
     float bandGateInc = 1.0f;   // per-sample ramp step (set in prepareToPlay)
 
-    // Mascot easter-egg one-shots, pre-rendered at the session rate in
-    // prepareToPlay (see renderEasterEggSounds). The editor stores a trigger;
-    // processBlock mixes the mono buffer into both output channels.
-    void renderEasterEggSounds (double sampleRate);
-    juce::AudioBuffer<float> mooBuf, quackBuf;
+    // Mascot easter-egg one-shots: recorded WAVs (Resources/sounds) decoded once
+    // in the constructor, then resampled to the session rate in prepareToPlay.
+    // The editor stores a trigger; processBlock mixes the mono buffer into both
+    // output channels.
+    void loadEasterEggSounds();
+    void prepareEasterEggSounds (double sampleRate);
+    juce::AudioBuffer<float> mooSrc, quackSrc;     // native rate, as decoded
+    double easterEggSourceRate = 48000.0;
+    juce::AudioBuffer<float> mooBuf, quackBuf;     // session rate, -12 dBFS peak
     std::atomic<int> easterEggTrigger { 0 };   // 0 none, 1 moo, 2 quack
     int easterEggWhich    = 1;                 // audio-thread only
     int easterEggPlayhead = -1;                // audio-thread only; -1 = idle
